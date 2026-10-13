@@ -4,6 +4,7 @@ Soporta volcados tabulares de Redsys en CSV / Excel exportados desde el portal d
 """
 import csv
 import io
+import math
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 
@@ -48,7 +49,11 @@ class RedsysParser:
 
         for row in reader:
             # Normalizar nombres de columnas eliminando espacios y mayúsculas
-            norm_row = {k.strip().lower(): v.strip() for k, v in row.items() if k}
+            norm_row = {
+                k.strip().lower(): (v.strip() if v is not None else "")
+                for k, v in row.items()
+                if k and isinstance(k, str)
+            }
 
             order_id = (
                 norm_row.get("número pedido")
@@ -120,18 +125,39 @@ class RedsysParser:
         return transactions
 
     @staticmethod
-    def _to_cents(val_str: str) -> int:
-        if not val_str:
+    def _to_cents(val_str: Optional[str]) -> int:
+        if not val_str or not isinstance(val_str, str):
             return 0
         cleaned = val_str.replace("€", "").replace(" ", "").strip()
-        # Formato español 1.234,56 o 12,50
+        if cleaned.lower() in ("nan", "null", "none", "n/a", "--", "inf", "-inf", "infinity", "-infinity"):
+            return 0
+
+        # Manejar múltiples puntos o comas
         if "," in cleaned and "." in cleaned:
-            cleaned = cleaned.replace(".", "").replace(",", ".")
+            if cleaned.rfind(",") > cleaned.rfind("."):
+                # Formato europeo: 1.234.567,89
+                cleaned = cleaned.replace(".", "").replace(",", ".")
+            else:
+                # Formato americano: 1,234,567.89
+                cleaned = cleaned.replace(",", "")
         elif "," in cleaned:
-            cleaned = cleaned.replace(",", ".")
+            if cleaned.count(",") > 1:
+                # Múltiples comas anómalas como 12,34,56 -> quitar separadores intermedios salvo el último
+                last_comma = cleaned.rfind(",")
+                cleaned = cleaned[:last_comma].replace(",", "") + "." + cleaned[last_comma + 1:]
+            else:
+                cleaned = cleaned.replace(",", ".")
+        elif "." in cleaned and cleaned.count(".") > 1:
+            # Múltiples puntos anómalos como 1.234.567
+            last_dot = cleaned.rfind(".")
+            cleaned = cleaned[:last_dot].replace(".", "") + "." + cleaned[last_dot + 1:]
+
         try:
-            return int(round(float(cleaned) * 100))
-        except ValueError:
+            val = float(cleaned)
+            if math.isnan(val) or math.isinf(val):
+                return 0
+            return int(round(val * 100))
+        except (ValueError, OverflowError):
             return 0
 
     @staticmethod

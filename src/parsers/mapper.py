@@ -5,6 +5,7 @@ Detecta automáticamente encabezados y estructuras heterogéneas enviadas por mi
 """
 import csv
 import io
+import math
 from datetime import date, datetime
 from typing import Dict, List, Optional, Union
 
@@ -25,18 +26,29 @@ class ColumnMapper:
     }
 
     @classmethod
-    def detect_mapping(cls, headers: List[str]) -> Dict[str, str]:
+    def detect_mapping(cls, headers: List[Optional[str]]) -> Dict[str, str]:
         detected = {}
-        cleaned_headers = [h.strip().lower() for h in headers]
+        if not headers:
+            return detected
+
+        cleaned_headers = [
+            (h.strip().lower() if h and isinstance(h, str) else "")
+            for h in headers
+        ]
 
         for target_field, candidates in cls.SYNONYMS.items():
             for idx, raw_h in enumerate(cleaned_headers):
+                if not raw_h:
+                    continue
+                orig_h = headers[idx]
+                if orig_h is None:
+                    continue
                 if raw_h in candidates:
-                    detected[target_field] = headers[idx]
+                    detected[target_field] = orig_h
                     break
                 # Búsqueda por contención
                 elif any(cand in raw_h for cand in candidates):
-                    detected[target_field] = headers[idx]
+                    detected[target_field] = orig_h
                     break
 
         return detected
@@ -67,19 +79,30 @@ class ColumnMapper:
         invoices: List[CanonicalInvoice] = []
 
         for row in reader:
-            inv_num = row.get(mapping.get("invoice_number", ""), "").strip()
-            cust_name = row.get(mapping.get("customer_name", ""), "").strip()
-            gross_str = row.get(mapping.get("gross_amount", ""), "0").strip()
+            if not row:
+                continue
+
+            def _safe_get(field_key: str, default: str = "") -> str:
+                mapped_col = mapping.get(field_key)
+                if not mapped_col:
+                    return default
+                val = row.get(mapped_col)
+                return val.strip() if val and isinstance(val, str) else default
+
+            inv_num = _safe_get("invoice_number", "")
+            cust_name = _safe_get("customer_name", "")
+            gross_str = _safe_get("gross_amount", "0")
 
             if not inv_num and not cust_name:
                 continue
 
             gross_cents = cls._to_cents(gross_str)
-            issue_date = cls._parse_date(row.get(mapping.get("issue_date", ""), ""))
-            due_date = cls._parse_date(row.get(mapping.get("due_date", ""), "")) or issue_date
-            fiscal_id = row.get(mapping.get("customer_fiscal_id", ""), "").strip() or None
-            concept = row.get(mapping.get("concept", ""), "").strip()
-            gateway = row.get(mapping.get("gateway_id", ""), "").strip().lower() or None
+            issue_date = cls._parse_date(_safe_get("issue_date", ""))
+            due_date = cls._parse_date(_safe_get("due_date", "")) or issue_date
+            fiscal_id = _safe_get("customer_fiscal_id", "") or None
+            concept = _safe_get("concept", "")
+            gateway_raw = _safe_get("gateway_id", "")
+            gateway = gateway_raw.lower() if gateway_raw else None
 
             inv = CanonicalInvoice(
                 invoice_id=f"INV-{inv_num or len(invoices)+1}",
@@ -98,19 +121,38 @@ class ColumnMapper:
         return invoices
 
     @staticmethod
-    def _to_cents(val_str: str) -> int:
-        cleaned = val_str.replace("€", "").replace(" ", "").strip()
+    def _to_cents(val_str: Optional[str]) -> int:
+        if not val_str or not isinstance(val_str, str):
+            return 0
+        cleaned = val_str.replace("€", "").replace("$", "").replace(" ", "").strip()
+        if cleaned.lower() in ("nan", "null", "none", "n/a", "--", "inf", "-inf", "infinity", "-infinity"):
+            return 0
         if "," in cleaned and "." in cleaned:
-            cleaned = cleaned.replace(".", "").replace(",", ".")
+            if cleaned.rfind(",") > cleaned.rfind("."):
+                cleaned = cleaned.replace(".", "").replace(",", ".")
+            else:
+                cleaned = cleaned.replace(",", "")
         elif "," in cleaned:
-            cleaned = cleaned.replace(",", ".")
+            if cleaned.count(",") > 1:
+                last_comma = cleaned.rfind(",")
+                cleaned = cleaned[:last_comma].replace(",", "") + "." + cleaned[last_comma + 1:]
+            else:
+                cleaned = cleaned.replace(",", ".")
+        elif "." in cleaned and cleaned.count(".") > 1:
+            last_dot = cleaned.rfind(".")
+            cleaned = cleaned[:last_dot].replace(".", "") + "." + cleaned[last_dot + 1:]
         try:
-            return int(round(float(cleaned) * 100))
-        except ValueError:
+            val = float(cleaned)
+            if math.isnan(val) or math.isinf(val):
+                return 0
+            return int(round(val * 100))
+        except (ValueError, OverflowError):
             return 0
 
     @staticmethod
-    def _parse_date(dt_str: str) -> date:
+    def _parse_date(dt_str: Optional[str]) -> date:
+        if not dt_str or not isinstance(dt_str, str):
+            return date.today()
         dt_str = dt_str.strip()
         for fmt in ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y"]:
             try:

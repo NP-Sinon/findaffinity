@@ -4,6 +4,7 @@ Procesa informes oficiales de 'Balance Transactions' y liquidaciones (Payouts) d
 """
 import csv
 import io
+import math
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional, Union
@@ -88,10 +89,12 @@ class StripeParser:
         return payouts
 
     @staticmethod
-    def _parse_currency_to_cents(val_str: str) -> int:
-        if not val_str:
+    def _parse_currency_to_cents(val_str: Optional[str]) -> int:
+        if not val_str or not isinstance(val_str, str):
             return 0
         cleaned = val_str.strip().replace("€", "").replace("$", "").replace(" ", "")
+        if cleaned.lower() in ("nan", "null", "none", "n/a", "--", "inf", "-inf", "infinity", "-infinity"):
+            return 0
         # Si tiene coma como separador decimal
         if "," in cleaned and "." not in cleaned:
             cleaned = cleaned.replace(",", ".")
@@ -102,8 +105,11 @@ class StripeParser:
             else:
                 cleaned = cleaned.replace(".", "").replace(",", ".")
         try:
-            return int(round(float(cleaned) * 100))
-        except ValueError:
+            val = float(cleaned)
+            if math.isnan(val) or math.isinf(val):
+                return 0
+            return int(round(val * 100))
+        except (ValueError, OverflowError):
             return 0
 
     @staticmethod

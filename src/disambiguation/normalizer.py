@@ -35,6 +35,8 @@ class SpanishBankTextNormalizer:
     @staticmethod
     def strip_accents(text: str) -> str:
         """Elimina tildes preservando la Ñ/ñ mediante sustitución controlada."""
+        if not text or not isinstance(text, str):
+            return ""
         text = text.replace("ñ", "###_n_###").replace("Ñ", "###_N_###")
         normalized = unicodedata.normalize("NFKD", text)
         without_accents = "".join([c for c in normalized if not unicodedata.combining(c)])
@@ -42,11 +44,14 @@ class SpanishBankTextNormalizer:
 
     @classmethod
     def clean(cls, raw_text: str) -> str:
-        if not raw_text:
+        if not raw_text or not isinstance(raw_text, str):
             return ""
 
+        # 0. Eliminar caracteres de control no imprimibles (excepto espacios/tabs/newlines estándar)
+        sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", raw_text)
+
         # 1. Quitar ruido bancario recurrente
-        cleaned = BANK_NOISE_REGEX.sub(" ", raw_text)
+        cleaned = BANK_NOISE_REGEX.sub(" ", sanitized)
 
         # 2. Reemplazar caracteres especiales que suelen separar palabras
         cleaned = re.sub(r"[/\\_:\-;,]", " ", cleaned)

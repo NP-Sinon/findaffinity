@@ -15,7 +15,7 @@ import re
 class SpanishPhoneticEncoder:
     @staticmethod
     def encode(text: str) -> str:
-        if not text:
+        if not text or not isinstance(text, str):
             return ""
 
         s = text.upper().strip()

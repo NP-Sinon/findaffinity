@@ -19,6 +19,8 @@ class SpanishFiscalValidator:
 
     @classmethod
     def validate_nif(cls, nif_str: str) -> bool:
+        if not nif_str or not isinstance(nif_str, str):
+            return False
         clean = nif_str.strip().upper()
         if len(clean) != 9:
             return False
@@ -31,6 +33,8 @@ class SpanishFiscalValidator:
 
     @classmethod
     def validate_nie(cls, nie_str: str) -> bool:
+        if not nie_str or not isinstance(nie_str, str):
+            return False
         clean = nie_str.strip().upper()
         if len(clean) != 9:
             return False
@@ -46,6 +50,8 @@ class SpanishFiscalValidator:
 
     @classmethod
     def validate_cif(cls, cif_str: str) -> bool:
+        if not cif_str or not isinstance(cif_str, str):
+            return False
         clean = cif_str.strip().upper()
         if len(clean) != 9:
             return False
@@ -80,7 +86,7 @@ class SpanishFiscalValidator:
         Busca en un texto libre un NIF, CIF o NIE válido.
         Retorna (tipo, identificador_normalizado) o None.
         """
-        if not text:
+        if not text or not isinstance(text, str):
             return None
         text_upper = text.upper()
 
@@ -104,13 +110,37 @@ class SpanishFiscalValidator:
 
         return None
 
+    INVOICE_PREFIXED_REGEX = re.compile(
+        r"""(?ix)\b(?:FRA|FACTURA|FAC|DOC|INV)[\s\-_/:]+([A-Z0-9]{1,10}[/\-_][0-9]{2,8}|[0-9]{4,8}|[A-Z0-9]{4,15})\b"""
+    )
+
     @classmethod
     def extract_invoice_number(cls, text: str) -> Optional[str]:
         """Detecta posibles números o códigos de factura referenciados en el concepto."""
-        matches = cls.INVOICE_PATTERN_REGEX.findall(text)
-        for m in matches:
+        if not text or not isinstance(text, str):
+            return None
+
+        # 1. Priorizar patrones explícitamente precedidos por un prefijo de factura (FRA, FACTURA, INV, etc.)
+        explicit_matches = cls.INVOICE_PREFIXED_REGEX.findall(text)
+        for m in explicit_matches:
             clean_m = m.strip()
-            # Ignorar años sueltos o cifras muy cortas
             if len(clean_m) >= 4 and not (clean_m.isdigit() and clean_m in ("2024", "2025", "2026", "2027")):
                 return clean_m
+
+        # 2. Búsqueda general en el texto si no vino con prefijo explícito
+        matches = cls.INVOICE_PATTERN_REGEX.findall(text)
+        # Priorizar candidatos con separadores alfanuméricos (- o /) sobre números simples
+        separated_candidates = [
+            m.strip() for m in matches
+            if any(sep in m for sep in ("-", "/", "_")) and len(m.strip()) >= 4
+            and not (m.strip().isdigit() and m.strip() in ("2024", "2025", "2026", "2027"))
+        ]
+        if separated_candidates:
+            return separated_candidates[0]
+
+        for m in matches:
+            clean_m = m.strip()
+            if len(clean_m) >= 4 and not (clean_m.isdigit() and clean_m in ("2024", "2025", "2026", "2027")):
+                return clean_m
+
         return None

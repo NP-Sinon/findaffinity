@@ -243,11 +243,24 @@ class Norma43Parser:
                     # Registro final de fichero
                     break
 
+                else:
+                    result.validation_errors.append(f"Línea {line_idx}: Tipo de registro desconocido o inválido '{rec_type}'.")
+
             except Exception as e:
                 result.validation_errors.append(f"Error procesando línea {line_idx} (Tipo {rec_type}): {str(e)}")
 
+        # Validar cierre de cuentas (detección de fichero truncado por EOF prematuro)
+        for block in result.accounts:
+            if not block.footer:
+                result.validation_errors.append(
+                    f"Cuenta {block.header.account_number}: Fichero truncado, falta registro de fin de cuenta (33)."
+                )
+
+        if not result.accounts and not result.validation_errors:
+            result.validation_errors.append("Fichero sin registros de cuenta válidos (11).")
+
         # Convertir a entidades canónicas si es válido
-        if not result.validation_errors:
+        if not result.validation_errors and result.accounts:
             result.is_valid = True
             for block in result.accounts:
                 iban_synth = f"ES00{block.header.bank_code}{block.header.branch_code}00{block.header.account_number}"
@@ -324,6 +337,20 @@ class Norma43Parser:
             result.validation_errors.append(
                 f"Cuenta {header.account_number}: El sumatorio de abonos ({actual_credits} céntimos) "
                 f"no coincide con el registro 33 ({footer.total_credits_cents} céntimos)."
+            )
+
+        actual_num_debits = sum(1 for m in block.movements if m.debit_credit == "1")
+        actual_num_credits = sum(1 for m in block.movements if m.debit_credit == "2")
+
+        if actual_num_debits != footer.num_debits:
+            result.validation_errors.append(
+                f"Cuenta {header.account_number}: El número de cargos ({actual_num_debits}) "
+                f"no coincide con el registro 33 ({footer.num_debits})."
+            )
+        if actual_num_credits != footer.num_credits:
+            result.validation_errors.append(
+                f"Cuenta {header.account_number}: El número de abonos ({actual_num_credits}) "
+                f"no coincide con el registro 33 ({footer.num_credits})."
             )
 
         if discrepancy != 0:
