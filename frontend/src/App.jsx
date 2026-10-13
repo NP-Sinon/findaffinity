@@ -5,6 +5,7 @@ import { StagingRadar } from './components/StagingRadar';
 import { ExportPanel } from './components/ExportPanel';
 import { ScoreRadarModal } from './components/ScoreRadarModal';
 import { AuditTrailModal } from './components/AuditTrailModal';
+import AuthModal from './components/AuthModal';
 import { MOCK_COMPANIES, INITIAL_TRANSACTIONS } from './data/mockAuditData';
 import { 
   checkBackendHealth, 
@@ -14,7 +15,10 @@ import {
   fetchBatchDetails,
   uploadBatchFile,
   approveTransactionApi,
-  bulkApproveYellowsApi
+  bulkApproveYellowsApi,
+  getStoredAuthSession,
+  clearAuthSession,
+  getCurrentUserApi
 } from './services/api';
 import { Check } from 'lucide-react';
 
@@ -32,6 +36,14 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState({ online: false });
   const [toastMessage, setToastMessage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Estados de Autenticación & Usuario
+  const [currentUser, setCurrentUser] = useState(() => {
+    const s = getStoredAuthSession();
+    return s ? s.user : null;
+  });
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authModalView, setAuthModalView] = useState('login');
 
   // Filtro de Periodo Contable (Año, Trimestres o Rango Libre de Meses)
   const [selectedYear, setSelectedYear] = useState(2026);
@@ -231,6 +243,23 @@ export default function App() {
     triggerToast(`Contexto contable: ${company.name}`);
   }, [loadBatchesForCompany, selectedYear, startMonth, endMonth, triggerToast]);
 
+  // Handlers de autenticación
+  const handleOpenAuthModal = useCallback((viewMode = 'login') => {
+    setAuthModalView(viewMode);
+    setShowAuthModal(true);
+  }, []);
+
+  const handleAuthSuccess = useCallback((user) => {
+    setCurrentUser(user);
+    triggerToast(`Sesión iniciada: ${user.full_name || user.email} (${user.role})`);
+  }, [triggerToast]);
+
+  const handleLogout = useCallback(() => {
+    clearAuthSession();
+    setCurrentUser(null);
+    triggerToast('Sesión finalizada');
+  }, [triggerToast]);
+
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
       {/* 1. Barra superior de contexto contable */}
@@ -243,6 +272,9 @@ export default function App() {
         metrics={metrics}
         backendStatus={backendStatus}
         onOpenAuditModal={() => setShowAuditModal(true)}
+        currentUser={currentUser}
+        onOpenAuthModal={handleOpenAuthModal}
+        onLogout={handleLogout}
       />
 
       {/* Contenedor Principal */}
@@ -309,6 +341,14 @@ export default function App() {
           onClose={() => setShowAuditModal(false)}
         />
       )}
+
+      {/* Modal de Autenticación (Login / Register / Forgot Password) */}
+      <AuthModal
+        isOpen={showAuthModal}
+        initialView={authModalView}
+        onClose={() => setShowAuthModal(false)}
+        onAuthSuccess={handleAuthSuccess}
+      />
 
       {/* Toast Notification */}
       {toastMessage && (

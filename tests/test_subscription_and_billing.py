@@ -263,3 +263,54 @@ def test_rest_endpoints_subscription_api(client_api):
     cs_data = res_cs.json()
     assert "checkout_url" in cs_data
     assert cs_data["amount_total_eur"] == 144.0
+
+
+def test_stripe_public_config_and_webhook_handling(client_api, db_session):
+    """Verifica el endpoint de configuración pública de Stripe y el procesamiento de webhooks."""
+    # 1. Configuración pública
+    res_conf = client_api.get("/api/v1/subscription/config")
+    assert res_conf.status_code == 200
+    conf_data = res_conf.json()
+    assert "publishable_key" in conf_data
+    assert "products" in conf_data
+    assert "PYME_DIRECTO" in conf_data["products"]
+    assert conf_data["products"]["PYME_DIRECTO"]["price_eur"] == 39.0
+
+    # 2. Crear Tenant en plan Starter
+    tenant = ReconciliationRepository.create_tenant(
+        db=db_session,
+        name="Asesoría Mediterráneo SL",
+        fiscal_id="B-44556677",
+        email="info@mediterraneo.es",
+        plan="STARTER",
+    )
+    assert tenant.plan == "STARTER"
+
+    # 3. Disparar webhook de Stripe simulando checkout.session.completed para upgrade a PRO
+    webhook_payload = {
+        "id": "evt_test_12345",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_test_session_completed",
+                "client_reference_id": tenant.id,
+                "customer": "cus_test_999",
+                "metadata": {
+                    "tenant_id": tenant.id,
+                    "target_plan": "PROFESSIONAL",
+                    "extra_blocks": "2",
+                },
+            }
+        },
+    }
+
+    res_wh = client_api.post("/api/v1/subscription/webhook", json=webhook_payload)
+    assert res_wh.status_code == 200
+    wh_data = res_wh.json()
+    assert wh_data["handled"] is True
+    assert wh_data["action"] == "PLAN_UPGRADED"
+
+    # 4. Verificar que en la base de datos el plan ha sido actualizado a PROFESSIONAL con 2 bloques
+    db_session.refresh(tenant)
+    assert tenant.plan == "PROFESSIONAL"
+    assert tenant.extra_blocks == 2

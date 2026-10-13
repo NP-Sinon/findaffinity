@@ -18,6 +18,9 @@ export function HeaderNav({
   metrics,
   backendStatus,
   onOpenAuditModal,
+  currentUser,
+  onOpenAuthModal,
+  onLogout,
 }) {
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
@@ -138,6 +141,49 @@ export function HeaderNav({
               <ShieldCheck className="h-4 w-4 text-emerald-400" />
               <span className="hidden sm:inline">Auditoría SHA-256</span>
             </button>
+
+            {/* Perfil de Usuario / Botón de Inicio de Sesión */}
+            {currentUser ? (
+              <div className="flex items-center gap-2 pl-1 border-l border-zinc-800">
+                <div className="flex flex-col text-right hidden sm:block">
+                  <span className="text-xs font-medium text-zinc-200 leading-tight">
+                    {currentUser.full_name || currentUser.email}
+                  </span>
+                  <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold ${
+                      currentUser.role === 'ADMIN' 
+                        ? 'bg-blue-950/60 text-blue-300 border border-blue-800/60'
+                        : currentUser.role === 'AUDITOR'
+                        ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'
+                        : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
+                    }`}>
+                      {currentUser.role}
+                    </span>
+                    {currentUser.tenant_name && (
+                      <span className="text-[10px] text-zinc-400 truncate max-w-[110px]" title={currentUser.tenant_name}>
+                        {currentUser.tenant_name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="px-2.5 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                  title="Cerrar Sesión"
+                >
+                  Salir
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onOpenAuthModal && onOpenAuthModal('login')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-sm ml-1"
+              >
+                <span>Acceso Despacho</span>
+              </button>
+            )}
 
             {/* Backend Connectivity Status Dot */}
             <div 

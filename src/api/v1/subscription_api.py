@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from src.database.connection import get_db
 from src.billing.pricing_plans import PLAN_CONFIGS, PlanTier
 from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
+from src.billing.stripe_service import StripeBillingService
 
 router = APIRouter(prefix="/v1", tags=["Facturación & Suscripción"])
 
@@ -21,14 +22,20 @@ class UpgradeSubscriptionDTO(BaseModel):
 class CreateCheckoutSessionDTO(BaseModel):
     target_plan: str = Field("PROFESSIONAL", json_schema_extra={"example": "PROFESSIONAL"})
     extra_blocks: int = Field(0, json_schema_extra={"example": 0})
-    success_url: Optional[str] = Field("http://127.0.0.1:5173/?billing=success")
-    cancel_url: Optional[str] = Field("http://127.0.0.1:5173/?billing=cancel")
+    success_url: Optional[str] = Field("http://127.0.0.1:8000/?billing=success")
+    cancel_url: Optional[str] = Field("http://127.0.0.1:8000/?billing=cancel")
 
 
 @router.get("/pricing-plans")
 def list_pricing_plans():
     """Retorna la lista de planes oficiales según el estudio de viabilidad."""
     return list(PLAN_CONFIGS.values())
+
+
+@router.get("/subscription/config")
+def get_stripe_public_config():
+    """Retorna la clave pública de Stripe y el catálogo de productos recurrentes."""
+    return StripeBillingService.get_public_config()
 
 
 @router.get("/tenants/{tenant_id}/subscription")
@@ -66,13 +73,25 @@ def create_checkout_session(
 ):
     """Crea una sesión de pasarela de pago (Stripe Checkout) para contratación."""
     try:
-        return BillingQuotaManager.create_simulated_checkout_session(
+        return StripeBillingService.create_checkout_session(
             db=db,
             tenant_id=tenant_id,
             target_plan=payload.target_plan,
             extra_blocks=payload.extra_blocks,
-            success_url=payload.success_url or "http://127.0.0.1:5173/?billing=success",
-            cancel_url=payload.cancel_url or "http://127.0.0.1:5173/?billing=cancel",
+            success_url=payload.success_url or "http://127.0.0.1:8000/?billing=success",
+            cancel_url=payload.cancel_url or "http://127.0.0.1:8000/?billing=cancel",
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/subscription/webhook")
+def stripe_webhook(
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+):
+    """Endpoint oficial para recibir webhooks de eventos de Stripe en producción."""
+    try:
+        return StripeBillingService.handle_webhook_event(db=db, event_payload=payload)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error procesando webhook: {str(e)}")

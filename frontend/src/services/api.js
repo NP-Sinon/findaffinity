@@ -7,6 +7,159 @@ import { INITIAL_TRANSACTIONS, MOCK_COMPANIES } from '../data/mockAuditData';
 
 const BASE_URL = 'http://127.0.0.1:8000';
 
+const AUTH_STORAGE_KEY = 'findaffinity_auth_session';
+
+export function getStoredAuthSession() {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuthSession(token, user) {
+  try {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, user }));
+  } catch (err) {
+    console.error('Error guardando sesión:', err);
+  }
+}
+
+export function clearAuthSession() {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch (err) {
+    console.error('Error limpiando sesión:', err);
+  }
+}
+
+export function getAuthHeaders() {
+  const session = getStoredAuthSession();
+  if (session && session.token) {
+    return {
+      'Authorization': `Bearer ${session.token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+  return { 'Content-Type': 'application/json' };
+}
+
+/**
+ * Iniciar sesión con email y contraseña en FastAPI
+ */
+export async function loginApi(email, password) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      saveAuthSession(data.access_token, data.user);
+      return { success: true, token: data.access_token, user: data.user };
+    }
+    return { success: false, error: data.detail || 'Credenciales incorrectas' };
+  } catch (err) {
+    return { success: false, error: err.message || 'Sin conexión con el servidor de autenticación' };
+  }
+}
+
+/**
+ * Registro de nuevo usuario o despacho contable
+ */
+export async function registerApi({ email, password, fullName, companyName, fiscalId, role = 'AUDITOR' }) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        password,
+        full_name: fullName,
+        company_name: companyName,
+        fiscal_id: fiscalId,
+        role,
+      }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      // Iniciar sesión automáticamente tras el registro
+      return await loginApi(email, password);
+    }
+    return { success: false, error: data.detail || 'Error en el registro' };
+  } catch (err) {
+    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  }
+}
+
+/**
+ * Solicitar recuperación de contraseña
+ */
+export async function forgotPasswordApi(email) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/v1/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      return { success: true, message: data.message, demoToken: data.reset_token_demo };
+    }
+    return { success: false, error: data.detail || 'Error en la solicitud' };
+  } catch (err) {
+    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  }
+}
+
+/**
+ * Restablecer contraseña con token
+ */
+export async function resetPasswordApi(token, newPassword) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/v1/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      return { success: true, message: data.message };
+    }
+    return { success: false, error: data.detail || 'Token inválido o expirado' };
+  } catch (err) {
+    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  }
+}
+
+/**
+ * Obtener perfil del usuario autenticado
+ */
+export async function getCurrentUserApi() {
+  const session = getStoredAuthSession();
+  if (!session || !session.token) return null;
+
+  try {
+    const res = await fetch(`${BASE_URL}/api/v1/auth/me`, {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    });
+    if (res.ok) {
+      const user = await res.json();
+      saveAuthSession(session.token, user);
+      return user;
+    }
+  } catch (err) {
+    console.warn('Error validando token con backend:', err);
+  }
+  return session.user;
+}
+
 /**
  * Comprueba el estado del backend FastAPI
  */

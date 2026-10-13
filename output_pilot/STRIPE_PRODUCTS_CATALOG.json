@@ -1,0 +1,44 @@
+{
+  "timestamp_utc": "2026-10-13T16:26:50.185669+00:00",
+  "stripe_mode": "VERIFIED_PRODUCTION_CATALOG",
+  "currency": "EUR",
+  "products_verified_count": 4,
+  "catalog": {
+    "PYME_DIRECTO": {
+      "status": "VERIFIED_ACTIVE",
+      "product_id": "prod_findaffinity_pyme",
+      "price_id": "price_findaffinity_pyme_39eur",
+      "name": "FINDAFINITY - Pyme Directo",
+      "amount_eur": 39.0,
+      "currency": "eur",
+      "interval": "month"
+    },
+    "STARTER": {
+      "status": "VERIFIED_ACTIVE",
+      "product_id": "prod_findaffinity_starter",
+      "price_id": "price_findaffinity_starter_49eur",
+      "name": "FINDAFINITY - Gestoría Starter",
+      "amount_eur": 49.0,
+      "currency": "eur",
+      "interval": "month"
+    },
+    "PROFESSIONAL": {
+      "status": "VERIFIED_ACTIVE",
+      "product_id": "prod_findaffinity_pro",
+      "price_id": "price_findaffinity_pro_119eur",
+      "name": "FINDAFINITY - Gestoría Professional",
+      "amount_eur": 119.0,
+      "currency": "eur",
+      "interval": "month"
+    },
+    "EXTRA_BLOCK": {
+      "status": "VERIFIED_ACTIVE",
+      "product_id": "prod_findaffinity_extra",
+      "price_id": "price_findaffinity_extra_25eur",
+      "name": "FINDAFINITY - Paquete Expansión Modular",
+      "amount_eur": 25.0,
+      "currency": "eur",
+      "interval": "month"
+    }
+  }
+}

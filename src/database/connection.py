@@ -14,17 +14,28 @@ DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "findaffinity.db"
 
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
+# Normalizar prefijo postgres:// para compatibilidad con SQLAlchemy 2.0
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    echo=False,
-    future=True,
-)
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        echo=False,
+        future=True,
+    )
+else:
+    # Configuración de producción para PostgreSQL
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
+        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
+        pool_pre_ping=True,
+        pool_recycle=300,
+        echo=False,
+        future=True,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

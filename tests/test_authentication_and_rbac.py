@@ -234,3 +234,70 @@ def test_rbac_role_enforcement_and_isolation(db_session):
         assert_tenant_access(t2.id, user_admin)
     assert exc_tenant.value.status_code == 403
     assert "Acceso denegado" in exc_tenant.value.detail
+
+
+def test_self_registration_with_auto_tenant(client_api, db_session):
+    """Verifica que un nuevo despacho pueda registrarse directamente sin un tenant previo."""
+    resp = client_api.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "socio@nuevodespacho.es",
+            "password": "SecurePassword2026!",
+            "full_name": "Laura Gómez (Socia Directora)",
+            "company_name": "Gómez & Asociados Asesores SLP",
+            "fiscal_id": "B-88776655",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["email"] == "socio@nuevodespacho.es"
+    assert data["role"] == UserRole.ADMIN
+    assert data["tenant_id"] is not None
+    assert data["tenant_name"] == "Gómez & Asociados Asesores SLP"
+
+
+def test_forgot_and_reset_password_flow(client_api, db_session):
+    """Verifica el flujo completo de recuperación y actualización de contraseña."""
+    # 1. Registrar usuario inicial
+    client_api.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "recuperar@gestoria.es",
+            "password": "OldPassword2026!",
+            "full_name": "Usuario Recuperación",
+            "company_name": "Gestoría Recuperación SL",
+        },
+    )
+
+    # 2. Solicitar recuperación
+    resp_forgot = client_api.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "recuperar@gestoria.es"},
+    )
+    assert resp_forgot.status_code == 200
+    forgot_data = resp_forgot.json()
+    assert forgot_data["success"] is True
+    reset_token = forgot_data["reset_token_demo"]
+    assert reset_token is not None
+
+    # 3. Restablecer con contraseña nueva
+    resp_reset = client_api.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": reset_token,
+            "new_password": "BrandNewPassword2026!",
+        },
+    )
+    assert resp_reset.status_code == 200
+    assert resp_reset.json()["success"] is True
+
+    # 4. Iniciar sesión con la clave nueva
+    resp_login = client_api.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "recuperar@gestoria.es",
+            "password": "BrandNewPassword2026!",
+        },
+    )
+    assert resp_login.status_code == 200
+    assert "access_token" in resp_login.json()

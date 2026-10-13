@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: findaffinity-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-findaffinity}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme_prod_pg_password_2026}
+      POSTGRES_DB: ${DB_NAME:-findaffinity}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-findaffinity}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - findaffinity-internal
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: findaffinity-web
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-findaffinity}:${DB_PASSWORD:-changeme_prod_pg_password_2026}@postgres:5432/${DB_NAME:-findaffinity}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-findaffinity_super_secure_jwt_secret_key_production_2026}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      ENVIRONMENT: production
+    volumes:
+      - ./data:/app/data
+      - ./output_pilot:/app/output_pilot
+    expose:
+      - "8000"
+    networks:
+      - findaffinity-internal
+
+  nginx:
+    image: nginx:alpine
+    container_name: findaffinity-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt:ro
+    depends_on:
+      - web
+    networks:
+      - findaffinity-internal
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: findaffinity-certbot
+    restart: always
+    volumes:
+      - certbot_www:/var/www/certbot:rw
+      - certbot_conf:/etc/letsencrypt:rw
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - findaffinity-internal
+
+volumes:
+  pgdata:
+    driver: local
+  certbot_www:
+    driver: local
+  certbot_conf:
+    driver: local
+
+networks:
+  findaffinity-internal:
+    driver: bridge
