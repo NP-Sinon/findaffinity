@@ -1,0 +1,8 @@
+id,Type,Gross,Fee,Net,Currency,Created (UTC),Description,Payout ID
+txn_001,charge,100.00,2.15,97.85,eur,2026-10-10 10:15:00,Cobro Pedido FRA-101,po_batch_123
+txn_002,charge,50.00,1.20,48.80,eur,2026-10-10 11:20:00,Cobro Pedido FRA-102,po_batch_123
+txn_003,refund,-20.00,0.00,-20.00,eur,2026-10-11 09:00:00,Reembolso Parcial FRA-99,po_batch_123
+txn_004,charge,1250.00,21.50,1228.50,eur,2026-10-12 08:30:00,Fra FRA-2026-104 Logistica Expres,po_1Ox98aK2
+txn_005,charge,890.00,16.20,873.80,eur,2026-10-12 09:15:00,Fra FRA-2026-105 Suministros Norte,po_1Ox98aK2
+txn_006,charge,1100.00,32.10,1067.90,eur,2026-10-12 10:00:00,Fra FRA-2026-106 Almacenes Centrales,po_1Ox98aK2
+txn_007,charge,695.00,22.70,672.30,eur,2026-10-12 11:45:00,Fra FRA-2026-107 Paqueteria Sur,po_1Ox98aK2
