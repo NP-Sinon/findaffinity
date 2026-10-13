@@ -1,14 +1,25 @@
 """
 Punto de Entrada de la Aplicación FastAPI: Micro-SaaS Reconciliación Contable
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.v1.reconcile_api import router as v1_router
+from src.api.v1.tenant_batch_api import router as tenant_batch_router
+from src.database.connection import init_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
 
 app = FastAPI(
-    title="Micro-SaaS Reconciliación Contable & Desambiguación",
-    description="Motor de conciliación de liquidaciones agrupadas y generación de pre-asientos auditados para A3, Sage y Contasol.",
+    title="FINDAFINITY - Conciliación Contable & Desambiguación",
+    description="Motor de conciliación de liquidaciones agrupadas, persistencia multi-tenant y generación de pre-asientos auditados para A3, Sage y Contasol.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -20,6 +31,7 @@ app.add_middleware(
 )
 
 app.include_router(v1_router, prefix="/api")
+app.include_router(tenant_batch_router, prefix="/api")
 
 
 @app.get("/health", tags=["Health"])

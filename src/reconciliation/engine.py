@@ -88,6 +88,9 @@ class BatchPayoutReconciliationEngine:
             for gtx in gateway_transactions:
                 if gtx.order_id:
                     gw_fee_map[gtx.order_id] = gtx.fee_cents
+                    gw_fee_map[gtx.order_id.replace("-", "").replace(" ", "").upper()] = gtx.fee_cents
+                if gtx.transaction_id:
+                    gw_fee_map[gtx.transaction_id] = gtx.fee_cents
 
         # Preparar candidatos para los solvers
         milp_candidates: List[MILPInvoiceCandidate] = []
@@ -99,7 +102,13 @@ class BatchPayoutReconciliationEngine:
             theo_fee = int(round(gross * self.default_alpha_rate + self.default_beta_cents))
             
             # Comisión observada (si viene del reporte de pasarela, si no usar la teórica)
-            obs_fee = gw_fee_map.get(inv.invoice_number, theo_fee)
+            clean_num = inv.invoice_number.replace("-", "").replace(" ", "").upper()
+            obs_fee = (
+                gw_fee_map.get(inv.invoice_number)
+                or gw_fee_map.get(clean_num)
+                or gw_fee_map.get(inv.invoice_id)
+                or theo_fee
+            )
             net_val = gross - obs_fee
 
             milp_candidates.append(

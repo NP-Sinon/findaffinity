@@ -17,3 +17,5 @@ frontend/*.local
 # OS & Temp
 .DS_Store
 Thumbs.db
+*.db
+*.sqlite

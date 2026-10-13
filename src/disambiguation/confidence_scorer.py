@@ -7,6 +7,7 @@ Clasifica en:
 - AMARILLO (0.70 <= Score < 0.95): Sugerencia de alta verosimilitud para 1-clic
 - ROJO (Score < 0.70): No conciliado (protección contra asignaciones erróneas)
 """
+import re
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
@@ -63,13 +64,17 @@ class BankDisambiguationScorer:
         # Comprobar CIF/NIF
         extracted_fiscal = SpanishFiscalValidator.extract_fiscal_id(bank_text)
         if extracted_fiscal and invoice.customer_fiscal_id:
-            if extracted_fiscal[1].upper() == invoice.customer_fiscal_id.upper():
+            c1 = re.sub(r"[^A-Z0-9]", "", extracted_fiscal[1].upper())
+            c2 = re.sub(r"[^A-Z0-9]", "", invoice.customer_fiscal_id.upper())
+            if c1 == c2:
                 fiscal_match = True
 
         # Comprobar número de factura
         extracted_inv_num = SpanishFiscalValidator.extract_invoice_number(bank_text)
         if extracted_inv_num and invoice.invoice_number:
-            if extracted_inv_num.upper() in invoice.invoice_number.upper() or invoice.invoice_number.upper() in extracted_inv_num.upper():
+            clean_extracted = re.sub(r"[^A-Z0-9]", "", extracted_inv_num.upper())
+            clean_invoice = re.sub(r"[^A-Z0-9]", "", invoice.invoice_number.upper())
+            if clean_extracted in clean_invoice or clean_invoice in clean_extracted:
                 invoice_number_match = True
 
         # Matching difuso de nombre de cliente y conceptos

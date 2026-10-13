@@ -45,7 +45,7 @@ class StripeParser:
             created_str = row.get("Created (UTC)") or row.get("Created") or ""
             created_dt = StripeParser._parse_datetime(created_str)
 
-            order_id = row.get("Source") or row.get("Payment ID") or row.get("Customer ID") or ""
+            order_id = row.get("Order ID") or row.get("Invoice ID") or row.get("Order") or row.get("Source") or row.get("Payment ID") or row.get("Customer ID") or ""
             desc = row.get("Description") or ""
             payout_id = row.get("Payout ID") or row.get("Automatic payout ID") or None
 

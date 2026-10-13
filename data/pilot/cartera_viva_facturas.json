@@ -1,0 +1,101 @@
+[
+  {
+    "client_fiscal_id": "B-87654321",
+    "invoice_id": "INV-STRIPE-901",
+    "invoice_number": "FRA-2026-901",
+    "customer_id": "CUST-901",
+    "customer_name": "Logística Exprés S.L.",
+    "customer_fiscal_id": "B-12998877",
+    "gross_amount_cents": 125000,
+    "issue_date": "2026-10-05",
+    "due_date": "2026-10-05"
+  },
+  {
+    "client_fiscal_id": "B-87654321",
+    "invoice_id": "INV-STRIPE-902",
+    "invoice_number": "FRA-2026-902",
+    "customer_id": "CUST-902",
+    "customer_name": "Suministros del Norte S.A.",
+    "customer_fiscal_id": "A-28994411",
+    "gross_amount_cents": 89000,
+    "issue_date": "2026-10-05",
+    "due_date": "2026-10-05"
+  },
+  {
+    "client_fiscal_id": "B-87654321",
+    "invoice_id": "INV-STRIPE-903",
+    "invoice_number": "FRA-2026-903",
+    "customer_id": "CUST-903",
+    "customer_name": "Almacenes Centrales Madrid S.L.",
+    "customer_fiscal_id": "B-81234567",
+    "gross_amount_cents": 110000,
+    "issue_date": "2026-10-06",
+    "due_date": "2026-10-06"
+  },
+  {
+    "client_fiscal_id": "B-87654321",
+    "invoice_id": "INV-STRIPE-904",
+    "invoice_number": "FRA-2026-904",
+    "customer_id": "CUST-904",
+    "customer_name": "Paquetería del Sur S.L.",
+    "customer_fiscal_id": "B-41889900",
+    "gross_amount_cents": 69500,
+    "issue_date": "2026-10-06",
+    "due_date": "2026-10-06"
+  },
+  {
+    "client_fiscal_id": "A-91283746",
+    "invoice_id": "INV-REDSYS-8801",
+    "invoice_number": "TPV-2026-8801",
+    "customer_id": "CUST-881",
+    "customer_name": "Comercial Hostelería D&M S.L.",
+    "customer_fiscal_id": "B-91827364",
+    "gross_amount_cents": 75000,
+    "issue_date": "2026-10-12",
+    "due_date": "2026-10-12"
+  },
+  {
+    "client_fiscal_id": "A-91283746",
+    "invoice_id": "INV-REDSYS-8802",
+    "invoice_number": "TPV-2026-8802",
+    "customer_id": "CUST-882",
+    "customer_name": "Restauración Costa Sol S.L.",
+    "customer_fiscal_id": "B-54892103",
+    "gross_amount_cents": 55000,
+    "issue_date": "2026-10-12",
+    "due_date": "2026-10-12"
+  },
+  {
+    "client_fiscal_id": "A-91283746",
+    "invoice_id": "INV-REDSYS-8803",
+    "invoice_number": "TPV-2026-8803",
+    "customer_id": "CUST-883",
+    "customer_name": "Eventos y Catering Sol S.L.",
+    "customer_fiscal_id": "B-33445566",
+    "gross_amount_cents": 42000,
+    "issue_date": "2026-10-12",
+    "due_date": "2026-10-12"
+  },
+  {
+    "client_fiscal_id": "B-54892103",
+    "invoice_id": "INV-B2B-091",
+    "invoice_number": "FRA-2026-091",
+    "customer_id": "CUST-091",
+    "customer_name": "CONSTRUCCIONES HNOS. MARTINEZ S.L.",
+    "customer_fiscal_id": "B-41982737",
+    "gross_amount_cents": 145000,
+    "issue_date": "2026-10-10",
+    "due_date": "2026-10-10"
+  },
+  {
+    "client_fiscal_id": "B-54892103",
+    "invoice_id": "INV-B2B-088",
+    "invoice_number": "FRA-2026-088",
+    "customer_id": "CUST-088",
+    "customer_name": "AMAZON SERVICES EUROPE S.A.R.L.",
+    "customer_fiscal_id": "W0185698H",
+    "gross_amount_cents": 241000,
+    "issue_date": "2026-10-15",
+    "due_date": "2026-10-15"
+  }
+]

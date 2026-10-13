@@ -16,7 +16,7 @@ for dirpath, dirnames, filenames in os.walk(root_dir):
         if f in ("proyecto_comprimido.txt", "proyecto_completo.txt", "package-lock.json"):
             continue
         ext = os.path.splitext(f)[1].lower()
-        if ext in (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".html", ".css", ".svg"):
+        if ext in (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".ts", ".tsx", ".html", ".css", ".svg", ".n43"):
             rel_path = os.path.relpath(os.path.join(dirpath, f), root_dir)
             files_to_pack.append(rel_path)
 

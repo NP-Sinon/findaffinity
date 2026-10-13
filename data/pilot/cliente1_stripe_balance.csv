@@ -1,0 +1,6 @@
+id,Type,Gross,Fee,Net,Currency,Created (UTC),Description,Source,Payout ID,Order ID
+txn_1M0101,charge,1250.00,35.25,1214.75,EUR,2026-10-05 10:14:22,Venta online Factura FRA-2026-901,ch_3M0101,po_1M9999,FRA-2026-901
+txn_1M0102,charge,890.00,25.17,864.83,EUR,2026-10-05 11:22:45,Venta online Factura FRA-2026-902,ch_3M0102,po_1M9999,FRA-2026-902
+txn_1M0103,charge,1100.00,31.05,1068.95,EUR,2026-10-06 14:05:12,Venta online Factura FRA-2026-903,ch_3M0103,po_1M9999,FRA-2026-903
+txn_1M0104,charge,695.00,19.71,675.29,EUR,2026-10-06 16:48:30,Venta online Factura FRA-2026-904,ch_3M0104,po_1M9999,FRA-2026-904
+txn_1M9999,payout,-3823.82,0.00,-3823.82,EUR,2026-10-07 04:00:00,Transferencia bancaria liquidación,,po_1M9999,
