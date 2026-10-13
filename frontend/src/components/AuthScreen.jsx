@@ -415,7 +415,7 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
               </button>
 
               <div className="text-[11px] text-zinc-500 text-center mt-2">
-                Al registrarte se crea automáticamente tu inquilino con rol de Administrador.
+                Al registrarte se crea automáticamente el espacio de tu despacho con rol de Administrador.
               </div>
             </form>
           )}

@@ -35,7 +35,7 @@ export function DoubleEntryViewer({ journal, transactionId }) {
           {isPerfectSquare ? (
             <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              Garantía de Cuadre: 0.00 €
+              Cuadre PGC: 0,00 €
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 text-rose-400 font-medium">
@@ -121,7 +121,7 @@ export function DoubleEntryViewer({ journal, transactionId }) {
           {/* Table Footer: Sum Totals */}
           <tfoot>
             <tr className="border-t border-zinc-700/80 bg-zinc-950/80 font-mono font-semibold text-[11px]">
-              <td colSpan={3} className="py-2 px-2 text-right uppercase tracking-wider text-[10px] text-zinc-400 font-sans">
+              <td colSpan={2} className="py-2 px-2 text-right uppercase tracking-wider text-[10px] text-zinc-400 font-sans">
                 Totales de Control Contable:
               </td>
               <td className="py-2 px-2 text-right tabular-nums text-zinc-100">

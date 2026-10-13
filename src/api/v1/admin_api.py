@@ -217,3 +217,12 @@ def delete_company(
         "message": f"Compañía '{name}' ({fiscal_id}) eliminada definitivamente.",
         "deleted_tenant_id": tenant_id,
     }
+
+
+@router.delete("/companies/{tenant_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_company_slash(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
+):
+    return delete_company(tenant_id, db, current_user)

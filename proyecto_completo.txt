@@ -1125,6 +1125,13 @@ export default function App() {
   // Ingesta de fichero real arrastrado o subido
   const handleFileUploaded = useCallback(async (file) => {
     setIsProcessing(true);
+    if (!selectedCompany) {
+      setIsProcessing(false);
+      triggerToast('Añade o selecciona una Empresa Cliente antes de procesar un archivo.');
+      handleOpenAddClientModal();
+      return null;
+    }
+
     const tenantIdToUse = currentUser?.tenant_id || (currentTenant && currentTenant.id);
     if (backendStatus.online && tenantIdToUse && selectedCompany) {
       const res = await uploadBatchFile({
@@ -1141,17 +1148,24 @@ export default function App() {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
         setIsProcessing(false);
         triggerToast(`Lote procesado y persistido con éxito (${res.data.total_movements} movimientos).`);
-        return;
+        return res.data;
+      } else {
+        setIsProcessing(false);
+        triggerToast(`Error: ${res?.error || 'No se pudo procesar el archivo'}`);
+        return null;
       }
     }
 
-    // Fallback de demostración
-    setTimeout(() => {
-      setTransactions(INITIAL_TRANSACTIONS);
-      setIsProcessing(false);
-      triggerToast('Fichero analizado y verificado mediante motor de conciliación.');
-    }, 400);
-  }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
+    // Fallback de demostración en modo autónomo
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        setTransactions(INITIAL_TRANSACTIONS);
+        setIsProcessing(false);
+        triggerToast('Fichero analizado y verificado mediante motor de conciliación.');
+        resolve({ total_movements: INITIAL_TRANSACTIONS.length });
+      }, 400);
+    });
+  }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
 
   // Cargar Lote Demo de Auditoría (SOLO bajo petición explícita)
   const handleLoadDemoBatch = useCallback(() => {
@@ -3050,7 +3064,7 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
               </button>
 
               <div className="text-[11px] text-zinc-500 text-center mt-2">
-                Al registrarte se crea automáticamente tu inquilino con rol de Administrador.
+                Al registrarte se crea automáticamente el espacio de tu despacho con rol de Administrador.
               </div>
             </form>
           )}
@@ -3453,7 +3467,7 @@ export function DoubleEntryViewer({ journal, transactionId }) {
           {isPerfectSquare ? (
             <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
               <CheckCircle2 className="h-3.5 w-3.5" />
-              Garantía de Cuadre: 0.00 €
+              Cuadre PGC: 0,00 €
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 text-rose-400 font-medium">
@@ -3539,7 +3553,7 @@ export function DoubleEntryViewer({ journal, transactionId }) {
           {/* Table Footer: Sum Totals */}
           <tfoot>
             <tr className="border-t border-zinc-700/80 bg-zinc-950/80 font-mono font-semibold text-[11px]">
-              <td colSpan={3} className="py-2 px-2 text-right uppercase tracking-wider text-[10px] text-zinc-400 font-sans">
+              <td colSpan={2} className="py-2 px-2 text-right uppercase tracking-wider text-[10px] text-zinc-400 font-sans">
                 Totales de Control Contable:
               </td>
               <td className="py-2 px-2 text-right tabular-nums text-zinc-100">
@@ -3787,10 +3801,12 @@ export function ExportPanel({
           </div>
         </div>
         <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Auditoría Checksum</div>
-          <div className="font-mono text-sm font-semibold text-emerald-400 mt-0.5 flex items-center gap-1">
+          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Estado de Cuadre PGC</div>
+          <div className={`font-mono text-sm font-semibold mt-0.5 flex items-center gap-1 ${
+            auditMetrics.imbalance < 0.005 ? 'text-emerald-400' : 'text-rose-400'
+          }`}>
             <ShieldCheck className="h-3.5 w-3.5" />
-            Cuadre 0.00 €
+            {auditMetrics.imbalance < 0.005 ? 'Cuadre 0,00 €' : `Descuadre ${formatEuro(auditMetrics.imbalance)}`}
           </div>
         </div>
       </div>
@@ -4036,10 +4052,12 @@ export function HeaderNav({
                   <span className="text-xs font-medium text-zinc-200">
                     {currentUser.full_name || currentUser.email}
                   </span>
-                  <span className={`text-[10px] font-mono uppercase tracking-wider ${
-                    isSuperAdmin ? 'text-blue-400 font-bold' : 'text-zinc-400'
+                  <span className={`text-[10px] font-sans font-medium ${
+                    isSuperAdmin ? 'text-blue-400 font-semibold' : 'text-zinc-400'
                   }`}>
-                    {currentUser.role}
+                    {currentUser.role === 'SUPERADMIN' ? 'Administrador Global' :
+                     currentUser.role === 'ADMIN' ? 'Administrador' :
+                     currentUser.role === 'AUDITOR' ? 'Auditor Contable' : 'Consulta'}
                   </span>
                 </div>
 
@@ -4116,17 +4134,26 @@ export function IngestionZone({
 
   const processSelectedFile = async (file) => {
     setLocalProcessing(true);
+    setIngestionTelemetry({
+      filename: file.name,
+      sizeKb: (file.size / 1024).toFixed(1),
+      movements: 'Analizando...',
+      isValid: true,
+      errors: [],
+    });
+
     try {
-      const result = await uploadNorma43File(file);
-      setIngestionTelemetry({
-        filename: file.name,
-        sizeKb: (file.size / 1024).toFixed(1),
-        movements: result.data.movements_count || 12,
-        isValid: result.data.is_valid,
-        errors: result.data.validation_errors || [],
-      });
       if (onFileProcessed) {
-        onFileProcessed(result);
+        const result = await onFileProcessed(file);
+        if (result && result.total_movements !== undefined) {
+          setIngestionTelemetry({
+            filename: file.name,
+            sizeKb: (file.size / 1024).toFixed(1),
+            movements: `${result.total_movements} detectados`,
+            isValid: true,
+            errors: [],
+          });
+        }
       }
     } catch (err) {
       setIngestionTelemetry({
@@ -4134,7 +4161,7 @@ export function IngestionZone({
         sizeKb: (file.size / 1024).toFixed(1),
         movements: 0,
         isValid: false,
-        errors: ['Error al leer el archivo. Comprueba el formato.'],
+        errors: [err.message || 'Error al procesar el archivo contable.'],
       });
     } finally {
       setLocalProcessing(false);
@@ -4313,7 +4340,7 @@ export function PeriodFilter({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2.5 bg-zinc-900/90 border border-zinc-800 rounded-lg p-2.5 text-xs">
+    <div className="flex flex-wrap items-center gap-2.5 bg-[#0d0d10] border-b border-zinc-800/80 px-4 py-2.5 text-xs">
       {/* Icono de Calendario */}
       <div className="flex items-center gap-1.5 text-zinc-400 font-medium pl-1">
         <Calendar className="h-3.5 w-3.5 text-zinc-400" />
@@ -4789,7 +4816,7 @@ export function StagingRadar({
               }`}
             >
               <span>Todas las Partidas</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-zinc-900/80 border border-zinc-700/50 text-zinc-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-900/80 border border-zinc-700/50 text-zinc-300">
                 {counts.all}
               </span>
             </button>
@@ -4805,7 +4832,7 @@ export function StagingRadar({
             >
               <CheckCircle2 className="h-3 w-3 text-emerald-400" />
               <span>Verdes (Automáticas)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/80 border border-emerald-800/50 text-emerald-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-800/50 text-emerald-300">
                 {counts.green}
               </span>
             </button>
@@ -4821,7 +4848,7 @@ export function StagingRadar({
             >
               <AlertCircle className="h-3 w-3 text-amber-400" />
               <span>Amarillas (Revisión)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
                 {counts.yellow}
               </span>
             </button>
@@ -4837,7 +4864,7 @@ export function StagingRadar({
             >
               <AlertOctagon className="h-3 w-3 text-rose-400" />
               <span>Rojas (Excepciones)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-rose-950/80 border border-rose-800/50 text-rose-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-800/50 text-rose-300">
                 {counts.red}
               </span>
             </button>
@@ -4883,7 +4910,7 @@ export function StagingRadar({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por concepto, factura, solver, importe..."
+              placeholder="Buscar por concepto, factura, CIF, importe..."
               className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
             />
           </div>
@@ -4964,7 +4991,7 @@ export function StagingRadar({
                   <th className="py-2.5 px-2 w-8 text-center"></th>
                   <th className="py-2.5 px-2">ID & Origen</th>
                   <th className="py-2.5 px-2">Fechas</th>
-                  <th className="py-2.5 px-2">Concepto Bancario / Solver</th>
+                  <th className="py-2.5 px-2">Concepto Bancario / Tipo de Operación</th>
                   <th className="py-2.5 px-2 text-right">Banco Neto (€)</th>
                   <th className="py-2.5 px-2 text-right">Bruto Fra (€)</th>
                   <th className="py-2.5 px-2 text-right">Comisión (€)</th>
@@ -5215,7 +5242,7 @@ export function TransactionRow({
                 onClick={handleQuickApprove}
                 disabled={approving}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-600 active:bg-emerald-700 text-white font-medium text-[11px] transition-colors shadow-sm"
-                title="Aprobar asiento contable y transmutar a Verde"
+                title="Aprobar asiento contable y certificar conciliación"
               >
                 <Check className="h-3 w-3" />
                 <span>Aprobar Asiento</span>
@@ -5821,7 +5848,14 @@ FICHERO: frontend\src\services\api.js
  */
 import { INITIAL_TRANSACTIONS, MOCK_COMPANIES } from '../data/mockAuditData';
 
-const BASE_URL = 'http://127.0.0.1:8000';
+const getBaseUrl = () => {
+  if (typeof window !== 'undefined' && window.location.port === '8000') {
+    return window.location.origin;
+  }
+  return 'http://127.0.0.1:8000';
+};
+
+const BASE_URL = getBaseUrl();
 
 const AUTH_STORAGE_KEY = 'findaffinity_auth_session';
 
@@ -6217,6 +6251,9 @@ export async function createClientApi({
  * Eliminar una empresa cliente
  */
 export async function deleteClientApi(clientId) {
+  if (!clientId) {
+    return { success: false, error: 'Identificador de empresa cliente no especificado.' };
+  }
   const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients/${clientId}`, {
     method: 'DELETE',
@@ -6229,6 +6266,9 @@ export async function deleteClientApi(clientId) {
  * Eliminar un lote completo
  */
 export async function deleteBatchApi(batchId) {
+  if (!batchId) {
+    return { success: false, error: 'Identificador de lote no especificado.' };
+  }
   const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
     method: 'DELETE',
@@ -6241,6 +6281,9 @@ export async function deleteBatchApi(batchId) {
  * Eliminar una partida individual de un lote
  */
 export async function deleteTransactionApi(batchId, transactionId) {
+  if (!batchId || !transactionId) {
+    return { success: false, error: 'Identificadores no especificados.' };
+  }
   const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/transactions/${transactionId}`, {
     method: 'DELETE',
@@ -6291,6 +6334,7 @@ export async function fetchBatchDetails(batchId) {
           feeAmountEur: tx.fee_amount_eur,
           status: tx.status,
           confidenceScore: tx.confidence_score,
+          dimensions: tx.dimensions,
           solverUsed: tx.solver_used,
           auditExplanation: tx.audit_explanation,
           isApproved: tx.is_approved,
@@ -6350,6 +6394,16 @@ export async function uploadBatchFile({
     if (res.ok) {
       const data = await res.json();
       return { success: true, fromBackend: true, data };
+    } else {
+      let errDetail = 'Error al procesar lote contable';
+      try {
+        const errJson = await res.json();
+        errDetail = errJson.detail || errDetail;
+      } catch {
+        const text = await res.text();
+        if (text) errDetail = text;
+      }
+      return { success: false, fromBackend: true, error: errDetail };
     }
   } catch (err) {
     console.warn('Fallo en subida al backend:', err);
@@ -6676,32 +6730,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "592b049a-69c9-4239-b9c9-2b116910a249",
+  "tenant_id": "88a59d72-bc5e-43c0-8f23-afd0f7d1a522",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-13",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "76a72d2a0fc9f911aa4502f3d23b5037d735789b38c62193e288cb4623b4ed87",
+  "head_hash_sha256": "5fa28796ea0ef1de2aab57701afc30df32359639e6c9df5ef0c70087099a3853",
   "audit_events": [
     {
-      "event_id": "0b897c3b-4ed7-450c-bf0a-61fc5108f3f4",
+      "event_id": "a89de8f2-34e5-4a79-84c5-056698633d7c",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T19:10:18.350371",
-      "sha256_hash": "6239062f60b194b77af48dee9d26c8b9865c70781461880f6b490deeb4640cc6",
+      "timestamp": "2026-10-13T19:29:04.563007",
+      "sha256_hash": "ee98c20e257ae6b6c9cb49ac5d8d159402cfd20a286837a33613320deae1c279",
       "details": {
-        "batch_id": "a0eff86c-9a2a-49a5-9f9e-a367250fde5d",
+        "batch_id": "db19173f-612a-4da1-a927-fe63a5c9df14",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "ec79992c-e755-4d9f-830b-e9dd299b9e92",
+      "event_id": "bf041f1a-2376-4a38-b8d5-48a2ee4ef309",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T19:10:18.362895",
-      "sha256_hash": "5a98cf9920186f1fe0e4d8f8a9190f673a3a34d9a318ec8eacf906a36c6f6c5c",
+      "timestamp": "2026-10-13T19:29:04.574567",
+      "sha256_hash": "8d0219bffebc708d739344d18cecddea77224adcaaf1394880623ede8dc7e110",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -6709,23 +6763,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "52482c5c-900b-4bf6-af7a-89d760a1da39",
+      "event_id": "acc369a8-de01-46ec-b608-c79a9189ab21",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T19:10:18.368551",
-      "sha256_hash": "8d2080862c4d9351630cbeb82b19e906af5a75a1da88d531016a72950f99bd18",
+      "timestamp": "2026-10-13T19:29:04.581068",
+      "sha256_hash": "904f8473d4fffaaa35879a003b1466b8e79a7f7655858a8e51d0aafaf0627dc5",
       "details": {
-        "batch_id": "8ad1d764-2c1b-49ac-b8fd-a3997e650dd9",
+        "batch_id": "d7b350bf-f3db-4ec4-a92b-4fd6bb663e9b",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "fcc1578c-2d5a-4a99-971a-c24051cfe710",
+      "event_id": "dc1cb503-d4b4-4411-808d-49263a0ecd29",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T19:10:18.374733",
-      "sha256_hash": "a16f5a324575636276718d50a183f1df1c2816a7b2c25b589789131106ab5e53",
+      "timestamp": "2026-10-13T19:29:04.587293",
+      "sha256_hash": "c4e81ea04a812c8a092b742901432987a4360b32d3117f9f193e3b6fa7c11646",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -6733,23 +6787,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "fb665345-c06e-4831-a785-db209120d886",
+      "event_id": "a7f4ea40-57ac-487a-a70a-2d7a5845c55d",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T19:10:18.378913",
-      "sha256_hash": "56a03d6b19f5e2ec8adf8038ecef8596bec364dbdd9780646fc8783f7b06cc50",
+      "timestamp": "2026-10-13T19:29:04.591495",
+      "sha256_hash": "cf2eedfbb9be4e2eeca7b597f49b6805bb7c751dc1635e40a187dcb039a0f79f",
       "details": {
-        "batch_id": "51dd0a55-bcb6-4066-baf8-e9fb11eed813",
+        "batch_id": "3e099174-03e4-4866-ad88-87b044675c38",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "c2305368-be00-4589-97da-2a82bc5e6e5d",
+      "event_id": "cae7c9d3-a725-489f-8374-d91307880742",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T19:10:18.395683",
-      "sha256_hash": "76a72d2a0fc9f911aa4502f3d23b5037d735789b38c62193e288cb4623b4ed87",
+      "timestamp": "2026-10-13T19:29:04.609317",
+      "sha256_hash": "5fa28796ea0ef1de2aab57701afc30df32359639e6c9df5ef0c70087099a3853",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -6763,7 +6817,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xa9 in position 11: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xa2 in position 10: invalid start byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -8673,6 +8727,15 @@ def delete_company(
     }
 
 
+@router.delete("/companies/{tenant_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_company_slash(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
+):
+    return delete_company(tenant_id, db, current_user)
+
+
 ================================================================================
 FICHERO: src\api\v1\auth_api.py
 ================================================================================
@@ -9360,6 +9423,16 @@ def delete_client(
     }
 
 
+@router.delete("/clients/{client_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_client_slash(client_id: str, db: Session = Depends(get_db)):
+    return delete_client(client_id, db)
+
+
+@router.delete("/clients", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_client_query(client_id: str = Query(...), db: Session = Depends(get_db)):
+    return delete_client(client_id, db)
+
+
 # --- ENDPOINTS DE LOTES Y AUDITORÍA ---
 @router.get("/batches")
 def list_batches(
@@ -9561,6 +9634,14 @@ def get_batch_details(batch_id: str, db: Session = Depends(get_db)):
                 "lines": json.loads(tx.journal_entry.lines_json),
             }
 
+        dimensions_data = None
+        if tx.dimensions_json:
+            import json
+            try:
+                dimensions_data = json.loads(tx.dimensions_json)
+            except Exception:
+                dimensions_data = None
+
         transactions_data.append({
             "id": tx.id,
             "external_id": tx.external_id,
@@ -9573,6 +9654,7 @@ def get_batch_details(batch_id: str, db: Session = Depends(get_db)):
             "fee_amount_eur": tx.fee_amount_cents / 100.0,
             "status": tx.status,
             "confidence_score": tx.confidence_score,
+            "dimensions": dimensions_data,
             "solver_used": tx.solver_used,
             "audit_explanation": tx.audit_explanation,
             "is_approved": tx.is_approved,
@@ -9709,6 +9791,11 @@ def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     return {"success": True, "deleted_batch_id": batch_id}
 
 
+@router.delete("/batches/{batch_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_batch_slash(batch_id: str, db: Session = Depends(get_db)):
+    return delete_batch(batch_id, db)
+
+
 @router.delete("/batches/{batch_id}/transactions/{tx_id}", status_code=status.HTTP_200_OK)
 def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(get_db)):
     """Elimina una partida individual dentro de un lote de conciliación."""
@@ -9732,6 +9819,11 @@ def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(ge
     db.delete(tx)
     db.commit()
     return {"success": True, "deleted_transaction_id": tx_id}
+
+
+@router.delete("/batches/{batch_id}/transactions/{tx_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_batch_transaction_slash(batch_id: str, tx_id: str, db: Session = Depends(get_db)):
+    return delete_batch_transaction(batch_id, tx_id, db)
 
 
 ================================================================================
@@ -15316,6 +15408,63 @@ def test_complete_user_journey_and_security_isolation(api_client):
     # Verificar que ya no figura en la lista global de SUPERADMIN
     sa_companies_final = api_client.get("/api/v1/admin/companies", headers=sa_headers).json()
     assert not any(c["id"] == gomez_tenant_id for c in sa_companies_final)
+
+
+def test_deletion_routes_and_slash_variants_never_return_405(api_client):
+    """
+    Verifica que ninguna variante de ruta DELETE (con o sin barra final, o con query param)
+    genere 405 Method Not Allowed.
+    """
+    suffix = uuid.uuid4().hex[:6]
+    # Crear tenant temporal
+    reg_res = api_client.post("/api/v1/auth/register", json={
+        "email": f"delete_test_{suffix}@test.es",
+        "password": "PasswordTest2026!",
+        "full_name": "Test Delete",
+        "company_name": f"Test Delete {suffix} SL",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    tenant_id = reg_res.json()["tenant_id"]
+
+    # Crear cliente 1 para probar DELETE sin slash
+    c1_res = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": "Cliente Slash 1",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    c1_id = c1_res.json()["id"]
+
+    # Crear cliente 2 para probar DELETE con slash
+    c2_res = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": "Cliente Slash 2",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    c2_id = c2_res.json()["id"]
+
+    # Crear cliente 3 para probar DELETE con query param
+    c3_res = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": "Cliente Query 3",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    c3_id = c3_res.json()["id"]
+
+    # 1. DELETE sin barra
+    del1 = api_client.delete(f"/api/v1/clients/{c1_id}")
+    assert del1.status_code == 200, f"DELETE sin barra falló: {del1.status_code}"
+    assert del1.status_code != 405
+
+    # 2. DELETE con barra
+    del2 = api_client.delete(f"/api/v1/clients/{c2_id}/")
+    assert del2.status_code == 200, f"DELETE con barra falló: {del2.status_code}"
+    assert del2.status_code != 405
+
+    # 3. DELETE con query parameter
+    del3 = api_client.delete(f"/api/v1/clients?client_id={c3_id}")
+    assert del3.status_code == 200, f"DELETE con query param falló: {del3.status_code}"
+    assert del3.status_code != 405
+
 
 
 ================================================================================

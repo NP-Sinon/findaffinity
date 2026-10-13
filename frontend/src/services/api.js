@@ -5,7 +5,14 @@
  */
 import { INITIAL_TRANSACTIONS, MOCK_COMPANIES } from '../data/mockAuditData';
 
-const BASE_URL = 'http://127.0.0.1:8000';
+const getBaseUrl = () => {
+  if (typeof window !== 'undefined' && window.location.port === '8000') {
+    return window.location.origin;
+  }
+  return 'http://127.0.0.1:8000';
+};
+
+const BASE_URL = getBaseUrl();
 
 const AUTH_STORAGE_KEY = 'findaffinity_auth_session';
 
@@ -401,6 +408,9 @@ export async function createClientApi({
  * Eliminar una empresa cliente
  */
 export async function deleteClientApi(clientId) {
+  if (!clientId) {
+    return { success: false, error: 'Identificador de empresa cliente no especificado.' };
+  }
   const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients/${clientId}`, {
     method: 'DELETE',
@@ -413,6 +423,9 @@ export async function deleteClientApi(clientId) {
  * Eliminar un lote completo
  */
 export async function deleteBatchApi(batchId) {
+  if (!batchId) {
+    return { success: false, error: 'Identificador de lote no especificado.' };
+  }
   const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
     method: 'DELETE',
@@ -425,6 +438,9 @@ export async function deleteBatchApi(batchId) {
  * Eliminar una partida individual de un lote
  */
 export async function deleteTransactionApi(batchId, transactionId) {
+  if (!batchId || !transactionId) {
+    return { success: false, error: 'Identificadores no especificados.' };
+  }
   const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/transactions/${transactionId}`, {
     method: 'DELETE',
@@ -475,6 +491,7 @@ export async function fetchBatchDetails(batchId) {
           feeAmountEur: tx.fee_amount_eur,
           status: tx.status,
           confidenceScore: tx.confidence_score,
+          dimensions: tx.dimensions,
           solverUsed: tx.solver_used,
           auditExplanation: tx.audit_explanation,
           isApproved: tx.is_approved,
@@ -534,6 +551,16 @@ export async function uploadBatchFile({
     if (res.ok) {
       const data = await res.json();
       return { success: true, fromBackend: true, data };
+    } else {
+      let errDetail = 'Error al procesar lote contable';
+      try {
+        const errJson = await res.json();
+        errDetail = errJson.detail || errDetail;
+      } catch {
+        const text = await res.text();
+        if (text) errDetail = text;
+      }
+      return { success: false, fromBackend: true, error: errDetail };
     }
   } catch (err) {
     console.warn('Fallo en subida al backend:', err);

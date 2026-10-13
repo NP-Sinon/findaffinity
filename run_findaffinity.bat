@@ -39,4 +39,4 @@ start http://127.0.0.1:8000
 echo ===============================================================================
 echo Servidor activo en http://127.0.0.1:8000. Presione Ctrl+C para detener.
 echo ===============================================================================
-"%PYTHON_EXE%" -m uvicorn src.main:app --host 127.0.0.1 --port 8000
+"%PYTHON_EXE%" -m uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload

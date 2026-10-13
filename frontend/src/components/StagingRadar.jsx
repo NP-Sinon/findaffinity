@@ -130,7 +130,7 @@ export function StagingRadar({
               }`}
             >
               <span>Todas las Partidas</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-zinc-900/80 border border-zinc-700/50 text-zinc-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-900/80 border border-zinc-700/50 text-zinc-300">
                 {counts.all}
               </span>
             </button>
@@ -146,7 +146,7 @@ export function StagingRadar({
             >
               <CheckCircle2 className="h-3 w-3 text-emerald-400" />
               <span>Verdes (Automáticas)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-emerald-950/80 border border-emerald-800/50 text-emerald-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-800/50 text-emerald-300">
                 {counts.green}
               </span>
             </button>
@@ -162,7 +162,7 @@ export function StagingRadar({
             >
               <AlertCircle className="h-3 w-3 text-amber-400" />
               <span>Amarillas (Revisión)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
                 {counts.yellow}
               </span>
             </button>
@@ -178,7 +178,7 @@ export function StagingRadar({
             >
               <AlertOctagon className="h-3 w-3 text-rose-400" />
               <span>Rojas (Excepciones)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-rose-950/80 border border-rose-800/50 text-rose-300">
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-800/50 text-rose-300">
                 {counts.red}
               </span>
             </button>
@@ -224,7 +224,7 @@ export function StagingRadar({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por concepto, factura, solver, importe..."
+              placeholder="Buscar por concepto, factura, CIF, importe..."
               className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
             />
           </div>
@@ -305,7 +305,7 @@ export function StagingRadar({
                   <th className="py-2.5 px-2 w-8 text-center"></th>
                   <th className="py-2.5 px-2">ID & Origen</th>
                   <th className="py-2.5 px-2">Fechas</th>
-                  <th className="py-2.5 px-2">Concepto Bancario / Solver</th>
+                  <th className="py-2.5 px-2">Concepto Bancario / Tipo de Operación</th>
                   <th className="py-2.5 px-2 text-right">Banco Neto (€)</th>
                   <th className="py-2.5 px-2 text-right">Bruto Fra (€)</th>
                   <th className="py-2.5 px-2 text-right">Comisión (€)</th>

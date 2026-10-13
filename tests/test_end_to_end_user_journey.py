@@ -278,3 +278,60 @@ def test_complete_user_journey_and_security_isolation(api_client):
     # Verificar que ya no figura en la lista global de SUPERADMIN
     sa_companies_final = api_client.get("/api/v1/admin/companies", headers=sa_headers).json()
     assert not any(c["id"] == gomez_tenant_id for c in sa_companies_final)
+
+
+def test_deletion_routes_and_slash_variants_never_return_405(api_client):
+    """
+    Verifica que ninguna variante de ruta DELETE (con o sin barra final, o con query param)
+    genere 405 Method Not Allowed.
+    """
+    suffix = uuid.uuid4().hex[:6]
+    # Crear tenant temporal
+    reg_res = api_client.post("/api/v1/auth/register", json={
+        "email": f"delete_test_{suffix}@test.es",
+        "password": "PasswordTest2026!",
+        "full_name": "Test Delete",
+        "company_name": f"Test Delete {suffix} SL",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    tenant_id = reg_res.json()["tenant_id"]
+
+    # Crear cliente 1 para probar DELETE sin slash
+    c1_res = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": "Cliente Slash 1",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    c1_id = c1_res.json()["id"]
+
+    # Crear cliente 2 para probar DELETE con slash
+    c2_res = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": "Cliente Slash 2",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    c2_id = c2_res.json()["id"]
+
+    # Crear cliente 3 para probar DELETE con query param
+    c3_res = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": "Cliente Query 3",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    c3_id = c3_res.json()["id"]
+
+    # 1. DELETE sin barra
+    del1 = api_client.delete(f"/api/v1/clients/{c1_id}")
+    assert del1.status_code == 200, f"DELETE sin barra falló: {del1.status_code}"
+    assert del1.status_code != 405
+
+    # 2. DELETE con barra
+    del2 = api_client.delete(f"/api/v1/clients/{c2_id}/")
+    assert del2.status_code == 200, f"DELETE con barra falló: {del2.status_code}"
+    assert del2.status_code != 405
+
+    # 3. DELETE con query parameter
+    del3 = api_client.delete(f"/api/v1/clients?client_id={c3_id}")
+    assert del3.status_code == 200, f"DELETE con query param falló: {del3.status_code}"
+    assert del3.status_code != 405
+

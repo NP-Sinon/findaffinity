@@ -1,4 +1,4 @@
-﻿# Launcher PowerShell para FINDAFINITY
+# Launcher PowerShell para FINDAFINITY
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $Host.UI.RawUI.WindowTitle = "FINDAFINITY - Conciliacion Contable B2B2B"
 Clear-Host
@@ -40,4 +40,4 @@ Write-Host "====================================================================
 Write-Host "Servidor activo en http://127.0.0.1:8000. Presione Ctrl+C para detener." -ForegroundColor Cyan
 Write-Host "===============================================================================" -ForegroundColor Cyan
 
-& $PythonExe -m uvicorn src.main:app --host 127.0.0.1 --port 8000
+& $PythonExe -m uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload

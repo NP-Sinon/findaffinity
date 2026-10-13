@@ -48,17 +48,26 @@ export function IngestionZone({
 
   const processSelectedFile = async (file) => {
     setLocalProcessing(true);
+    setIngestionTelemetry({
+      filename: file.name,
+      sizeKb: (file.size / 1024).toFixed(1),
+      movements: 'Analizando...',
+      isValid: true,
+      errors: [],
+    });
+
     try {
-      const result = await uploadNorma43File(file);
-      setIngestionTelemetry({
-        filename: file.name,
-        sizeKb: (file.size / 1024).toFixed(1),
-        movements: result.data.movements_count || 12,
-        isValid: result.data.is_valid,
-        errors: result.data.validation_errors || [],
-      });
       if (onFileProcessed) {
-        onFileProcessed(result);
+        const result = await onFileProcessed(file);
+        if (result && result.total_movements !== undefined) {
+          setIngestionTelemetry({
+            filename: file.name,
+            sizeKb: (file.size / 1024).toFixed(1),
+            movements: `${result.total_movements} detectados`,
+            isValid: true,
+            errors: [],
+          });
+        }
       }
     } catch (err) {
       setIngestionTelemetry({
@@ -66,7 +75,7 @@ export function IngestionZone({
         sizeKb: (file.size / 1024).toFixed(1),
         movements: 0,
         isValid: false,
-        errors: ['Error al leer el archivo. Comprueba el formato.'],
+        errors: [err.message || 'Error al procesar el archivo contable.'],
       });
     } finally {
       setLocalProcessing(false);

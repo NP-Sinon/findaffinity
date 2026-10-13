@@ -217,10 +217,12 @@ export function ExportPanel({
           </div>
         </div>
         <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Auditoría Checksum</div>
-          <div className="font-mono text-sm font-semibold text-emerald-400 mt-0.5 flex items-center gap-1">
+          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Estado de Cuadre PGC</div>
+          <div className={`font-mono text-sm font-semibold mt-0.5 flex items-center gap-1 ${
+            auditMetrics.imbalance < 0.005 ? 'text-emerald-400' : 'text-rose-400'
+          }`}>
             <ShieldCheck className="h-3.5 w-3.5" />
-            Cuadre 0.00 €
+            {auditMetrics.imbalance < 0.005 ? 'Cuadre 0,00 €' : `Descuadre ${formatEuro(auditMetrics.imbalance)}`}
           </div>
         </div>
       </div>

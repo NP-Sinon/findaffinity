@@ -197,7 +197,7 @@ export function TransactionRow({
                 onClick={handleQuickApprove}
                 disabled={approving}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-600 active:bg-emerald-700 text-white font-medium text-[11px] transition-colors shadow-sm"
-                title="Aprobar asiento contable y transmutar a Verde"
+                title="Aprobar asiento contable y certificar conciliación"
               >
                 <Check className="h-3 w-3" />
                 <span>Aprobar Asiento</span>

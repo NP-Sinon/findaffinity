@@ -185,10 +185,12 @@ export function HeaderNav({
                   <span className="text-xs font-medium text-zinc-200">
                     {currentUser.full_name || currentUser.email}
                   </span>
-                  <span className={`text-[10px] font-mono uppercase tracking-wider ${
-                    isSuperAdmin ? 'text-blue-400 font-bold' : 'text-zinc-400'
+                  <span className={`text-[10px] font-sans font-medium ${
+                    isSuperAdmin ? 'text-blue-400 font-semibold' : 'text-zinc-400'
                   }`}>
-                    {currentUser.role}
+                    {currentUser.role === 'SUPERADMIN' ? 'Administrador Global' :
+                     currentUser.role === 'ADMIN' ? 'Administrador' :
+                     currentUser.role === 'AUDITOR' ? 'Auditor Contable' : 'Consulta'}
                   </span>
                 </div>
 

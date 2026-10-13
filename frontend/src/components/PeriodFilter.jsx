@@ -47,7 +47,7 @@ export function PeriodFilter({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2.5 bg-zinc-900/90 border border-zinc-800 rounded-lg p-2.5 text-xs">
+    <div className="flex flex-wrap items-center gap-2.5 bg-[#0d0d10] border-b border-zinc-800/80 px-4 py-2.5 text-xs">
       {/* Icono de Calendario */}
       <div className="flex items-center gap-1.5 text-zinc-400 font-medium pl-1">
         <Calendar className="h-3.5 w-3.5 text-zinc-400" />

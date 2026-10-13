@@ -330,6 +330,13 @@ export default function App() {
   // Ingesta de fichero real arrastrado o subido
   const handleFileUploaded = useCallback(async (file) => {
     setIsProcessing(true);
+    if (!selectedCompany) {
+      setIsProcessing(false);
+      triggerToast('Añade o selecciona una Empresa Cliente antes de procesar un archivo.');
+      handleOpenAddClientModal();
+      return null;
+    }
+
     const tenantIdToUse = currentUser?.tenant_id || (currentTenant && currentTenant.id);
     if (backendStatus.online && tenantIdToUse && selectedCompany) {
       const res = await uploadBatchFile({
@@ -346,17 +353,24 @@ export default function App() {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
         setIsProcessing(false);
         triggerToast(`Lote procesado y persistido con éxito (${res.data.total_movements} movimientos).`);
-        return;
+        return res.data;
+      } else {
+        setIsProcessing(false);
+        triggerToast(`Error: ${res?.error || 'No se pudo procesar el archivo'}`);
+        return null;
       }
     }
 
-    // Fallback de demostración
-    setTimeout(() => {
-      setTransactions(INITIAL_TRANSACTIONS);
-      setIsProcessing(false);
-      triggerToast('Fichero analizado y verificado mediante motor de conciliación.');
-    }, 400);
-  }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
+    // Fallback de demostración en modo autónomo
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        setTransactions(INITIAL_TRANSACTIONS);
+        setIsProcessing(false);
+        triggerToast('Fichero analizado y verificado mediante motor de conciliación.');
+        resolve({ total_movements: INITIAL_TRANSACTIONS.length });
+      }, 400);
+    });
+  }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
 
   // Cargar Lote Demo de Auditoría (SOLO bajo petición explícita)
   const handleLoadDemoBatch = useCallback(() => {

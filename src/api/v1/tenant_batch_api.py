@@ -168,6 +168,16 @@ def delete_client(
     }
 
 
+@router.delete("/clients/{client_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_client_slash(client_id: str, db: Session = Depends(get_db)):
+    return delete_client(client_id, db)
+
+
+@router.delete("/clients", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_client_query(client_id: str = Query(...), db: Session = Depends(get_db)):
+    return delete_client(client_id, db)
+
+
 # --- ENDPOINTS DE LOTES Y AUDITORÍA ---
 @router.get("/batches")
 def list_batches(
@@ -369,6 +379,14 @@ def get_batch_details(batch_id: str, db: Session = Depends(get_db)):
                 "lines": json.loads(tx.journal_entry.lines_json),
             }
 
+        dimensions_data = None
+        if tx.dimensions_json:
+            import json
+            try:
+                dimensions_data = json.loads(tx.dimensions_json)
+            except Exception:
+                dimensions_data = None
+
         transactions_data.append({
             "id": tx.id,
             "external_id": tx.external_id,
@@ -381,6 +399,7 @@ def get_batch_details(batch_id: str, db: Session = Depends(get_db)):
             "fee_amount_eur": tx.fee_amount_cents / 100.0,
             "status": tx.status,
             "confidence_score": tx.confidence_score,
+            "dimensions": dimensions_data,
             "solver_used": tx.solver_used,
             "audit_explanation": tx.audit_explanation,
             "is_approved": tx.is_approved,
@@ -517,6 +536,11 @@ def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     return {"success": True, "deleted_batch_id": batch_id}
 
 
+@router.delete("/batches/{batch_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_batch_slash(batch_id: str, db: Session = Depends(get_db)):
+    return delete_batch(batch_id, db)
+
+
 @router.delete("/batches/{batch_id}/transactions/{tx_id}", status_code=status.HTTP_200_OK)
 def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(get_db)):
     """Elimina una partida individual dentro de un lote de conciliación."""
@@ -540,3 +564,8 @@ def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(ge
     db.delete(tx)
     db.commit()
     return {"success": True, "deleted_transaction_id": tx_id}
+
+
+@router.delete("/batches/{batch_id}/transactions/{tx_id}/", status_code=status.HTTP_200_OK, include_in_schema=False)
+def delete_batch_transaction_slash(batch_id: str, tx_id: str, db: Session = Depends(get_db)):
+    return delete_batch_transaction(batch_id, tx_id, db)
