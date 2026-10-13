@@ -318,11 +318,12 @@ export async function fetchTenants() {
  * Obtiene las empresas clientes de un despacho
  */
 export async function fetchClients(tenantId) {
+  if (!tenantId) return [];
   try {
     const res = await fetch(`${BASE_URL}/api/v1/clients?tenant_id=${tenantId}`);
     if (res.ok) {
       const clients = await res.json();
-      if (clients && clients.length > 0) {
+      if (Array.isArray(clients)) {
         return clients.map(c => ({
           id: c.id,
           name: c.name,
@@ -333,11 +334,55 @@ export async function fetchClients(tenantId) {
           feeAccountCode: c.fee_account_code,
         }));
       }
+      return [];
     }
   } catch (err) {
-    console.warn('Usando empresas clientes locales:', err);
+    console.warn('Error al consultar clientes del tenant:', err);
   }
-  return MOCK_COMPANIES;
+  return [];
+}
+
+/**
+ * Crea una nueva empresa cliente para el despacho contable
+ */
+export async function createClientApi({
+  tenantId,
+  name,
+  fiscalId,
+  defaultErp = 'A3',
+  accountLength = 9,
+  bankAccountCode = '572000001',
+  feeAccountCode = '626000001',
+}) {
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      name,
+      fiscal_id: fiscalId,
+      default_erp: defaultErp,
+      account_length: accountLength,
+      bank_account_code: bankAccountCode,
+      fee_account_code: feeAccountCode,
+    }),
+  });
+
+  if (ok && data) {
+    return {
+      success: true,
+      client: {
+        id: data.id,
+        name: data.name,
+        fiscalId: data.fiscal_id,
+        defaultErp: data.default_erp,
+        accountLength: data.account_length,
+        bankAccountCode: data.bank_account_code,
+        feeAccountCode: data.fee_account_code,
+      },
+    };
+  }
+  return { success: false, error: data?.detail || 'Error al crear empresa cliente' };
 }
 
 /**

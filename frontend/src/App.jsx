@@ -13,6 +13,7 @@ import {
   checkBackendHealth, 
   fetchTenants, 
   fetchClients, 
+  createClientApi,
   fetchBatches, 
   fetchBatchDetails,
   uploadBatchFile,
@@ -27,12 +28,14 @@ import { Check } from 'lucide-react';
 export default function App() {
   const [tenants, setTenants] = useState([]);
   const [currentTenant, setCurrentTenant] = useState(null);
-  const [companies, setCompanies] = useState(MOCK_COMPANIES);
-  const [selectedCompany, setSelectedCompany] = useState(MOCK_COMPANIES[0]);
-  const [selectedErp, setSelectedErp] = useState(MOCK_COMPANIES[0].defaultErp || 'A3');
+  const [companies, setCompanies] = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState(null);
+  const [selectedErp, setSelectedErp] = useState('A3');
   const [batches, setBatches] = useState([]);
   const [currentBatchId, setCurrentBatchId] = useState(null);
-  const [transactions, setTransactions] = useState(INITIAL_TRANSACTIONS);
+  
+  // Transacciones en memoria: inicializado ESTRICTAMENTE vacío por defecto (cero documentos fantasma)
+  const [transactions, setTransactions] = useState([]);
   const [modalTransaction, setModalTransaction] = useState(null);
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [backendStatus, setBackendStatus] = useState({ online: false });
@@ -44,13 +47,16 @@ export default function App() {
     const s = getStoredAuthSession();
     return s ? s.user : null;
   });
+  
+  // Exclusividad SUPERADMIN: Solo SUPERADMIN puede tener la vista 'admin'
   const [currentView, setCurrentView] = useState(() => {
     const s = getStoredAuthSession();
-    if (s && s.user && (s.user.role === 'SUPERADMIN' || s.user.role === 'ADMIN')) {
+    if (s && s.user && s.user.role === 'SUPERADMIN') {
       return 'admin';
     }
     return 'radar';
   });
+  
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authModalView, setAuthModalView] = useState('login');
 
@@ -70,6 +76,12 @@ export default function App() {
 
   // Función para cargar lotes de una empresa cliente
   const loadBatchesForCompany = useCallback(async (companyId, year, sMonth, eMonth) => {
+    if (!companyId) {
+      setBatches([]);
+      setCurrentBatchId(null);
+      setTransactions([]);
+      return;
+    }
     try {
       const batchList = await fetchBatches(companyId, year, sMonth, eMonth);
       setBatches(batchList || []);
@@ -82,10 +94,79 @@ export default function App() {
           return;
         }
       }
+      // Si la empresa no tiene lotes persistidos en este periodo, queda limpia y vacía
+      setCurrentBatchId(null);
+      setTransactions([]);
     } catch (err) {
       console.warn('Error al cargar lotes:', err);
+      setBatches([]);
+      setCurrentBatchId(null);
+      setTransactions([]);
     }
   }, []);
+
+  // Sincronización de contexto multi-tenant según el usuario activo
+  const syncUserContext = useCallback(async (user) => {
+    if (!user) {
+      setCompanies([]);
+      setSelectedCompany(null);
+      setTransactions([]);
+      return;
+    }
+
+    if (user.tenant_id) {
+      try {
+        let clientList = await fetchClients(user.tenant_id);
+
+        // Si el despacho no tiene empresas clientes aún, autoprovisionar una por defecto
+        if (!clientList || clientList.length === 0) {
+          const compName = user.tenant_name || user.full_name || 'Mi Empresa SL';
+          const defaultFiscal = `B${user.tenant_id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
+          const createRes = await createClientApi({
+            tenantId: user.tenant_id,
+            name: compName,
+            fiscalId: defaultFiscal,
+            defaultErp: 'A3',
+          });
+          if (createRes.success && createRes.client) {
+            clientList = [createRes.client];
+          }
+        }
+
+        if (clientList && clientList.length > 0) {
+          setCompanies(clientList);
+          const firstComp = clientList[0];
+          setSelectedCompany(firstComp);
+          setSelectedErp(firstComp.defaultErp || 'A3');
+          await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
+        } else {
+          setCompanies([]);
+          setSelectedCompany(null);
+          setTransactions([]);
+        }
+      } catch (err) {
+        console.warn('Error sincronizando empresas del tenant:', err);
+      }
+    } else if (user.role === 'SUPERADMIN') {
+      try {
+        const tList = await fetchTenants();
+        if (tList && tList.length > 0) {
+          setTenants(tList);
+          const firstTenant = tList[0];
+          setCurrentTenant(firstTenant);
+          const cList = await fetchClients(firstTenant.id);
+          if (cList && cList.length > 0) {
+            setCompanies(cList);
+            setSelectedCompany(cList[0]);
+            setSelectedErp(cList[0].defaultErp || 'A3');
+            await loadBatchesForCompany(cList[0].id, selectedYear, startMonth, endMonth);
+          }
+        }
+      } catch (err) {
+        console.warn('Error sincronizando contexto SUPERADMIN:', err);
+      }
+    }
+  }, [loadBatchesForCompany, selectedYear, startMonth, endMonth]);
 
   // Inicialización al montar: Conectar con FastAPI y cargar datos multi-tenant
   useEffect(() => {
@@ -96,39 +177,18 @@ export default function App() {
       if (!isMounted) return;
       setBackendStatus(health);
 
-      if (health.online) {
-        try {
-          const tenantList = await fetchTenants();
-          if (!isMounted) return;
-          if (tenantList && tenantList.length > 0) {
-            setTenants(tenantList);
-            const activeTenant = tenantList[0];
-            setCurrentTenant(activeTenant);
-
-            const clientList = await fetchClients(activeTenant.id);
-            if (!isMounted) return;
-            if (clientList && clientList.length > 0) {
-              setCompanies(clientList);
-              const firstComp = clientList[0];
-              setSelectedCompany(firstComp);
-              setSelectedErp(firstComp.defaultErp || 'A3');
-
-              // Cargar lotes del primer cliente
-              await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
-            }
-          }
-        } catch (err) {
-          console.warn('Fallo al inicializar datos del backend, usando mock:', err);
-        }
+      if (health.online && currentUser) {
+        await syncUserContext(currentUser);
       }
     }
 
     initApp();
     return () => { isMounted = false; };
-  }, [loadBatchesForCompany, selectedYear, startMonth, endMonth]);
+  }, [currentUser, syncUserContext]);
 
   // Partidas filtradas por periodo contable
   const periodFilteredTransactions = useMemo(() => {
+    if (!transactions || transactions.length === 0) return [];
     return transactions.filter(tx => {
       if (!tx.date) return true;
       const parts = tx.date.split('-');
@@ -142,6 +202,14 @@ export default function App() {
 
   // Cálculo de métricas en tiempo real sobre el periodo activo
   const metrics = useMemo(() => {
+    if (!periodFilteredTransactions || periodFilteredTransactions.length === 0) {
+      return {
+        totalNetVolumeEur: 0.00,
+        reconciliationRate: 0,
+        globalImbalanceEur: 0.00,
+      };
+    }
+
     const totalVolume = periodFilteredTransactions.reduce((acc, t) => acc + (Number(t.netAmountEur) || 0), 0);
     const greenCount = periodFilteredTransactions.filter(t => t.status === 'GREEN' || t.isApproved).length;
     const rate = periodFilteredTransactions.length > 0 ? (greenCount / periodFilteredTransactions.length) : 0;
@@ -155,7 +223,6 @@ export default function App() {
 
   // Manejador para aprobar una partida individual (Amarilla -> Verde)
   const handleApproveTransaction = useCallback(async (id) => {
-    // 1. Optimistic update
     setTransactions(prev => prev.map(tx => {
       if (tx.id === id) {
         return {
@@ -169,7 +236,6 @@ export default function App() {
       return tx;
     }));
 
-    // 2. Persistir en backend si existe lote activo
     if (currentBatchId && backendStatus.online) {
       await approveTransactionApi(currentBatchId, id);
     }
@@ -194,7 +260,6 @@ export default function App() {
       return tx;
     }));
 
-    // Persistir en backend
     if (currentBatchId && backendStatus.online) {
       await bulkApproveYellowsApi(currentBatchId);
     }
@@ -205,9 +270,10 @@ export default function App() {
   // Ingesta de fichero real arrastrado o subido
   const handleFileUploaded = useCallback(async (file) => {
     setIsProcessing(true);
-    if (backendStatus.online && currentTenant && selectedCompany) {
+    const tenantIdToUse = currentUser?.tenant_id || (currentTenant && currentTenant.id);
+    if (backendStatus.online && tenantIdToUse && selectedCompany) {
       const res = await uploadBatchFile({
-        tenantId: currentTenant.id,
+        tenantId: tenantIdToUse,
         clientId: selectedCompany.id,
         year: selectedYear,
         periodType,
@@ -230,17 +296,21 @@ export default function App() {
       setIsProcessing(false);
       triggerToast('Fichero analizado y verificado mediante motor de conciliación.');
     }, 400);
-  }, [backendStatus.online, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
+  }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
 
-  // Cargar Lote Demo de Auditoría
+  // Cargar Lote Demo de Auditoría (SOLO bajo petición explícita)
   const handleLoadDemoBatch = useCallback(() => {
     setIsProcessing(true);
     setTimeout(() => {
       setTransactions(INITIAL_TRANSACTIONS);
+      if (!selectedCompany && MOCK_COMPANIES.length > 0) {
+        setSelectedCompany(MOCK_COMPANIES[0]);
+        setCompanies(MOCK_COMPANIES);
+      }
       setIsProcessing(false);
-      triggerToast('Lote de auditoría cargado con balance exacto a 0 céntimos.');
+      triggerToast('Lote de prueba cargado con balance exacto a 0 céntimos.');
     }, 250);
-  }, [triggerToast]);
+  }, [selectedCompany, triggerToast]);
 
   // Cambio de empresa cliente
   const handleSelectCompany = useCallback((company) => {
@@ -258,20 +328,26 @@ export default function App() {
     setShowAuthModal(true);
   }, []);
 
-  const handleAuthSuccess = useCallback((user) => {
+  const handleAuthSuccess = useCallback(async (user) => {
     setCurrentUser(user);
-    if (user.role === 'SUPERADMIN' || user.role === 'ADMIN') {
+    if (user.role === 'SUPERADMIN') {
       setCurrentView('admin');
     } else {
       setCurrentView('radar');
     }
     triggerToast(`Sesión iniciada: ${user.full_name || user.email} (${user.role})`);
-  }, [triggerToast]);
+    await syncUserContext(user);
+  }, [triggerToast, syncUserContext]);
 
   const handleLogout = useCallback(() => {
     clearAuthSession();
     setCurrentUser(null);
     setCurrentView('radar');
+    setCompanies([]);
+    setSelectedCompany(null);
+    setTransactions([]);
+    setBatches([]);
+    setCurrentBatchId(null);
     triggerToast('Sesión finalizada');
   }, [triggerToast]);
 
@@ -313,8 +389,8 @@ export default function App() {
         onToggleView={setCurrentView}
       />
 
-      {/* Contenedor Principal: Conmutador entre Panel ADMIN y Radar Contable */}
-      {currentView === 'admin' ? (
+      {/* Contenedor Principal: Conmutador entre Panel ADMIN (Exclusivo SUPERADMIN) y Radar Contable */}
+      {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <AdminPanel 
             onNavigateToRadar={() => setCurrentView('radar')}
@@ -344,6 +420,7 @@ export default function App() {
             onSelectStartMonth={setStartMonth}
             endMonth={endMonth}
             onSelectEndMonth={setEndMonth}
+            onLoadDemoBatch={handleLoadDemoBatch}
           />
 
           {/* 4. Panel de Descarga y Exportación a ERP */}

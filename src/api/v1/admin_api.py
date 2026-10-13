@@ -52,11 +52,12 @@ class PlatformStatsDTO(BaseModel):
 @router.get("/companies", response_model=List[CompanyAdminDTO])
 def list_all_registered_companies(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.SUPERADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
 ):
     """
     Lista todas las empresas y despachos registrados en el sistema
     con sus métricas operativas y tipo de licencia/plan contratado.
+    Exclusivo para la cuenta SUPERADMIN de la plataforma.
     """
     tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
     results = []
@@ -105,9 +106,9 @@ def update_company_plan(
     tenant_id: str,
     payload: UpdateCompanyPlanDTO,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.SUPERADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
 ):
-    """Permite al administrador modificar directamente el plan y cuota de una compañía."""
+    """Permite al SUPERADMIN modificar directamente el plan y cuota de una compañía."""
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not tenant:
         raise HTTPException(
@@ -159,9 +160,9 @@ def update_company_plan(
 @router.get("/stats", response_model=PlatformStatsDTO)
 def get_platform_admin_stats(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.SUPERADMIN, UserRole.ADMIN])),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
 ):
-    """Estadísticas globales de la plataforma SaaS para el Administrador."""
+    """Estadísticas globales de la plataforma SaaS exclusivas para SUPERADMIN."""
     total_companies = db.query(Tenant).count()
     total_users = db.query(User).count()
     batches = db.query(ReconciliationBatch).all()

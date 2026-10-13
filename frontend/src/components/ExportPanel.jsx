@@ -62,14 +62,15 @@ export function ExportPanel({
   // Previsualización de texto según ERP
   const previewText = useMemo(() => {
     if (validJournals.length === 0) {
-      return '// No hay asientos conciliados listos para exportar.';
+      return '// Esperando asientos conciliados para exportar.';
     }
 
+    const accLen = selectedCompany?.accountLength || 9;
     if (selectedErp === 'A3') {
-      return generateA3Suenlace(validJournals, selectedCompany.accountLength || 9);
+      return generateA3Suenlace(validJournals, accLen);
     }
     if (selectedErp === 'SAGE') {
-      return generateSageXdiario(validJournals, selectedCompany.accountLength || 9);
+      return generateSageXdiario(validJournals, accLen);
     }
     // Para Contasol se muestra la estructura CSV correspondiente
     const header = 'Diario;Fecha;Subcuenta;Concepto;Documento;Debe;Haber';
@@ -95,7 +96,7 @@ export function ExportPanel({
         if (res.ok) {
           const blob = await res.blob();
           const disposition = res.headers.get('content-disposition');
-          let fname = `EXPORT_${(selectedCompany.fiscalId || 'CLIENT').replace(/[^a-zA-Z0-9]/g, '')}_${selectedErp}`;
+          let fname = `EXPORT_${((selectedCompany?.fiscalId || 'CLIENT')).replace(/[^a-zA-Z0-9]/g, '')}_${selectedErp}`;
           if (disposition && disposition.includes('filename=')) {
             fname = disposition.split('filename=')[1].replace(/"/g, '').trim();
           } else {
@@ -119,7 +120,7 @@ export function ExportPanel({
     }
 
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const clientCode = (selectedCompany.fiscalId || 'CLIENT').replace(/[^a-zA-Z0-9]/g, '');
+    const clientCode = ((selectedCompany?.fiscalId || 'CLIENT')).replace(/[^a-zA-Z0-9]/g, '');
 
     if (selectedErp === 'A3') {
       const filename = `SUENLACE_${clientCode}_${dateStr}.txt`;
@@ -129,7 +130,7 @@ export function ExportPanel({
       downloadTextFile(previewText, filename, 'text/csv;charset=windows-1252');
     } else if (selectedErp === 'CONTASOL') {
       const filename = `CONTASOL_DIARIO_${clientCode}_${dateStr}.xlsx`;
-      const binaryData = generateContasolXlsx(validJournals, selectedCompany.accountLength || 9);
+      const binaryData = generateContasolXlsx(validJournals, selectedCompany?.accountLength || 9);
       downloadBinaryFile(binaryData, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 

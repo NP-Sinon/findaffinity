@@ -24,7 +24,7 @@ export function HeaderNav({
   currentView = 'radar',
   onToggleView,
 }) {
-  const isAdminUser = currentUser?.role === 'SUPERADMIN' || currentUser?.role === 'ADMIN';
+  const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
 
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
@@ -46,8 +46,8 @@ export function HeaderNav({
             {/* Separador sutil */}
             <div className="hidden sm:block h-6 w-px bg-zinc-800" />
 
-            {/* Selector de Vistas si es Administrador */}
-            {isAdminUser && onToggleView && (
+            {/* Selector de Vistas EXCLUSIVO para SUPERADMIN */}
+            {isSuperAdmin && onToggleView && (
               <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
                 <button
                   type="button"
@@ -72,6 +72,32 @@ export function HeaderNav({
                   <ShieldCheck className="h-3.5 w-3.5" />
                   <span>Licencias & Empresas</span>
                 </button>
+              </div>
+            )}
+
+            {/* Selector de Empresa Cliente Activa */}
+            {companies && companies.length > 0 && (
+              <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
+                <Building2 className="h-3.5 w-3.5 text-zinc-400" />
+                <div className="flex flex-col">
+                  <span className="text-[9px] uppercase tracking-wider text-zinc-400">
+                    Empresa Cliente
+                  </span>
+                  <select
+                    value={selectedCompany ? selectedCompany.id : ''}
+                    onChange={(e) => {
+                      const comp = companies.find(c => c.id === e.target.value);
+                      if (comp && onSelectCompany) onSelectCompany(comp);
+                    }}
+                    className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-3"
+                  >
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
+                        {c.name} {c.fiscalId ? `(${c.fiscalId})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
 

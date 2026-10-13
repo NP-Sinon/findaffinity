@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
-from src.database.models import User, UserRole, Tenant
+from src.database.models import User, UserRole, Tenant, ClientCompany
 from src.auth.security import (
     hash_password,
     verify_password,
@@ -70,7 +70,11 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
 
     assigned_tenant_id = payload.tenant_id
     assigned_tenant_name = None
-    assigned_role = payload.role.upper()
+    assigned_role = payload.role.upper() if payload.role else UserRole.AUDITOR
+
+    # La cuenta SUPERADMIN es reservada exclusivamente para la administración central de FINDAFINITY
+    if assigned_role == UserRole.SUPERADMIN:
+        assigned_role = UserRole.ADMIN
 
     # Si no se proporciona tenant_id pero sí nombre de empresa/despacho, crearlo
     if not assigned_tenant_id and payload.company_name:
@@ -91,6 +95,21 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
         assigned_tenant_id = assigned_tenant.id
         assigned_tenant_name = assigned_tenant.name
         assigned_role = UserRole.ADMIN
+
+        # Autoprovisionar una empresa cliente por defecto para el despacho registrado
+        existing_client = db.query(ClientCompany).filter(ClientCompany.tenant_id == assigned_tenant.id).first()
+        if not existing_client:
+            default_client = ClientCompany(
+                tenant_id=assigned_tenant.id,
+                name=assigned_tenant.name,
+                fiscal_id=assigned_tenant.fiscal_id,
+                default_erp="A3",
+                account_length=9,
+                bank_account_code="572000001",
+                fee_account_code="626000001",
+            )
+            db.add(default_client)
+            db.commit()
 
     elif assigned_tenant_id:
         tenant = db.query(Tenant).filter(Tenant.id == assigned_tenant_id).first()
@@ -167,6 +186,7 @@ def login_user(payload: UserLoginDTO, db: Session = Depends(get_db)):
             full_name=user.full_name,
             role=user.role,
             tenant_id=user.tenant_id,
+            tenant_name=user.tenant.name if user.tenant else None,
             is_active=user.is_active,
         ),
     )

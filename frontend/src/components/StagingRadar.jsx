@@ -7,7 +7,8 @@ import {
   AlertOctagon, 
   Layers, 
   ChevronDown,
-  CheckCheck
+  CheckCheck,
+  Sparkles
 } from 'lucide-react';
 import { TransactionRow } from './TransactionRow';
 import { PeriodFilter } from './PeriodFilter';
@@ -26,6 +27,7 @@ export function StagingRadar({
   onSelectStartMonth,
   endMonth,
   onSelectEndMonth,
+  onLoadDemoBatch,
 }) {
   const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'GREEN' | 'YELLOW' | 'RED'
   const [searchQuery, setSearchQuery] = useState('');
@@ -211,54 +213,80 @@ export function StagingRadar({
         </div>
       </div>
 
-      {/* High-Density Transactions Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-zinc-800 bg-[#09090b] text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
-              <th className="py-2.5 px-2 w-8 text-center"></th>
-              <th className="py-2.5 px-2">ID & Origen</th>
-              <th className="py-2.5 px-2">Fechas</th>
-              <th className="py-2.5 px-2">Concepto Bancario / Solver</th>
-              <th className="py-2.5 px-2 text-right">Banco Neto (€)</th>
-              <th className="py-2.5 px-2 text-right">Bruto Fra (€)</th>
-              <th className="py-2.5 px-2 text-right">Comisión (€)</th>
-              <th className="py-2.5 px-2 text-center">Score</th>
-              <th className="py-2.5 px-2 text-right">Estado / Acción</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-900">
-            {filteredTransactions.length > 0 ? (
-              filteredTransactions.map((tx) => (
-                <TransactionRow
-                  key={tx.id}
-                  transaction={tx}
-                  isExpanded={expandedId === tx.id}
-                  onToggleExpand={() => toggleExpand(tx.id)}
-                  onOpenScoreModal={onOpenScoreModal}
-                  onApprove={onApproveTransaction}
-                />
-              ))
-            ) : (
-              <tr>
-                <td colSpan={9} className="py-10 text-center text-zinc-400 text-xs">
-                  No se encontraron partidas con los filtros seleccionados.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* High-Density Transactions Table o Empty State */}
+      {transactions.length === 0 ? (
+        <div className="py-16 px-6 text-center flex flex-col items-center justify-center bg-[#0c0c0f]">
+          <div className="h-14 w-14 rounded-full bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-400 mb-4 shadow-inner">
+            <Layers className="h-7 w-7 text-zinc-400" />
+          </div>
+          <h3 className="text-sm font-semibold text-zinc-100 mb-2">
+            No hay movimientos contables cargados en este periodo
+          </h3>
+          <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
+            Sube un extracto bancario o reporte de cobros arriba, o pulsa en <strong className="text-zinc-200">"Cargar Lote de Prueba"</strong> para probar el motor con datos de muestra.
+          </p>
+          {onLoadDemoBatch && (
+            <button
+              type="button"
+              onClick={onLoadDemoBatch}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 text-xs font-semibold text-amber-300 transition-colors shadow-sm"
+            >
+              <Sparkles className="h-4 w-4 text-amber-400" />
+              <span>Cargar Lote de Prueba</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-[#09090b] text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
+                  <th className="py-2.5 px-2 w-8 text-center"></th>
+                  <th className="py-2.5 px-2">ID & Origen</th>
+                  <th className="py-2.5 px-2">Fechas</th>
+                  <th className="py-2.5 px-2">Concepto Bancario / Solver</th>
+                  <th className="py-2.5 px-2 text-right">Banco Neto (€)</th>
+                  <th className="py-2.5 px-2 text-right">Bruto Fra (€)</th>
+                  <th className="py-2.5 px-2 text-right">Comisión (€)</th>
+                  <th className="py-2.5 px-2 text-center">Score</th>
+                  <th className="py-2.5 px-2 text-right">Estado / Acción</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900">
+                {filteredTransactions.length > 0 ? (
+                  filteredTransactions.map((tx) => (
+                    <TransactionRow
+                      key={tx.id}
+                      transaction={tx}
+                      isExpanded={expandedId === tx.id}
+                      onToggleExpand={() => toggleExpand(tx.id)}
+                      onOpenScoreModal={onOpenScoreModal}
+                      onApprove={onApproveTransaction}
+                    />
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={9} className="py-10 text-center text-zinc-400 text-xs">
+                      No se encontraron partidas con los filtros seleccionados.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
 
-      {/* Table Footer: Summary count */}
-      <div className="p-3 border-t border-zinc-800/60 bg-[#09090b] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-zinc-400 gap-2">
-        <div>
-          Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
-        </div>
-        <div className="flex items-center gap-4 text-xs font-mono">
-          <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + t.netAmountEur, 0))}</strong></span>
-        </div>
-      </div>
+          {/* Table Footer: Summary count */}
+          <div className="p-3 border-t border-zinc-800/60 bg-[#09090b] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-zinc-400 gap-2">
+            <div>
+              Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
+            </div>
+            <div className="flex items-center gap-4 text-xs font-mono">
+              <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + t.netAmountEur, 0))}</strong></span>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -18,6 +18,25 @@ import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi } from '.
 import { formatEuro } from '../utils/formatters';
 
 export function AdminPanel({ onNavigateToRadar, currentUser }) {
+  if (currentUser?.role !== 'SUPERADMIN') {
+    return (
+      <div className="bg-[#101013] border border-rose-900/50 rounded-lg p-8 text-center max-w-xl mx-auto my-12 shadow-2xl">
+        <ShieldCheck className="h-12 w-12 text-rose-500 mx-auto mb-4" />
+        <h2 className="text-lg font-bold text-zinc-100 mb-2">Acceso Exclusivo a Administrador Global</h2>
+        <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
+          El Panel de Licencias & Empresas SaaS está reservado exclusivamente para la cuenta maestra SUPERADMIN de la plataforma. Como usuario de despacho o empresa, su gestión contable se realiza desde el Radar de Conciliación.
+        </p>
+        <button
+          type="button"
+          onClick={onNavigateToRadar}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-sm"
+        >
+          Volver al Radar de Conciliación
+        </button>
+      </div>
+    );
+  }
+
   const [companies, setCompanies] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
