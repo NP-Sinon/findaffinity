@@ -443,3 +443,61 @@ def test_batch_service_processing_and_erp_export(db_session):
     assert isinstance(contasol_res["content"], bytes)
     assert contasol_res["content"][:2] == b"PK"  # Magic bytes de ZIP/XLSX
 
+
+def test_upload_and_process_batch_api_endpoint(client_api):
+    """Verifica la ingesta, conciliación y persistencia mediante el endpoint HTTP multipart POST /batches."""
+    # 1. Crear tenant y cliente vía API
+    res_tenant = client_api.post(
+        "/api/v1/tenants",
+        json={
+            "name": "Auditores Norte SL",
+            "fiscal_id": "B-88776655",
+            "email": "norte@auditores.es",
+            "plan": "PROFESSIONAL",
+        },
+    )
+    assert res_tenant.status_code == 201
+    tenant_id = res_tenant.json()["id"]
+
+    res_client = client_api.post(
+        "/api/v1/clients",
+        json={
+            "tenant_id": tenant_id,
+            "name": "Distribución Gastronómica SL",
+            "fiscal_id": "B-54892103",
+            "default_erp": "CONTASOL",
+            "account_length": 9,
+            "bank_account_code": "572000001",
+            "fee_account_code": "626000001",
+        },
+    )
+    assert res_client.status_code == 201
+    client_id = res_client.json()["id"]
+
+    # 2. Subir fichero Norma 43
+    from pathlib import Path
+    n43_path = Path(__file__).resolve().parent.parent / "data" / "pilot" / "cliente3_norma43.n43"
+    with open(n43_path, "rb") as f:
+        file_content = f.read()
+
+    res = client_api.post(
+        "/api/v1/batches",
+        data={
+            "tenant_id": tenant_id,
+            "client_id": client_id,
+            "period_year": 2026,
+            "period_type": "Q4",
+            "start_month": 10,
+            "end_month": 12,
+        },
+        files={
+            "file": ("cliente3_norma43.n43", file_content, "text/plain"),
+        },
+    )
+    assert res.status_code == 201
+    data = res.json()
+    assert "id" in data
+    assert data["total_movements"] == 4
+    assert data["client_id"] == client_id
+
+

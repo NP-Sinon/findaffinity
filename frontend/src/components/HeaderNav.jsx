@@ -3,7 +3,9 @@ import {
   Building2, 
   Database, 
   CheckCircle2, 
-  Layers
+  Layers,
+  ShieldCheck,
+  Server
 } from 'lucide-react';
 import { formatEuro, formatPercent } from '../utils/formatters';
 
@@ -14,6 +16,8 @@ export function HeaderNav({
   selectedErp,
   onSelectErp,
   metrics,
+  backendStatus,
+  onOpenAuditModal,
 }) {
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
@@ -43,7 +47,7 @@ export function HeaderNav({
                   Empresa
                 </span>
                 <select
-                  value={selectedCompany.id}
+                  value={selectedCompany ? selectedCompany.id : ''}
                   onChange={(e) => {
                     const c = companies.find((item) => item.id === e.target.value);
                     if (c) onSelectCompany(c);
@@ -85,9 +89,9 @@ export function HeaderNav({
             </div>
           </div>
 
-          {/* Real-time Financial Balance Indicators */}
+          {/* Real-time Financial Balance Indicators & Action Buttons */}
           <div className="flex items-center gap-3 overflow-x-auto pb-1 lg:pb-0">
-            {/* Volumen Liquidado */}
+            {/* Total Procesado */}
             <div className="bg-zinc-900/80 border border-zinc-800 rounded-md px-3.5 py-1.5 min-w-[130px]">
               <div className="text-[10px] text-zinc-400 uppercase tracking-wider">
                 Total Procesado
@@ -123,6 +127,31 @@ export function HeaderNav({
                 </div>
               </div>
             </div>
+
+            {/* Botón Auditoría SHA-256 */}
+            <button
+              type="button"
+              onClick={onOpenAuditModal}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-xs font-medium text-emerald-400 transition-colors cursor-pointer shadow-sm"
+              title="Ver Certificado Legal de Auditoría con Cadena de Custodia SHA-256"
+            >
+              <ShieldCheck className="h-4 w-4 text-emerald-400" />
+              <span className="hidden sm:inline">Auditoría SHA-256</span>
+            </button>
+
+            {/* Backend Connectivity Status Dot */}
+            <div 
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-mono border ${
+                backendStatus && backendStatus.online 
+                  ? 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300' 
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+              }`}
+              title={backendStatus && backendStatus.online ? 'Conectado a FastAPI en 127.0.0.1:8000' : 'Modo Autónomo Local'}
+            >
+              <span className={`h-2 w-2 rounded-full ${backendStatus && backendStatus.online ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
+              <span className="hidden md:inline">{backendStatus && backendStatus.online ? 'En Línea' : 'Local'}</span>
+            </div>
+
           </div>
 
         </div>

@@ -35,15 +35,43 @@ class Tenant(Base):
     fiscal_id = Column(String(20), nullable=False, unique=True, index=True)
     email = Column(String(120), nullable=False)
     plan = Column(String(50), default="PROFESSIONAL", nullable=False)
+    extra_blocks = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relaciones
     clients = relationship("ClientCompany", back_populates="tenant", cascade="all, delete-orphan")
     batches = relationship("ReconciliationBatch", back_populates="tenant")
     audit_logs = relationship("AuditLog", back_populates="tenant")
+    users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Tenant id={self.id} name='{self.name}' fiscal_id='{self.fiscal_id}'>"
+
+
+class UserRole:
+    ADMIN = "ADMIN"          # Socio / Administrador del despacho
+    AUDITOR = "AUDITOR"      # Contable / Auditor (conciliación y aprobación)
+    VIEWER = "VIEWER"        # Cliente Pyme / Consulta solo lectura
+
+
+class User(Base):
+    """Usuario del Sistema con Control de Acceso por Roles (RBAC)."""
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    email = Column(String(120), nullable=False, unique=True, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(120), nullable=False)
+    role = Column(String(30), default=UserRole.AUDITOR, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relación
+    tenant = relationship("Tenant", back_populates="users")
+
+    def __repr__(self):
+        return f"<User id={self.id} email='{self.email}' role='{self.role}'>"
 
 
 class ClientCompany(Base):

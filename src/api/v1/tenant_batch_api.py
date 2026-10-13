@@ -2,7 +2,7 @@
 Endpoints REST de FastAPI para Multi-Tenancy, Persistencia de Lotes y Trazabilidad Legal
 """
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, File, UploadFile, Form
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -98,6 +98,13 @@ def create_client(payload: ClientCreateDTO, db: Session = Depends(get_db)):
     tenant = ReconciliationRepository.get_tenant(db, payload.tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Despacho/Tenant no encontrado.")
+
+    from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
+    try:
+        BillingQuotaManager.assert_can_add_client(db, payload.tenant_id)
+    except QuotaLimitExceeded as qe:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(qe))
+
     client = ReconciliationRepository.create_client(
         db=db,
         tenant_id=payload.tenant_id,
@@ -173,6 +180,151 @@ def list_batches(
         }
         for b in batches
     ]
+
+
+@router.post("/batches", status_code=status.HTTP_201_CREATED)
+async def upload_and_process_batch(
+    tenant_id: str = Form(...),
+    client_id: str = Form(...),
+    period_year: int = Form(2026),
+    period_type: str = Form("ALL"),
+    start_month: int = Form(1),
+    end_month: int = Form(12),
+    file: UploadFile = File(...),
+    gateway_name: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Sube un fichero bancario o de pasarela, ejecuta el motor de conciliación y persiste el lote."""
+    client = ReconciliationRepository.get_client(db, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Empresa cliente no encontrada.")
+
+    file_bytes = await file.read()
+    file_name = file.filename or "uploaded_file"
+
+    import json
+    from pathlib import Path
+    from datetime import date
+    from src.parsers.base import CanonicalInvoice, CanonicalBankTransaction, TransactionType
+    from src.parsers.bank.norma43 import Norma43Parser
+    from src.parsers.gateways.stripe import StripeParser
+    from src.parsers.gateways.redsys import RedsysParser
+
+    base_dir = Path(__file__).resolve().parent.parent.parent.parent
+    inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
+    open_invoices = []
+    if inv_path.exists():
+        with open(inv_path, "r", encoding="utf-8") as f:
+            inv_data = json.load(f)
+        for item in inv_data:
+            y, m, d = item["issue_date"].split("-")
+            open_invoices.append(
+                CanonicalInvoice(
+                    invoice_id=item["invoice_id"],
+                    invoice_number=item["invoice_number"],
+                    issue_date=date(int(y), int(m), int(d)),
+                    due_date=date(int(y), int(m), int(d)),
+                    customer_id=item["customer_id"],
+                    customer_name=item["customer_name"],
+                    gross_amount_cents=item["gross_amount_cents"],
+                    customer_fiscal_id=item["customer_fiscal_id"],
+                )
+            )
+
+    fn_lower = file_name.lower()
+    bank_txs = []
+    gw_txs = None
+    resolved_gw = gateway_name or "Stripe"
+
+    if fn_lower.endswith(".n43") or "norma" in fn_lower or file_bytes.startswith(b"11"):
+        parse_res = Norma43Parser.parse_file(file_bytes)
+        bank_txs = parse_res.canonical_transactions
+        resolved_gw = "Norma43"
+    elif "stripe" in fn_lower or b"Stripe" in file_bytes or b"Balance transaction" in file_bytes or b"Automatic payout" in file_bytes:
+        resolved_gw = "Stripe"
+        stripe_txs = StripeParser.parse_balance_transactions_csv(file_bytes)
+        gw_txs = stripe_txs
+        charges = [t for t in stripe_txs if t.type == "charge"]
+        payouts = [t for t in stripe_txs if t.type == "payout"]
+        exp_net = sum(c.gross_cents for c in charges) - sum(c.fee_cents for c in charges) if charges else 0
+        payout_date = payouts[0].created_at.date() if payouts else date(period_year, start_month, 15)
+        bank_txs = [
+            CanonicalBankTransaction(
+                transaction_id=f"BANCO-STRIPE-{period_year}{start_month:02d}",
+                account_iban=client.bank_account_code,
+                operation_date=payout_date,
+                value_date=payout_date,
+                transaction_type=TransactionType.DEPOSIT,
+                amount_cents=exp_net,
+                concept=f"LIQUIDACION STRIPE PAYOUT {period_year}-{start_month:02d}",
+                payer_or_payee="Stripe Payments Europe",
+            )
+        ]
+    elif "redsys" in fn_lower or b"Ds_Merchant" in file_bytes or b"Operacion" in file_bytes or b"Numero Pedido" in file_bytes:
+        resolved_gw = "Redsys"
+        redsys_ops = RedsysParser.parse_operations_csv(file_bytes)
+        gw_txs = redsys_ops
+        total_gross = sum(op.gross_amount_cents for op in redsys_ops)
+        total_fees = sum(op.fee_cents for op in redsys_ops)
+        exp_net = total_gross - total_fees
+        op_date = redsys_ops[0].operation_date if redsys_ops else date(period_year, start_month, 15)
+        bank_txs = [
+            CanonicalBankTransaction(
+                transaction_id=f"BANCO-REDSYS-{period_year}{start_month:02d}",
+                account_iban=client.bank_account_code,
+                operation_date=op_date,
+                value_date=op_date,
+                transaction_type=TransactionType.DEPOSIT,
+                amount_cents=exp_net,
+                concept=f"LIQUIDACION DIARIA TPV REDSYS {period_year}-{start_month:02d}",
+                payer_or_payee="Redsys Servicios de Procesamiento",
+            )
+        ]
+    else:
+        parse_res = Norma43Parser.parse_file(file_bytes)
+        bank_txs = parse_res.canonical_transactions
+        resolved_gw = "Norma43"
+
+    from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
+    try:
+        BillingQuotaManager.assert_can_process_transactions(db, tenant_id, len(bank_txs))
+    except QuotaLimitExceeded as qe:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(qe))
+
+    batch = BatchReconciliationService.process_and_persist_batch(
+        db=db,
+        tenant_id=tenant_id,
+        client_id=client_id,
+        period_year=period_year,
+        period_type=period_type,
+        start_month=start_month,
+        end_month=end_month,
+        bank_transactions=bank_txs,
+        open_invoices=open_invoices,
+        file_name=file_name,
+        file_bytes=file_bytes,
+        gateway_name=resolved_gw,
+        gateway_transactions=gw_txs,
+    )
+
+    return {
+        "id": batch.id,
+        "tenant_id": batch.tenant_id,
+        "client_id": batch.client_id,
+        "period_year": batch.period_year,
+        "period_type": batch.period_type,
+        "start_month": batch.start_month,
+        "end_month": batch.end_month,
+        "status": batch.status,
+        "total_movements": batch.total_movements,
+        "total_volume_eur": batch.total_volume_cents / 100.0,
+        "green_count": batch.green_count,
+        "yellow_count": batch.yellow_count,
+        "red_count": batch.red_count,
+        "file_name": batch.file_name,
+        "file_hash_sha256": batch.file_hash_sha256,
+    }
+
 
 
 @router.get("/batches/{batch_id}")

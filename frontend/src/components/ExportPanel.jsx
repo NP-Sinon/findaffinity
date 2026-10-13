@@ -24,6 +24,7 @@ export function ExportPanel({
   selectedErp,
   onSelectErp,
   selectedCompany,
+  batchId,
 }) {
   const [copied, setCopied] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
@@ -83,12 +84,42 @@ export function ExportPanel({
     return lines.join('\r\n');
   }, [validJournals, selectedErp, selectedCompany]);
 
-  // Manejador de descarga de archivo oficial
-  const handleDownload = () => {
+  // Manejador de descarga de archivo oficial (prioriza backend si hay lote activo)
+  const handleDownload = async () => {
     if (validJournals.length === 0) return;
 
+    if (batchId) {
+      try {
+        const url = `http://127.0.0.1:8000/api/v1/batches/${batchId}/export/${selectedErp}?actor=auditor@gestoria.es`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const blob = await res.blob();
+          const disposition = res.headers.get('content-disposition');
+          let fname = `EXPORT_${(selectedCompany.fiscalId || 'CLIENT').replace(/[^a-zA-Z0-9]/g, '')}_${selectedErp}`;
+          if (disposition && disposition.includes('filename=')) {
+            fname = disposition.split('filename=')[1].replace(/"/g, '').trim();
+          } else {
+            fname += selectedErp === 'CONTASOL' ? '.xlsx' : selectedErp === 'SAGE' ? '.csv' : '.txt';
+          }
+          const blobUrl = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = fname;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(blobUrl);
+          setDownloadSuccess(true);
+          setTimeout(() => setDownloadSuccess(false), 2500);
+          return;
+        }
+      } catch (err) {
+        console.warn('Descargando mediante generador autónomo en cliente:', err);
+      }
+    }
+
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const clientCode = selectedCompany.fiscalId.replace(/[^a-zA-Z0-9]/g, '');
+    const clientCode = (selectedCompany.fiscalId || 'CLIENT').replace(/[^a-zA-Z0-9]/g, '');
 
     if (selectedErp === 'A3') {
       const filename = `SUENLACE_${clientCode}_${dateStr}.txt`;

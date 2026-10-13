@@ -8,7 +8,10 @@ from src.database.models import (
     ReconciliationBatch,
     BatchTransaction,
     JournalEntryRecord,
+    JournalEntryRecord,
     AuditLog,
+    User,
+    UserRole,
 )
 from src.database.repository import ReconciliationRepository
 
@@ -25,5 +28,7 @@ __all__ = [
     "BatchTransaction",
     "JournalEntryRecord",
     "AuditLog",
+    "User",
+    "UserRole",
     "ReconciliationRepository",
 ]
