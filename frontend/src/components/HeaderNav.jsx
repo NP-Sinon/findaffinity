@@ -21,7 +21,11 @@ export function HeaderNav({
   currentUser,
   onOpenAuthModal,
   onLogout,
+  currentView = 'radar',
+  onToggleView,
 }) {
+  const isAdminUser = currentUser?.role === 'SUPERADMIN' || currentUser?.role === 'ADMIN';
+
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
@@ -42,29 +46,34 @@ export function HeaderNav({
             {/* Separador sutil */}
             <div className="hidden sm:block h-6 w-px bg-zinc-800" />
 
-            {/* Empresa Selector */}
-            <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
-              <Building2 className="h-3.5 w-3.5 text-zinc-400" />
-              <div className="flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-zinc-400">
-                  Empresa
-                </span>
-                <select
-                  value={selectedCompany ? selectedCompany.id : ''}
-                  onChange={(e) => {
-                    const c = companies.find((item) => item.id === e.target.value);
-                    if (c) onSelectCompany(c);
-                  }}
-                  className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-3"
+            {/* Selector de Vistas si es Administrador */}
+            {isAdminUser && onToggleView && (
+              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
+                <button
+                  type="button"
+                  onClick={() => onToggleView('radar')}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    currentView === 'radar'
+                      ? 'bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
                 >
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  Radar Conciliación
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleView('admin')}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                    currentView === 'admin'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-blue-300'
+                  }`}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>Licencias & Empresas</span>
+                </button>
               </div>
-            </div>
+            )}
 
             {/* ERP Destino Selector */}
             <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
@@ -151,7 +160,9 @@ export function HeaderNav({
                   </span>
                   <div className="flex items-center justify-end gap-1.5 mt-0.5">
                     <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold ${
-                      currentUser.role === 'ADMIN' 
+                      currentUser.role === 'SUPERADMIN'
+                        ? 'bg-purple-950/60 text-purple-300 border border-purple-800/60'
+                        : currentUser.role === 'ADMIN' 
                         ? 'bg-blue-950/60 text-blue-300 border border-blue-800/60'
                         : currentUser.role === 'AUDITOR'
                         ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'

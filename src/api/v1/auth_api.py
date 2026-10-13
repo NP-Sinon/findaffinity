@@ -101,7 +101,7 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
             )
         assigned_tenant_name = tenant.name
 
-    valid_roles = [UserRole.ADMIN, UserRole.AUDITOR, UserRole.VIEWER]
+    valid_roles = [UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.AUDITOR, UserRole.VIEWER]
     if assigned_role not in valid_roles:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

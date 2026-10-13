@@ -801,6 +801,8 @@ import { ExportPanel } from './components/ExportPanel';
 import { ScoreRadarModal } from './components/ScoreRadarModal';
 import { AuditTrailModal } from './components/AuditTrailModal';
 import AuthModal from './components/AuthModal';
+import { AuthScreen } from './components/AuthScreen';
+import { AdminPanel } from './components/AdminPanel';
 import { MOCK_COMPANIES, INITIAL_TRANSACTIONS } from './data/mockAuditData';
 import { 
   checkBackendHealth, 
@@ -836,6 +838,13 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     const s = getStoredAuthSession();
     return s ? s.user : null;
+  });
+  const [currentView, setCurrentView] = useState(() => {
+    const s = getStoredAuthSession();
+    if (s && s.user && (s.user.role === 'SUPERADMIN' || s.user.role === 'ADMIN')) {
+      return 'admin';
+    }
+    return 'radar';
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authModalView, setAuthModalView] = useState('login');
@@ -1046,14 +1055,39 @@ export default function App() {
 
   const handleAuthSuccess = useCallback((user) => {
     setCurrentUser(user);
+    if (user.role === 'SUPERADMIN' || user.role === 'ADMIN') {
+      setCurrentView('admin');
+    } else {
+      setCurrentView('radar');
+    }
     triggerToast(`Sesión iniciada: ${user.full_name || user.email} (${user.role})`);
   }, [triggerToast]);
 
   const handleLogout = useCallback(() => {
     clearAuthSession();
     setCurrentUser(null);
+    setCurrentView('radar');
     triggerToast('Sesión finalizada');
   }, [triggerToast]);
+
+  // Si no está registrado o logeado, mostrar pantalla grande de autenticación
+  if (!currentUser) {
+    return (
+      <>
+        <AuthScreen 
+          onAuthSuccess={handleAuthSuccess} 
+          backendOnline={backendStatus.online} 
+        />
+
+        {toastMessage && (
+          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl animate-fade-in font-medium">
+            <Check className="h-4 w-4 text-emerald-400" />
+            <span>{toastMessage}</span>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
@@ -1070,42 +1104,53 @@ export default function App() {
         currentUser={currentUser}
         onOpenAuthModal={handleOpenAuthModal}
         onLogout={handleLogout}
+        currentView={currentView}
+        onToggleView={setCurrentView}
       />
 
-      {/* Contenedor Principal */}
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* 2. Zona de Ingesta Inteligente */}
-        <IngestionZone
-          onLoadDemoBatch={handleLoadDemoBatch}
-          isProcessing={isProcessing}
-          onFileProcessed={handleFileUploaded}
-        />
+      {/* Contenedor Principal: Conmutador entre Panel ADMIN y Radar Contable */}
+      {currentView === 'admin' ? (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <AdminPanel 
+            onNavigateToRadar={() => setCurrentView('radar')}
+            currentUser={currentUser}
+          />
+        </main>
+      ) : (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+          {/* 2. Zona de Ingesta Inteligente */}
+          <IngestionZone
+            onLoadDemoBatch={handleLoadDemoBatch}
+            isProcessing={isProcessing}
+            onFileProcessed={handleFileUploaded}
+          />
 
-        {/* 3. El Radar de Conciliación y Desambiguación */}
-        <StagingRadar
-          transactions={periodFilteredTransactions}
-          onApproveTransaction={handleApproveTransaction}
-          onBulkApproveYellows={handleBulkApproveYellows}
-          onOpenScoreModal={(tx) => setModalTransaction(tx)}
-          selectedYear={selectedYear}
-          onSelectYear={setSelectedYear}
-          periodType={periodType}
-          onSelectPeriodType={setPeriodType}
-          startMonth={startMonth}
-          onSelectStartMonth={setStartMonth}
-          endMonth={endMonth}
-          onSelectEndMonth={setEndMonth}
-        />
+          {/* 3. El Radar de Conciliación y Desambiguación */}
+          <StagingRadar
+            transactions={periodFilteredTransactions}
+            onApproveTransaction={handleApproveTransaction}
+            onBulkApproveYellows={handleBulkApproveYellows}
+            onOpenScoreModal={(tx) => setModalTransaction(tx)}
+            selectedYear={selectedYear}
+            onSelectYear={setSelectedYear}
+            periodType={periodType}
+            onSelectPeriodType={setPeriodType}
+            startMonth={startMonth}
+            onSelectStartMonth={setStartMonth}
+            endMonth={endMonth}
+            onSelectEndMonth={setEndMonth}
+          />
 
-        {/* 4. Panel de Descarga y Exportación a ERP */}
-        <ExportPanel
-          transactions={periodFilteredTransactions}
-          selectedErp={selectedErp}
-          onSelectErp={setSelectedErp}
-          selectedCompany={selectedCompany}
-          batchId={currentBatchId}
-        />
-      </main>
+          {/* 4. Panel de Descarga y Exportación a ERP */}
+          <ExportPanel
+            transactions={periodFilteredTransactions}
+            selectedErp={selectedErp}
+            onSelectErp={setSelectedErp}
+            selectedCompany={selectedCompany}
+            batchId={currentBatchId}
+          />
+        </main>
+      )}
 
       {/* Footer Institucional */}
       <footer className="border-t border-zinc-800/60 bg-[#0c0c0e] py-4 text-center text-xs text-zinc-500">
@@ -1168,6 +1213,443 @@ FICHERO: frontend\src\assets\vite.svg
 ================================================================================
 
 <svg xmlns="http://www.w3.org/2000/svg" width="77" height="47" fill="none" aria-labelledby="vite-logo-title" viewBox="0 0 77 47"><title id="vite-logo-title">Vite</title><style>.parenthesis{fill:#000}@media (prefers-color-scheme:dark){.parenthesis{fill:#fff}}</style><path fill="#9135ff" d="M40.151 45.71c-.663.844-2.02.374-2.02-.699V34.708a2.26 2.26 0 0 0-2.262-2.262H24.493c-.92 0-1.457-1.04-.92-1.788l7.479-10.471c1.07-1.498 0-3.578-1.842-3.578H15.443c-.92 0-1.456-1.04-.92-1.788l9.696-13.576c.213-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.472c-1.07 1.497 0 3.578 1.842 3.578h11.376c.944 0 1.474 1.087.89 1.83L40.153 45.712z"/><mask id="a" width="48" height="47" x="14" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#000" d="M40.047 45.71c-.663.843-2.02.374-2.02-.699V34.708a2.26 2.26 0 0 0-2.262-2.262H24.389c-.92 0-1.457-1.04-.92-1.788l7.479-10.472c1.07-1.497 0-3.578-1.842-3.578H15.34c-.92 0-1.456-1.04-.92-1.788l9.696-13.575c.213-.297.556-.474.92-.474H53.93c.92 0 1.456 1.04.92 1.788L47.37 13.03c-1.07 1.498 0 3.578 1.842 3.578h11.376c.944 0 1.474 1.088.89 1.831L40.049 45.712z"/></mask><g mask="url(#a)"><g filter="url(#b)"><ellipse cx="5.508" cy="14.704" fill="#eee6ff" rx="5.508" ry="14.704" transform="rotate(269.814 20.96 11.29)scale(-1 1)"/></g><g filter="url(#c)"><ellipse cx="10.399" cy="29.851" fill="#eee6ff" rx="10.399" ry="29.851" transform="rotate(89.814 -16.902 -8.275)scale(1 -1)"/></g><g filter="url(#d)"><ellipse cx="5.508" cy="30.487" fill="#8900ff" rx="5.508" ry="30.487" transform="rotate(89.814 -19.197 -7.127)scale(1 -1)"/></g><g filter="url(#e)"><ellipse cx="5.508" cy="30.599" fill="#8900ff" rx="5.508" ry="30.599" transform="rotate(89.814 -25.928 4.177)scale(1 -1)"/></g><g filter="url(#f)"><ellipse cx="5.508" cy="30.599" fill="#8900ff" rx="5.508" ry="30.599" transform="rotate(89.814 -25.738 5.52)scale(1 -1)"/></g><g filter="url(#g)"><ellipse cx="14.072" cy="22.078" fill="#eee6ff" rx="14.072" ry="22.078" transform="rotate(93.35 31.245 55.578)scale(-1 1)"/></g><g filter="url(#h)"><ellipse cx="3.47" cy="21.501" fill="#8900ff" rx="3.47" ry="21.501" transform="rotate(89.009 35.419 55.202)scale(-1 1)"/></g><g filter="url(#i)"><ellipse cx="3.47" cy="21.501" fill="#8900ff" rx="3.47" ry="21.501" transform="rotate(89.009 35.419 55.202)scale(-1 1)"/></g><g filter="url(#j)"><ellipse cx="14.592" cy="9.743" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(39.51 14.592 9.743)"/></g><g filter="url(#k)"><ellipse cx="61.728" cy="-5.321" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 61.728 -5.32)"/></g><g filter="url(#l)"><ellipse cx="55.618" cy="7.104" fill="#00c2ff" rx="5.971" ry="9.665" transform="rotate(37.892 55.618 7.104)"/></g><g filter="url(#m)"><ellipse cx="12.326" cy="39.103" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 12.326 39.103)"/></g><g filter="url(#n)"><ellipse cx="12.326" cy="39.103" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 12.326 39.103)"/></g><g filter="url(#o)"><ellipse cx="49.857" cy="30.678" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 49.857 30.678)"/></g><g filter="url(#p)"><ellipse cx="52.623" cy="33.171" fill="#00c2ff" rx="5.971" ry="15.297" transform="rotate(37.892 52.623 33.17)"/></g></g><path d="M6.919 0c-9.198 13.166-9.252 33.575 0 46.789h6.215c-9.25-13.214-9.196-33.623 0-46.789zm62.424 0h-6.215c9.198 13.166 9.252 33.575 0 46.789h6.215c9.25-13.214 9.196-33.623 0-46.789" class="parenthesis"/><defs><filter id="b" width="60.045" height="41.654" x="-5.564" y="16.92" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="c" width="90.34" height="51.437" x="-40.407" y="-6.762" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="d" width="79.355" height="29.4" x="-35.435" y="2.801" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="e" width="79.579" height="29.4" x="-30.84" y="20.8" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="f" width="79.579" height="29.4" x="-29.307" y="21.949" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="g" width="74.749" height="58.852" x="29.961" y="-17.13" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="h" width="61.377" height="25.362" x="37.754" y="3.055" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="i" width="61.377" height="25.362" x="37.754" y="3.055" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="j" width="56.045" height="63.649" x="-13.43" y="-22.082" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="k" width="54.814" height="64.646" x="34.321" y="-37.644" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="l" width="33.541" height="35.313" x="38.847" y="-10.552" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="m" width="54.814" height="64.646" x="-15.081" y="6.78" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="n" width="54.814" height="64.646" x="-15.081" y="6.78" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="o" width="54.814" height="64.646" x="22.45" y="-1.645" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="p" width="39.409" height="43.623" x="32.919" y="11.36" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter></defs></svg>
+
+
+================================================================================
+FICHERO: frontend\src\components\AdminPanel.jsx
+================================================================================
+
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { 
+  Building2, 
+  ShieldCheck, 
+  CreditCard, 
+  Users, 
+  Database, 
+  Search, 
+  ArrowRight, 
+  CheckCircle2, 
+  RefreshCw, 
+  Check, 
+  Layers, 
+  Sparkles,
+  Edit2
+} from 'lucide-react';
+import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi } from '../services/api';
+import { formatEuro } from '../utils/formatters';
+
+export function AdminPanel({ onNavigateToRadar, currentUser }) {
+  const [companies, setCompanies] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPlanFilter, setSelectedPlanFilter] = useState('ALL');
+  const [editingCompany, setEditingCompany] = useState(null);
+  const [editPlan, setEditPlan] = useState('PROFESSIONAL');
+  const [editExtraBlocks, setEditExtraBlocks] = useState(0);
+  const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
+  const [actionErrorMsg, setActionErrorMsg] = useState(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [comps, st] = await Promise.all([
+        fetchAdminCompanies(),
+        fetchPlatformStats(),
+      ]);
+      setCompanies(comps || []);
+      setStats(st);
+    } catch (err) {
+      console.error('Error cargando datos de administración:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Filtrado de compañías
+  const filteredCompanies = useMemo(() => {
+    return companies.filter((c) => {
+      if (selectedPlanFilter !== 'ALL' && c.plan !== selectedPlanFilter) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchesName = c.name?.toLowerCase().includes(q);
+        const matchesFiscal = c.fiscal_id?.toLowerCase().includes(q);
+        const matchesEmail = c.email?.toLowerCase().includes(q);
+        return matchesName || matchesFiscal || matchesEmail;
+      }
+      return true;
+    });
+  }, [companies, selectedPlanFilter, searchQuery]);
+
+  // Cálculo de MRR agregado
+  const totalMrr = useMemo(() => {
+    return companies.reduce((acc, c) => acc + (Number(c.monthly_price_eur) || 0), 0);
+  }, [companies]);
+
+  const handleOpenEdit = (c) => {
+    setEditingCompany(c);
+    setEditPlan(c.plan || 'PROFESSIONAL');
+    setEditExtraBlocks(c.extra_blocks || 0);
+    setActionSuccessMsg(null);
+    setActionErrorMsg(null);
+  };
+
+  const handleSavePlan = async (e) => {
+    e.preventDefault();
+    if (!editingCompany) return;
+
+    const res = await updateCompanyPlanApi(editingCompany.id, editPlan, editExtraBlocks);
+    if (res.success) {
+      setActionSuccessMsg(`Licencia de ${editingCompany.name} actualizada con éxito a ${editPlan}.`);
+      setEditingCompany(null);
+      await loadData();
+      setTimeout(() => setActionSuccessMsg(null), 3500);
+    } else {
+      setActionErrorMsg(res.error || 'Error al actualizar la licencia');
+    }
+  };
+
+  const getPlanBadge = (plan) => {
+    switch (plan) {
+      case 'PYME_DIRECTO':
+        return (
+          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-cyan-950/60 border border-cyan-800/60 text-cyan-300">
+            Pyme Directo (39 €)
+          </span>
+        );
+      case 'STARTER':
+        return (
+          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-blue-950/60 border border-blue-800/60 text-blue-300">
+            Gestoría Starter (49 €)
+          </span>
+        );
+      case 'PROFESSIONAL':
+        return (
+          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-950/60 border border-emerald-800/60 text-emerald-300">
+            Gestoría Professional (119 €)
+          </span>
+        );
+      case 'ENTERPRISE':
+        return (
+          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-purple-950/60 border border-purple-800/60 text-purple-300">
+            Despacho Enterprise (249 €)
+          </span>
+        );
+      default:
+        return (
+          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
+            {plan}
+          </span>
+        );
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Banner de Cabecera del Panel ADMIN */}
+      <div className="bg-[#101013] border border-zinc-800 rounded-lg p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 rounded bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+              <ShieldCheck className="h-3.5 w-3.5" />
+            </div>
+            <h1 className="text-base font-semibold text-zinc-100">
+              Panel de Control Global & Licencias SaaS
+            </h1>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-950/60 text-blue-300 border border-blue-800/60 font-mono font-semibold">
+              CUENTA ADMIN
+            </span>
+          </div>
+          <p className="text-xs text-zinc-400 mt-1">
+            Supervisión integral de todas las compañías y despachos registrados en FINDAFINITY, sus tipos de licencia, cuotas contratadas y actividad.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={loadData}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-300 transition-colors"
+            title="Refrescar datos"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span>Actualizar</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onNavigateToRadar}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors shadow-sm"
+          >
+            <span>Ir al Radar de Conciliación</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Tarjetas de Métricas de Plataforma (KPIs) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-[#101013] border border-zinc-800 rounded-lg p-4">
+          <div className="flex items-center justify-between text-zinc-400">
+            <span className="text-[11px] uppercase tracking-wider font-medium">Compañías Registradas</span>
+            <Building2 className="h-4 w-4 text-zinc-400" />
+          </div>
+          <div className="font-mono text-2xl font-bold text-zinc-100 mt-2">
+            {companies.length}
+          </div>
+          <div className="text-[11px] text-zinc-500 mt-1">
+            Despachos y empresas con cuenta activa
+          </div>
+        </div>
+
+        <div className="bg-[#101013] border border-zinc-800 rounded-lg p-4">
+          <div className="flex items-center justify-between text-zinc-400">
+            <span className="text-[11px] uppercase tracking-wider font-medium">Facturación Estimada (MRR)</span>
+            <CreditCard className="h-4 w-4 text-emerald-400" />
+          </div>
+          <div className="font-mono text-2xl font-bold text-emerald-400 mt-2">
+            {formatEuro(totalMrr)} / mes
+          </div>
+          <div className="text-[11px] text-zinc-500 mt-1">
+            Ingresos recurrentes por suscripciones
+          </div>
+        </div>
+
+        <div className="bg-[#101013] border border-zinc-800 rounded-lg p-4">
+          <div className="flex items-center justify-between text-zinc-400">
+            <span className="text-[11px] uppercase tracking-wider font-medium">Total Clientes Gestionados</span>
+            <Users className="h-4 w-4 text-blue-400" />
+          </div>
+          <div className="font-mono text-2xl font-bold text-zinc-100 mt-2">
+            {companies.reduce((acc, c) => acc + (c.clients_count || 0), 0)}
+          </div>
+          <div className="text-[11px] text-zinc-500 mt-1">
+            Empresas auditadas bajo los despachos
+          </div>
+        </div>
+
+        <div className="bg-[#101013] border border-zinc-800 rounded-lg p-4">
+          <div className="flex items-center justify-between text-zinc-400">
+            <span className="text-[11px] uppercase tracking-wider font-medium">Lotes Conciliados</span>
+            <Database className="h-4 w-4 text-purple-400" />
+          </div>
+          <div className="font-mono text-2xl font-bold text-zinc-100 mt-2">
+            {companies.reduce((acc, c) => acc + (c.batches_count || 0), 0)}
+          </div>
+          <div className="text-[11px] text-zinc-500 mt-1">
+            Lotes procesados con cuadre exacto
+          </div>
+        </div>
+      </div>
+
+      {actionSuccessMsg && (
+        <div className="p-3 rounded-md bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs flex items-center gap-2">
+          <Check className="h-4 w-4 text-emerald-400" />
+          <span>{actionSuccessMsg}</span>
+        </div>
+      )}
+
+      {/* Contenedor de Tabla de Compañías Registradas */}
+      <div className="bg-[#101013] border border-zinc-800 rounded-lg overflow-hidden">
+        {/* Barra de Filtros */}
+        <div className="p-4 border-b border-zinc-800/60 bg-[#0c0c0e] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="h-3.5 w-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por nombre, CIF/NIF o correo..."
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-zinc-400 uppercase tracking-wider">Plan:</span>
+            <select
+              value={selectedPlanFilter}
+              onChange={(e) => setSelectedPlanFilter(e.target.value)}
+              className="bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">Todos los Planes</option>
+              <option value="PYME_DIRECTO">Pyme Directo (39 €)</option>
+              <option value="STARTER">Gestoría Starter (49 €)</option>
+              <option value="PROFESSIONAL">Gestoría Professional (119 €)</option>
+              <option value="ENTERPRISE">Despacho Enterprise (249 €)</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Tabla de Compañías */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-[#09090b] text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
+                <th className="py-3 px-4">Compañía / Despacho</th>
+                <th className="py-3 px-3">CIF / NIF</th>
+                <th className="py-3 px-3">Contacto</th>
+                <th className="py-3 px-3">Tipo de Licencia</th>
+                <th className="py-3 px-3 text-right">Precio / Mes</th>
+                <th className="py-3 px-3 text-center">Cuota Clientes</th>
+                <th className="py-3 px-3 text-center">Cuota Transacciones</th>
+                <th className="py-3 px-3 text-center">Lotes</th>
+                <th className="py-3 px-3 text-center">Estado</th>
+                <th className="py-3 px-4 text-right">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-900 text-xs">
+              {filteredCompanies.length > 0 ? (
+                filteredCompanies.map((c) => (
+                  <tr key={c.id} className="hover:bg-zinc-900/40 transition-colors">
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-zinc-100">{c.name}</div>
+                      <div className="font-mono text-[10px] text-zinc-500 mt-0.5">ID: {c.id}</div>
+                    </td>
+                    <td className="py-3 px-3 font-mono text-zinc-300">
+                      {c.fiscal_id}
+                    </td>
+                    <td className="py-3 px-3 text-zinc-400">
+                      <div>{c.email}</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">
+                        {c.users_count} {c.users_count === 1 ? 'usuario' : 'usuarios'}
+                      </div>
+                    </td>
+                    <td className="py-3 px-3">
+                      {getPlanBadge(c.plan)}
+                      {c.extra_blocks > 0 && (
+                        <div className="text-[10px] text-amber-400 mt-0.5 font-mono">
+                          +{c.extra_blocks} bloque(s) expansión
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 text-right font-mono font-semibold text-zinc-100">
+                      {formatEuro(c.monthly_price_eur)}
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono text-zinc-300">
+                      <span className="text-zinc-100 font-semibold">{c.clients_count}</span>
+                      <span className="text-zinc-500"> / {c.max_clients}</span>
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono text-zinc-300">
+                      <span>Hasta {c.max_transactions_month?.toLocaleString('es-ES')} tx/mes</span>
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono text-zinc-300">
+                      <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-[11px]">
+                        {c.batches_count}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 text-center">
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Activa
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(c)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-[11px] text-zinc-200 transition-colors"
+                        title="Modificar Licencia o Cuotas"
+                      >
+                        <Edit2 className="h-3 w-3 text-zinc-400" />
+                        <span>Licencia</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={10} className="py-8 text-center text-zinc-400 text-xs">
+                    No se encontraron compañías con los filtros seleccionados.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal para Modificar Licencia y Cuota */}
+      {editingCompany && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#121215] border border-zinc-800 rounded-xl max-w-md w-full p-6 shadow-2xl relative">
+            <h3 className="text-sm font-semibold text-zinc-100">
+              Modificar Licencia de Compañía
+            </h3>
+            <p className="text-xs text-zinc-400 mt-1">
+              {editingCompany.name} ({editingCompany.fiscal_id})
+            </p>
+
+            {actionErrorMsg && (
+              <div className="mt-3 p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs">
+                {actionErrorMsg}
+              </div>
+            )}
+
+            <form onSubmit={handleSavePlan} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
+                  Plan de Licencia
+                </label>
+                <select
+                  value={editPlan}
+                  onChange={(e) => setEditPlan(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-700"
+                >
+                  <option value="PYME_DIRECTO">Plan Pyme Directo — 39 € / mes (1 cliente, 2.000 tx)</option>
+                  <option value="STARTER">Plan Gestoría Starter — 49 € / mes (10 clientes, 2.500 tx)</option>
+                  <option value="PROFESSIONAL">Plan Gestoría Professional — 119 € / mes (30 clientes, 12.000 tx, SHA-256)</option>
+                  <option value="ENTERPRISE">Plan Despacho Enterprise — 249 € / mes (100 clientes, 50.000 tx)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
+                  Bloques Extra de Expansión (+25 €/mes por bloque)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={editExtraBlocks}
+                    onChange={(e) => setEditExtraBlocks(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-24 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                  />
+                  <span className="text-xs text-zinc-400">
+                    +{editExtraBlocks * 10} clientes, +{editExtraBlocks * 5000} tx/mes
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800/80">
+                <button
+                  type="button"
+                  onClick={() => setEditingCompany(null)}
+                  className="px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors shadow-sm"
+                >
+                  Guardar Cambios
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 
 ================================================================================
@@ -1864,6 +2346,547 @@ export default function AuthModal({ isOpen, onClose, initialView = 'login', onAu
 
 
 ================================================================================
+FICHERO: frontend\src\components\AuthScreen.jsx
+================================================================================
+
+import React, { useState } from 'react';
+import { 
+  Layers, 
+  ShieldCheck, 
+  Lock, 
+  Mail, 
+  User, 
+  Building2, 
+  KeyRound, 
+  ArrowRight, 
+  CheckCircle2, 
+  AlertCircle,
+  Sparkles,
+  Server
+} from 'lucide-react';
+import { loginApi, registerApi, forgotPasswordApi, resetPasswordApi } from '../services/api';
+
+export function AuthScreen({ onAuthSuccess, backendOnline }) {
+  const [activeTab, setActiveTab] = useState('login'); // 'login' | 'register' | 'forgot' | 'reset'
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [infoMessage, setInfoMessage] = useState(null);
+
+  // Formulario Login
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+
+  // Formulario Registro
+  const [regFullName, setRegFullName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regCompanyName, setRegCompanyName] = useState('');
+  const [regFiscalId, setRegFiscalId] = useState('');
+
+  // Formulario Recuperación
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+
+  const clearMessages = () => {
+    setErrorMessage(null);
+    setInfoMessage(null);
+  };
+
+  const handleTabChange = (tab) => {
+    clearMessages();
+    setActiveTab(tab);
+  };
+
+  const handleLoginSubmit = async (e) => {
+    e.preventDefault();
+    clearMessages();
+    setLoading(true);
+
+    const res = await loginApi(loginEmail, loginPassword);
+    setLoading(false);
+
+    if (res.success) {
+      onAuthSuccess(res.user);
+    } else {
+      setErrorMessage(res.error || 'Credenciales no válidas.');
+    }
+  };
+
+  const handleRegisterSubmit = async (e) => {
+    e.preventDefault();
+    clearMessages();
+    setLoading(true);
+
+    const res = await registerApi({
+      email: regEmail,
+      password: regPassword,
+      fullName: regFullName,
+      companyName: regCompanyName,
+      fiscalId: regFiscalId,
+      role: 'ADMIN',
+    });
+    setLoading(false);
+
+    if (res.success) {
+      onAuthSuccess(res.user);
+    } else {
+      setErrorMessage(res.error || 'Error al completar el registro.');
+    }
+  };
+
+  const handleQuickLoginAdmin = async () => {
+    clearMessages();
+    setLoginEmail('admin@findaffinity.com');
+    setLoginPassword('AdminPass2026!');
+    setLoading(true);
+
+    const res = await loginApi('admin@findaffinity.com', 'AdminPass2026!');
+    setLoading(false);
+    if (res.success) {
+      onAuthSuccess(res.user);
+    } else {
+      setErrorMessage(res.error || 'No se pudo iniciar sesión con la cuenta de administrador.');
+    }
+  };
+
+  const handleQuickLoginDemo = async () => {
+    clearMessages();
+    setLoginEmail('auditor@konigpartners.es');
+    setLoginPassword('AuditPass2026!');
+    setLoading(true);
+
+    const res = await loginApi('auditor@konigpartners.es', 'AuditPass2026!');
+    setLoading(false);
+    if (res.success) {
+      onAuthSuccess(res.user);
+    } else {
+      setErrorMessage(res.error || 'No se pudo iniciar sesión con el despacho demo.');
+    }
+  };
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    clearMessages();
+    setLoading(true);
+
+    const res = await forgotPasswordApi(forgotEmail);
+    setLoading(false);
+
+    if (res.success) {
+      setInfoMessage(res.message || 'Se ha generado un token de recuperación.');
+      if (res.demoToken) {
+        setResetToken(res.demoToken);
+        setActiveTab('reset');
+      }
+    } else {
+      setErrorMessage(res.error || 'Error en la solicitud.');
+    }
+  };
+
+  const handleResetSubmit = async (e) => {
+    e.preventDefault();
+    clearMessages();
+    setLoading(true);
+
+    const res = await resetPasswordApi(resetToken, resetNewPassword);
+    setLoading(false);
+
+    if (res.success) {
+      setInfoMessage('Contraseña restablecida exitosamente. Inicia sesión con tu nueva clave.');
+      setActiveTab('login');
+    } else {
+      setErrorMessage(res.error || 'Error al restablecer contraseña.');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#08080a] flex flex-col justify-between text-zinc-100 font-sans selection:bg-emerald-500/30">
+      {/* Top Brand Nav */}
+      <header className="border-b border-zinc-800/80 bg-[#0c0c0e]/90 backdrop-blur px-6 py-3.5 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <Layers className="h-4 w-4" />
+          </div>
+          <span className="font-bold text-base tracking-tight text-white font-sans">
+            FINDAFINITY
+          </span>
+          <span className="text-[10px] text-zinc-500 font-mono hidden sm:inline ml-1 border-l border-zinc-800 pl-2">
+            CONCILIACIÓN CONTABLE B2B
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <span className={`h-2 w-2 rounded-full ${backendOnline ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+          <span className="text-zinc-400 font-mono text-[11px]">
+            {backendOnline ? 'Servidor Conectado' : 'Modo Autónomo'}
+          </span>
+        </div>
+      </header>
+
+      {/* Main Centered Container */}
+      <main className="flex-1 flex items-center justify-center px-4 py-10">
+        <div className="max-w-[480px] w-full bg-[#101013] border border-zinc-800 rounded-xl p-6 sm:p-8 shadow-2xl relative">
+          
+          {/* Logo & Headline */}
+          <div className="text-center mb-6">
+            <div className="inline-flex h-11 w-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 items-center justify-center text-emerald-400 mb-3 shadow-sm">
+              <Layers className="h-5 w-5" />
+            </div>
+            <h1 className="text-xl font-bold tracking-tight text-white font-sans">
+              FINDAFINITY
+            </h1>
+            <p className="text-xs text-zinc-400 mt-1">
+              Plataforma de Conciliación Contable, Bancaria y Pasarelas
+            </p>
+          </div>
+
+          {/* Large Tab Switcher */}
+          {(activeTab === 'login' || activeTab === 'register') && (
+            <div className="grid grid-cols-2 p-1 bg-zinc-900 border border-zinc-800 rounded-lg mb-6 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => handleTabChange('login')}
+                className={`py-2 rounded-md transition-colors ${
+                  activeTab === 'login'
+                    ? 'bg-zinc-800 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Iniciar Sesión
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTabChange('register')}
+                className={`py-2 rounded-md transition-colors ${
+                  activeTab === 'register'
+                    ? 'bg-zinc-800 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                Registrar Despacho / Empresa
+              </button>
+            </div>
+          )}
+
+          {/* Messages */}
+          {errorMessage && (
+            <div className="mb-5 p-3 rounded-md bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {infoMessage && (
+            <div className="mb-5 p-3 rounded-md bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+              <span>{infoMessage}</span>
+            </div>
+          )}
+
+          {/* VISTA 1: INICIAR SESIÓN */}
+          {activeTab === 'login' && (
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
+                  Correo Electrónico
+                </label>
+                <div className="relative">
+                  <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="email"
+                    required
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="auditor@tudespacho.es"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-medium">
+                    Contraseña
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange('forgot')}
+                    className="text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+                <div className="relative">
+                  <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    required
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full mt-2 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                {loading ? 'Accediendo...' : 'Iniciar Sesión en el Despacho'}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+
+              {/* Botones de Acceso Rápido */}
+              <div className="pt-4 border-t border-zinc-800/80 space-y-2">
+                <div className="text-[10px] text-zinc-500 uppercase tracking-wider text-center font-medium">
+                  Accesos Directos de Evaluación
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleQuickLoginAdmin}
+                  disabled={loading}
+                  className="w-full py-1.5 px-3 rounded-md bg-zinc-900 hover:bg-zinc-800/80 border border-blue-900/50 text-[11px] font-medium text-blue-300 transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5 text-blue-400" />
+                  <span>Acceso Rápido: Cuenta ADMIN (Ver Todas las Compañías)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleQuickLoginDemo}
+                  disabled={loading}
+                  className="w-full py-1.5 px-3 rounded-md bg-zinc-900 hover:bg-zinc-800/80 border border-zinc-800 text-[11px] font-medium text-zinc-300 transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Acceso Rápido: Despacho Auditor Demo (KÖNIG & ASOCIADOS)</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* VISTA 2: REGISTRAR DESPACHO / EMPRESA */}
+          {activeTab === 'register' && (
+            <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                  Nombre Completo del Auditor / Administrador
+                </label>
+                <div className="relative">
+                  <User className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    required
+                    value={regFullName}
+                    onChange={(e) => setRegFullName(e.target.value)}
+                    placeholder="Carlos Méndez"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                  Correo Electrónico Profesional
+                </label>
+                <div className="relative">
+                  <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="email"
+                    required
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    placeholder="carlos@despachomendez.es"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                  Contraseña (mínimo 6 caracteres)
+                </label>
+                <div className="relative">
+                  <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                    Nombre del Despacho / Empresa
+                  </label>
+                  <div className="relative">
+                    <Building2 className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      required
+                      value={regCompanyName}
+                      onChange={(e) => setRegCompanyName(e.target.value)}
+                      placeholder="Méndez & Asociados SLP"
+                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                    CIF / NIF Fiscal
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regFiscalId}
+                    onChange={(e) => setRegFiscalId(e.target.value.toUpperCase())}
+                    placeholder="B-12345678"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full mt-3 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                {loading ? 'Creando Despacho...' : 'Crear Cuenta y Acceder a FINDAFINITY'}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+
+              <div className="text-[11px] text-zinc-500 text-center mt-2">
+                Al registrarte se crea automáticamente tu inquilino con rol de Administrador.
+              </div>
+            </form>
+          )}
+
+          {/* VISTA 3: RECUPERAR CONTRASEÑA */}
+          {activeTab === 'forgot' && (
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
+              <div className="text-xs text-zinc-400 mb-2">
+                Introduce el correo electrónico asociado a tu cuenta para recibir las instrucciones de restablecimiento.
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
+                  Correo Electrónico
+                </label>
+                <div className="relative">
+                  <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="auditor@tudespacho.es"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('login')}
+                  className="w-1/3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+                >
+                  Volver
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-2/3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  {loading ? 'Enviando...' : 'Solicitar Token'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* VISTA 4: RESTABLECER CONTRASEÑA */}
+          {activeTab === 'reset' && (
+            <form onSubmit={handleResetSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
+                  Token de Restablecimiento
+                </label>
+                <div className="relative">
+                  <KeyRound className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    required
+                    value={resetToken}
+                    onChange={(e) => setResetToken(e.target.value)}
+                    placeholder="Pega el token recibido"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
+                  Nueva Contraseña
+                </label>
+                <div className="relative">
+                  <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('login')}
+                  className="w-1/3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+                >
+                  Volver
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-2/3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+                >
+                  {loading ? 'Restableciendo...' : 'Guardar Nueva Contraseña'}
+                </button>
+              </div>
+            </form>
+          )}
+
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-zinc-800/80 bg-[#0c0c0e]/80 py-3.5 text-center text-xs text-zinc-500">
+        <div className="max-w-[1200px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px]">
+          <span>FINDAFINITY &bull; Zero-Liability Audit Engine &bull; Cuadre PGC a 0.00 €</span>
+          <span>Soporte Oficial: Wolters Kluwer A3 &bull; Sage 50 &bull; DELSOL Contasol</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+
+================================================================================
 FICHERO: frontend\src\components\DoubleEntryViewer.jsx
 ================================================================================
 
@@ -1922,7 +2945,6 @@ export function DoubleEntryViewer({ journal, transactionId }) {
             <tr className="border-b border-zinc-800/70 text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
               <th className="py-1.5 px-2">Subcuenta</th>
               <th className="py-1.5 px-2">Concepto Contable Oficial</th>
-              <th className="py-1.5 px-2">Documento</th>
               <th className="py-1.5 px-2 text-right">Debe (€)</th>
               <th className="py-1.5 px-2 text-right">Haber (€)</th>
               <th className="py-1.5 px-2 text-center">Contrapartida</th>
@@ -1955,11 +2977,6 @@ export function DoubleEntryViewer({ journal, transactionId }) {
                   {/* Concept */}
                   <td className="py-1.5 px-2 text-zinc-300 font-sans text-xs">
                     {line.concept}
-                  </td>
-
-                  {/* Document */}
-                  <td className="py-1.5 px-2 text-zinc-400">
-                    {line.documentNumber || '—'}
                   </td>
 
                   {/* Debit */}
@@ -2328,7 +3345,11 @@ export function HeaderNav({
   currentUser,
   onOpenAuthModal,
   onLogout,
+  currentView = 'radar',
+  onToggleView,
 }) {
+  const isAdminUser = currentUser?.role === 'SUPERADMIN' || currentUser?.role === 'ADMIN';
+
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
@@ -2349,29 +3370,34 @@ export function HeaderNav({
             {/* Separador sutil */}
             <div className="hidden sm:block h-6 w-px bg-zinc-800" />
 
-            {/* Empresa Selector */}
-            <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
-              <Building2 className="h-3.5 w-3.5 text-zinc-400" />
-              <div className="flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-zinc-400">
-                  Empresa
-                </span>
-                <select
-                  value={selectedCompany ? selectedCompany.id : ''}
-                  onChange={(e) => {
-                    const c = companies.find((item) => item.id === e.target.value);
-                    if (c) onSelectCompany(c);
-                  }}
-                  className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-3"
+            {/* Selector de Vistas si es Administrador */}
+            {isAdminUser && onToggleView && (
+              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
+                <button
+                  type="button"
+                  onClick={() => onToggleView('radar')}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    currentView === 'radar'
+                      ? 'bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
                 >
-                  {companies.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  Radar Conciliación
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleView('admin')}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                    currentView === 'admin'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-blue-300'
+                  }`}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>Licencias & Empresas</span>
+                </button>
               </div>
-            </div>
+            )}
 
             {/* ERP Destino Selector */}
             <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
@@ -2458,7 +3484,9 @@ export function HeaderNav({
                   </span>
                   <div className="flex items-center justify-end gap-1.5 mt-0.5">
                     <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold ${
-                      currentUser.role === 'ADMIN' 
+                      currentUser.role === 'SUPERADMIN'
+                        ? 'bg-purple-950/60 text-purple-300 border border-purple-800/60'
+                        : currentUser.role === 'ADMIN' 
                         ? 'bg-blue-950/60 text-blue-300 border border-blue-800/60'
                         : currentUser.role === 'AUDITOR'
                         ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'
@@ -2647,26 +3675,11 @@ export function IngestionZone({
           </div>
 
           <p className="text-xs text-zinc-200 font-medium">
-            Arrastra aquí tus archivos bancarios (<span className="text-zinc-400">Norma 43</span>) o de pasarela (<span className="text-zinc-400">Stripe, Redsys CSV</span>)
+            Arrastra aquí tus archivos o haz clic para seleccionarlos
           </p>
-          <p className="text-[11px] text-zinc-400 mt-0.5">
-            o haz clic para seleccionar desde tu equipo
+          <p className="text-[11px] text-zinc-500 mt-1">
+            Formatos soportados: .n43, .csv, .xlsx, .txt
           </p>
-
-          <div className="flex items-center gap-4 mt-3 text-[11px] text-zinc-400 border-t border-zinc-800/80 pt-2">
-            <span className="flex items-center gap-1">
-              <FileText className="h-3 w-3 text-zinc-400" />
-              Norma 43 (.n43 / .txt)
-            </span>
-            <span className="flex items-center gap-1">
-              <Layers className="h-3 w-3 text-zinc-400" />
-              Stripe CSV
-            </span>
-            <span className="flex items-center gap-1">
-              <FileSpreadsheet className="h-3 w-3 text-zinc-400" />
-              Redsys / Excel
-            </span>
-          </div>
         </div>
 
         {/* Estado / Resumen de Carga */}
@@ -4221,96 +5234,141 @@ export function getAuthHeaders() {
 }
 
 /**
+ * Helper para fetch seguro que nunca lanza excepción por JSON inválido
+ */
+async function safeJsonFetch(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    let data = null;
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+    } else {
+      const text = await res.text();
+      data = { detail: text || `HTTP ${res.status}: ${res.statusText}` };
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    return { ok: false, status: 0, data: { detail: err.message || 'Sin conexión con el servidor' } };
+  }
+}
+
+/**
  * Iniciar sesión con email y contraseña en FastAPI
  */
 export async function loginApi(email, password) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      saveAuthSession(data.access_token, data.user);
-      return { success: true, token: data.access_token, user: data.user };
-    }
-    return { success: false, error: data.detail || 'Credenciales incorrectas' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor de autenticación' };
+  if (ok && data?.access_token) {
+    saveAuthSession(data.access_token, data.user);
+    return { success: true, token: data.access_token, user: data.user };
   }
+  return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
 
 /**
  * Registro de nuevo usuario o despacho contable
  */
 export async function registerApi({ email, password, fullName, companyName, fiscalId, role = 'AUDITOR' }) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email,
-        password,
-        full_name: fullName,
-        company_name: companyName,
-        fiscal_id: fiscalId,
-        role,
-      }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      password,
+      full_name: fullName,
+      company_name: companyName,
+      fiscal_id: fiscalId,
+      role,
+    }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      // Iniciar sesión automáticamente tras el registro
-      return await loginApi(email, password);
-    }
-    return { success: false, error: data.detail || 'Error en el registro' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  if (ok) {
+    // Iniciar sesión automáticamente tras el registro
+    return await loginApi(email, password);
   }
+  return { success: false, error: data?.detail || 'Error en el registro' };
 }
 
 /**
  * Solicitar recuperación de contraseña
  */
 export async function forgotPasswordApi(email) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/forgot-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      return { success: true, message: data.message, demoToken: data.reset_token_demo };
-    }
-    return { success: false, error: data.detail || 'Error en la solicitud' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  if (ok) {
+    return { success: true, message: data.message, demoToken: data.reset_token_demo };
   }
+  return { success: false, error: data?.detail || 'Error en la solicitud' };
 }
 
 /**
  * Restablecer contraseña con token
  */
 export async function resetPasswordApi(token, newPassword) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/reset-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, new_password: newPassword }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      return { success: true, message: data.message };
-    }
-    return { success: false, error: data.detail || 'Token inválido o expirado' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  if (ok) {
+    return { success: true, message: data.message };
   }
+  return { success: false, error: data?.detail || 'Token inválido o expirado' };
+}
+
+/**
+ * Obtener lista de compañías registradas y sus licencias (Solo ADMIN / SUPERADMIN)
+ */
+export async function fetchAdminCompanies() {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies`, {
+    headers,
+  });
+  if (ok && Array.isArray(data)) {
+    return data;
+  }
+  return [];
+}
+
+/**
+ * Obtener estadísticas globales de la plataforma (Solo ADMIN / SUPERADMIN)
+ */
+export async function fetchPlatformStats() {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/stats`, {
+    headers,
+  });
+  if (ok && data) {
+    return data;
+  }
+  return null;
+}
+
+/**
+ * Modificar plan / licencia de una compañía desde el panel de control
+ */
+export async function updateCompanyPlanApi(tenantId, plan, extraBlocks = 0) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies/${tenantId}/plan`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ plan, extra_blocks: extraBlocks }),
+  });
+  return { success: ok, data, error: ok ? null : (data?.detail || 'Error al actualizar plan') };
 }
 
 /**
@@ -4897,32 +5955,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "b84f1d3c-ab68-4b7f-8dba-ac2a89b1ae38",
+  "tenant_id": "58407da7-de2e-463e-93c4-8832eef04e14",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-13",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "6f2201543658eb2f4ba988c28afea2befd5fcf0d8db5e4e57b0bd086f2f7ebe3",
+  "head_hash_sha256": "1349e1e604801253991c5907c00e72795f83348722b5dfa8b82306180a908a90",
   "audit_events": [
     {
-      "event_id": "75807f81-532e-453e-a6fd-d4653215860f",
+      "event_id": "4a11ea85-5c29-4b8d-9535-fafe769ecc91",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T16:29:20.733034",
-      "sha256_hash": "36d9c9346fdea91a8c978f6492bc773a5cfc0643fc2e15141e3845e52abcd171",
+      "timestamp": "2026-10-13T16:47:19.776735",
+      "sha256_hash": "3486fd19877b6c916147b0de831256cc7017e44aeab28d79a2b7fe2c777cd78e",
       "details": {
-        "batch_id": "b3d1e237-a67d-4b78-bbac-e96598d59720",
+        "batch_id": "c57916fc-41e4-40d7-b241-4b6253b8909c",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "42dbcab3-424a-4ead-b4fc-a970b87f0517",
+      "event_id": "51785ab4-1256-4bb4-b049-4e0fe190a59e",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T16:29:20.744545",
-      "sha256_hash": "21b04ed2588a0ae20f881dd34c923c43273a9fcb724949b9d00d423528585ca3",
+      "timestamp": "2026-10-13T16:47:19.788735",
+      "sha256_hash": "0fff429f812665e3cbe85cca0795d6526326ec8fb19b336df290fcfaf628e528",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -4930,23 +5988,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "3415067e-870f-4bde-be69-91e11ffe0fb2",
+      "event_id": "515adcd6-0314-47a2-90b3-53deb11e05f7",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T16:29:20.751548",
-      "sha256_hash": "40818f2905a29326e71e7db6fb76b33db9a5000c2f7d928114ccc084bcfbf9f6",
+      "timestamp": "2026-10-13T16:47:19.794563",
+      "sha256_hash": "042119f48477697a68bdddf6b48fa71af1c5894273eb55be7e2c70fac1f842a5",
       "details": {
-        "batch_id": "28ddb2b0-e1b5-456e-91f7-db5fc7dcea0b",
+        "batch_id": "8f6e229d-fea2-4eca-b9d2-2ceb65c401ef",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "6bff1467-b396-4c1e-aeaf-dea2db325450",
+      "event_id": "fbc336fc-cac5-4509-a4c5-d95f2cef949b",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T16:29:20.757238",
-      "sha256_hash": "4d5088df5b7aebf6abd3fe83266e40a2d502adb1133b4c6d735b1431bfd650fe",
+      "timestamp": "2026-10-13T16:47:19.800711",
+      "sha256_hash": "7c090de6f2509e3d03d1627bdf3083017a19e668668ac2178d85230b254f3b8e",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -4954,23 +6012,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "7819ef87-1f51-4a97-8846-75195230e3a2",
+      "event_id": "d9665ad4-7583-445d-b31c-79e01fe00445",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T16:29:20.761849",
-      "sha256_hash": "1bf738e29a767c4286612c2ab268919bfc390ca27a859e1656403f852c4566af",
+      "timestamp": "2026-10-13T16:47:19.804921",
+      "sha256_hash": "d47b177b5b7851478aa79bac741fb4e7c71bd71ca38be1d2ca6ebb038d6e717d",
       "details": {
-        "batch_id": "34d3137a-f4dc-4a0c-b1b4-5069d5221913",
+        "batch_id": "064297e3-f7d5-4097-a468-d45a50b3603d",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "ec1b5067-a22d-4c57-999c-668a94d4ec01",
+      "event_id": "ef609812-a28c-4fc4-919a-d1b4e7a653ec",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T16:29:21.641773",
-      "sha256_hash": "6f2201543658eb2f4ba988c28afea2befd5fcf0d8db5e4e57b0bd086f2f7ebe3",
+      "timestamp": "2026-10-13T16:47:19.823203",
+      "sha256_hash": "1349e1e604801253991c5907c00e72795f83348722b5dfa8b82306180a908a90",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -4984,7 +6042,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xaa in position 10: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode bytes in position 10-11: invalid continuation byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -6670,6 +7728,194 @@ class SageXdiarioExporter:
 
 
 ================================================================================
+FICHERO: src\api\v1\admin_api.py
+================================================================================
+
+"""
+API de Administración Global de la Plataforma FINDAFINITY
+Permite al Administrador (SUPERADMIN / ADMIN) visualizar todas las compañías
+y despachos registrados, su tipo de licencia, cuotas, usuarios y volumen gestionado.
+"""
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from src.database.connection import get_db
+from src.database.models import Tenant, User, UserRole, ClientCompany, ReconciliationBatch
+from src.auth.dependencies import get_current_user, require_roles
+from src.billing.pricing_plans import PLAN_CONFIGS
+
+router = APIRouter(prefix="/v1/admin", tags=["Administración Global & Licencias"])
+
+
+class CompanyAdminDTO(BaseModel):
+    id: str
+    name: str
+    fiscal_id: str
+    email: str
+    plan: str
+    plan_name: str
+    monthly_price_eur: float
+    extra_blocks: int
+    users_count: int
+    clients_count: int
+    batches_count: int
+    total_volume_eur: float
+    max_clients: int
+    max_transactions_month: int
+    created_at: Optional[datetime] = None
+    status: str = "ACTIVE"
+
+
+class UpdateCompanyPlanDTO(BaseModel):
+    plan: str = Field(..., json_schema_extra={"example": "PROFESSIONAL"})
+    extra_blocks: Optional[int] = Field(0, ge=0)
+
+
+class PlatformStatsDTO(BaseModel):
+    total_companies: int
+    total_users: int
+    total_batches: int
+    total_volume_eur: float
+    plan_distribution: Dict[str, int]
+
+
+@router.get("/companies", response_model=List[CompanyAdminDTO])
+def list_all_registered_companies(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN, UserRole.ADMIN])),
+):
+    """
+    Lista todas las empresas y despachos registrados en el sistema
+    con sus métricas operativas y tipo de licencia/plan contratado.
+    """
+    tenants = db.query(Tenant).order_by(Tenant.created_at.desc()).all()
+    results = []
+
+    for t in tenants:
+        plan_key = t.plan.upper() if t.plan else "STARTER"
+        plan_spec = PLAN_CONFIGS.get(plan_key, PLAN_CONFIGS["STARTER"])
+
+        users_count = db.query(User).filter(User.tenant_id == t.id).count()
+        clients_count = db.query(ClientCompany).filter(ClientCompany.tenant_id == t.id).count()
+        batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == t.id).all()
+        batches_count = len(batches)
+        total_volume_cents = sum(b.total_volume_cents or 0 for b in batches)
+
+        extra_b = t.extra_blocks or 0
+        effective_max_clients = plan_spec["max_clients"] + (extra_b * 10)
+        effective_max_tx = plan_spec["max_monthly_transactions"] + (extra_b * 5000)
+        total_monthly_price = plan_spec["price_eur_month"] + (extra_b * 25.0)
+
+        results.append(
+            CompanyAdminDTO(
+                id=t.id,
+                name=t.name,
+                fiscal_id=t.fiscal_id,
+                email=t.email,
+                plan=plan_key,
+                plan_name=plan_spec["name"],
+                monthly_price_eur=total_monthly_price,
+                extra_blocks=extra_b,
+                users_count=users_count,
+                clients_count=clients_count,
+                batches_count=batches_count,
+                total_volume_eur=round(total_volume_cents / 100.0, 2),
+                max_clients=effective_max_clients,
+                max_transactions_month=effective_max_tx,
+                created_at=t.created_at,
+                status="ACTIVE",
+            )
+        )
+
+    return results
+
+
+@router.put("/companies/{tenant_id}/plan", response_model=CompanyAdminDTO)
+def update_company_plan(
+    tenant_id: str,
+    payload: UpdateCompanyPlanDTO,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN, UserRole.ADMIN])),
+):
+    """Permite al administrador modificar directamente el plan y cuota de una compañía."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Compañía o despacho no encontrado.",
+        )
+
+    clean_plan = payload.plan.upper().strip()
+    if clean_plan not in PLAN_CONFIGS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Plan '{clean_plan}' no reconocido. Planes válidos: {list(PLAN_CONFIGS.keys())}",
+        )
+
+    tenant.plan = clean_plan
+    if payload.extra_blocks is not None:
+        tenant.extra_blocks = payload.extra_blocks
+
+    db.commit()
+    db.refresh(tenant)
+
+    plan_spec = PLAN_CONFIGS[clean_plan]
+    users_count = db.query(User).filter(User.tenant_id == tenant.id).count()
+    clients_count = db.query(ClientCompany).filter(ClientCompany.tenant_id == tenant.id).count()
+    batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant.id).all()
+    total_volume_cents = sum(b.total_volume_cents or 0 for b in batches)
+
+    extra_b = tenant.extra_blocks or 0
+    return CompanyAdminDTO(
+        id=tenant.id,
+        name=tenant.name,
+        fiscal_id=tenant.fiscal_id,
+        email=tenant.email,
+        plan=clean_plan,
+        plan_name=plan_spec["name"],
+        monthly_price_eur=plan_spec["price_eur_month"] + (extra_b * 25.0),
+        extra_blocks=extra_b,
+        users_count=users_count,
+        clients_count=clients_count,
+        batches_count=len(batches),
+        total_volume_eur=round(total_volume_cents / 100.0, 2),
+        max_clients=plan_spec["max_clients"] + (extra_b * 10),
+        max_transactions_month=plan_spec["max_monthly_transactions"] + (extra_b * 5000),
+        created_at=tenant.created_at,
+        status="ACTIVE",
+    )
+
+
+@router.get("/stats", response_model=PlatformStatsDTO)
+def get_platform_admin_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN, UserRole.ADMIN])),
+):
+    """Estadísticas globales de la plataforma SaaS para el Administrador."""
+    total_companies = db.query(Tenant).count()
+    total_users = db.query(User).count()
+    batches = db.query(ReconciliationBatch).all()
+    total_batches = len(batches)
+    total_volume_cents = sum(b.total_volume_cents or 0 for b in batches)
+
+    distribution: Dict[str, int] = {}
+    for t in db.query(Tenant).all():
+        p = t.plan.upper() if t.plan else "STARTER"
+        distribution[p] = distribution.get(p, 0) + 1
+
+    return PlatformStatsDTO(
+        total_companies=total_companies,
+        total_users=total_users,
+        total_batches=total_batches,
+        total_volume_eur=round(total_volume_cents / 100.0, 2),
+        plan_distribution=distribution,
+    )
+
+
+================================================================================
 FICHERO: src\api\v1\auth_api.py
 ================================================================================
 
@@ -6776,7 +8022,7 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
             )
         assigned_tenant_name = tenant.name
 
-    valid_roles = [UserRole.ADMIN, UserRole.AUDITOR, UserRole.VIEWER]
+    valid_roles = [UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.AUDITOR, UserRole.VIEWER]
     if assigned_role not in valid_roles:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -8422,9 +9668,25 @@ def get_db_context():
 
 
 def init_db(target_engine=None):
-    """Crea todas las tablas en la base de datos si no existen."""
+    """Crea todas las tablas en la base de datos si no existen y aplica migraciones ligeras."""
     eng = target_engine or engine
     Base.metadata.create_all(bind=eng)
+
+    # Migración ligera automática para asegurar columnas añadidas en revisiones
+    try:
+        from sqlalchemy import text
+        with eng.connect() as conn:
+            if eng.dialect.name == "sqlite":
+                res = conn.execute(text("PRAGMA table_info(tenants)")).fetchall()
+                cols = [r[1] for r in res]
+                if cols and "extra_blocks" not in cols:
+                    conn.execute(text("ALTER TABLE tenants ADD COLUMN extra_blocks INTEGER DEFAULT 0 NOT NULL"))
+                    conn.commit()
+            elif eng.dialect.name == "postgresql":
+                conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS extra_blocks INTEGER DEFAULT 0 NOT NULL"))
+                conn.commit()
+    except Exception:
+        pass
 
 
 ================================================================================
@@ -8482,9 +9744,10 @@ class Tenant(Base):
 
 
 class UserRole:
-    ADMIN = "ADMIN"          # Socio / Administrador del despacho
-    AUDITOR = "AUDITOR"      # Contable / Auditor (conciliación y aprobación)
-    VIEWER = "VIEWER"        # Cliente Pyme / Consulta solo lectura
+    SUPERADMIN = "SUPERADMIN"  # Administrador Global / Plataforma FINDAFINITY
+    ADMIN = "ADMIN"            # Socio / Administrador del despacho
+    AUDITOR = "AUDITOR"        # Contable / Auditor (conciliación y aprobación)
+    VIEWER = "VIEWER"          # Cliente Pyme / Consulta solo lectura
 
 
 class User(Base):
@@ -9539,6 +10802,7 @@ from src.api.v1.reconcile_api import router as v1_router
 from src.api.v1.tenant_batch_api import router as tenant_batch_router
 from src.api.v1.subscription_api import router as subscription_router
 from src.api.v1.auth_api import router as auth_router
+from src.api.v1.admin_api import router as admin_router
 from src.database.connection import init_db
 
 
@@ -9546,10 +10810,11 @@ from src.database.connection import init_db
 async def lifespan(app: FastAPI):
     init_db()
     from src.database.connection import get_db_context
-    from src.services.bootstrap_service import bootstrap_database_if_empty
+    from src.services.bootstrap_service import bootstrap_database_if_empty, ensure_default_accounts
     try:
         with get_db_context() as db:
             bootstrap_database_if_empty(db)
+            ensure_default_accounts(db)
     except Exception as e:
         print(f"Aviso al inicializar datos semilla: {e}")
     yield
@@ -9574,6 +10839,7 @@ app.include_router(v1_router, prefix="/api")
 app.include_router(tenant_batch_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 
 @app.get("/health", tags=["Health"])
@@ -11943,7 +13209,181 @@ def bootstrap_database_if_empty(db: Session) -> bool:
             file_bytes=n43_bytes,
         )
 
+    # 7. Garantizar cuentas demo de auditor y superadministrador
+    ensure_default_accounts(db)
+
     return True
+
+
+def ensure_default_accounts(db: Session):
+    """
+    Garantiza que la cuenta de Administrador Global (admin@findaffinity.com)
+    y la cuenta de auditor demo (auditor@konigpartners.es) existan siempre en la base de datos.
+    """
+    from src.database.models import User, UserRole, Tenant
+    from src.auth.security import hash_password
+
+    # 1. Cuenta Administrador Global (SUPERADMIN)
+    admin_user = db.query(User).filter(User.email == "admin@findaffinity.com").first()
+    if not admin_user:
+        admin_user = User(
+            email="admin@findaffinity.com",
+            hashed_password=hash_password("AdminPass2026!"),
+            full_name="Administrador Global FINDAFINITY",
+            role=UserRole.SUPERADMIN,
+            is_active=True,
+            tenant_id=None,
+        )
+        db.add(admin_user)
+        db.commit()
+
+    # 2. Cuenta Auditor Demo
+    demo_tenant = db.query(Tenant).filter(Tenant.fiscal_id == "B-99881122").first()
+    if demo_tenant:
+        auditor_user = db.query(User).filter(User.email == "auditor@konigpartners.es").first()
+        if not auditor_user:
+            auditor_user = User(
+                email="auditor@konigpartners.es",
+                hashed_password=hash_password("AuditPass2026!"),
+                full_name="Carlos Méndez (Auditor Senior)",
+                role=UserRole.AUDITOR,
+                is_active=True,
+                tenant_id=demo_tenant.id,
+            )
+            db.add(auditor_user)
+            db.commit()
+
+
+================================================================================
+FICHERO: tests\test_admin_and_platform.py
+================================================================================
+
+"""
+Tests Unitarios y de Integración para el Panel de Administrador Global (FINDAFINITY SUPERADMIN)
+Verifica la consulta de compañías registradas, sus tipos de licencia, actualización de planes y RBAC.
+"""
+import pytest
+from fastapi.testclient import TestClient
+from src.main import app
+from src.database.connection import SessionLocal
+from src.database.models import User, UserRole, Tenant
+from src.services.bootstrap_service import ensure_default_accounts, bootstrap_database_if_empty
+
+
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(app) as test_client:
+        with SessionLocal() as db:
+            bootstrap_database_if_empty(db)
+            ensure_default_accounts(db)
+        yield test_client
+
+
+def test_admin_login_and_token(client):
+    """Verifica que la cuenta SUPERADMIN preconfigurada inicia sesión y emite token válido."""
+    res = client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert "access_token" in data
+    assert data["user"]["email"] == "admin@findaffinity.com"
+    assert data["user"]["role"] == UserRole.SUPERADMIN
+
+
+def test_list_all_registered_companies_as_admin(client):
+    """El administrador puede listar todas las compañías registradas y ver sus licencias."""
+    login_res = client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    token = login_res.json()["access_token"]
+
+    res = client.get("/api/v1/admin/companies", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200, res.text
+    companies = res.json()
+    assert isinstance(companies, list)
+    assert len(companies) >= 1
+
+    first = companies[0]
+    assert "id" in first
+    assert "name" in first
+    assert "fiscal_id" in first
+    assert "plan" in first
+    assert "monthly_price_eur" in first
+    assert "clients_count" in first
+    assert "batches_count" in first
+    assert "status" in first
+    assert first["status"] == "ACTIVE"
+
+
+def test_get_platform_stats_as_admin(client):
+    """El administrador puede consultar las estadísticas agregadas de la plataforma."""
+    login_res = client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    token = login_res.json()["access_token"]
+
+    res = client.get("/api/v1/admin/stats", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200, res.text
+    stats = res.json()
+    assert "total_companies" in stats
+    assert stats["total_companies"] >= 1
+    assert "total_users" in stats
+    assert "plan_distribution" in stats
+
+
+def test_update_company_plan_as_admin(client):
+    """El administrador puede cambiar la licencia de una compañía."""
+    login_res = client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    token = login_res.json()["access_token"]
+
+    # Obtener primera compañía
+    companies = client.get("/api/v1/admin/companies", headers={"Authorization": f"Bearer {token}"}).json()
+    target_tenant_id = companies[0]["id"]
+
+    # Cambiar a ENTERPRISE
+    res = client.put(
+        f"/api/v1/admin/companies/{target_tenant_id}/plan",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"plan": "ENTERPRISE", "extra_blocks": 2},
+    )
+    assert res.status_code == 200, res.text
+    updated = res.json()
+    assert updated["plan"] == "ENTERPRISE"
+    assert updated["extra_blocks"] == 2
+    assert updated["monthly_price_eur"] == 249.0 + (2 * 25.0)
+
+    # Restaurar a PROFESSIONAL
+    client.put(
+        f"/api/v1/admin/companies/{target_tenant_id}/plan",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"plan": "PROFESSIONAL", "extra_blocks": 0},
+    )
+
+
+def test_non_admin_cannot_access_admin_panel(client):
+    """Un usuario con rol no administrativo no puede acceder al listado de compañías."""
+    # Login auditor normal
+    login_res = client.post("/api/v1/auth/login", json={
+        "email": "auditor@konigpartners.es",
+        "password": "AuditPass2026!",
+    })
+    token = login_res.json()["access_token"]
+
+    res = client.get("/api/v1/admin/companies", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 403, res.text
+
+
+def test_unauthenticated_request_rejected(client):
+    """Peticiones sin token a /api/v1/admin/* son rechazadas con 401."""
+    res = client.get("/api/v1/admin/companies")
+    assert res.status_code == 401
 
 
 ================================================================================

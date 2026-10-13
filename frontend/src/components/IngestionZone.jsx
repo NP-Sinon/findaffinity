@@ -127,26 +127,11 @@ export function IngestionZone({
           </div>
 
           <p className="text-xs text-zinc-200 font-medium">
-            Arrastra aquí tus archivos bancarios (<span className="text-zinc-400">Norma 43</span>) o de pasarela (<span className="text-zinc-400">Stripe, Redsys CSV</span>)
+            Arrastra aquí tus archivos o haz clic para seleccionarlos
           </p>
-          <p className="text-[11px] text-zinc-400 mt-0.5">
-            o haz clic para seleccionar desde tu equipo
+          <p className="text-[11px] text-zinc-500 mt-1">
+            Formatos soportados: .n43, .csv, .xlsx, .txt
           </p>
-
-          <div className="flex items-center gap-4 mt-3 text-[11px] text-zinc-400 border-t border-zinc-800/80 pt-2">
-            <span className="flex items-center gap-1">
-              <FileText className="h-3 w-3 text-zinc-400" />
-              Norma 43 (.n43 / .txt)
-            </span>
-            <span className="flex items-center gap-1">
-              <Layers className="h-3 w-3 text-zinc-400" />
-              Stripe CSV
-            </span>
-            <span className="flex items-center gap-1">
-              <FileSpreadsheet className="h-3 w-3 text-zinc-400" />
-              Redsys / Excel
-            </span>
-          </div>
         </div>
 
         {/* Estado / Resumen de Carga */}

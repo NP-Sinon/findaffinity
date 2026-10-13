@@ -6,6 +6,8 @@ import { ExportPanel } from './components/ExportPanel';
 import { ScoreRadarModal } from './components/ScoreRadarModal';
 import { AuditTrailModal } from './components/AuditTrailModal';
 import AuthModal from './components/AuthModal';
+import { AuthScreen } from './components/AuthScreen';
+import { AdminPanel } from './components/AdminPanel';
 import { MOCK_COMPANIES, INITIAL_TRANSACTIONS } from './data/mockAuditData';
 import { 
   checkBackendHealth, 
@@ -41,6 +43,13 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     const s = getStoredAuthSession();
     return s ? s.user : null;
+  });
+  const [currentView, setCurrentView] = useState(() => {
+    const s = getStoredAuthSession();
+    if (s && s.user && (s.user.role === 'SUPERADMIN' || s.user.role === 'ADMIN')) {
+      return 'admin';
+    }
+    return 'radar';
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authModalView, setAuthModalView] = useState('login');
@@ -251,14 +260,39 @@ export default function App() {
 
   const handleAuthSuccess = useCallback((user) => {
     setCurrentUser(user);
+    if (user.role === 'SUPERADMIN' || user.role === 'ADMIN') {
+      setCurrentView('admin');
+    } else {
+      setCurrentView('radar');
+    }
     triggerToast(`Sesión iniciada: ${user.full_name || user.email} (${user.role})`);
   }, [triggerToast]);
 
   const handleLogout = useCallback(() => {
     clearAuthSession();
     setCurrentUser(null);
+    setCurrentView('radar');
     triggerToast('Sesión finalizada');
   }, [triggerToast]);
+
+  // Si no está registrado o logeado, mostrar pantalla grande de autenticación
+  if (!currentUser) {
+    return (
+      <>
+        <AuthScreen 
+          onAuthSuccess={handleAuthSuccess} 
+          backendOnline={backendStatus.online} 
+        />
+
+        {toastMessage && (
+          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl animate-fade-in font-medium">
+            <Check className="h-4 w-4 text-emerald-400" />
+            <span>{toastMessage}</span>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
@@ -275,42 +309,53 @@ export default function App() {
         currentUser={currentUser}
         onOpenAuthModal={handleOpenAuthModal}
         onLogout={handleLogout}
+        currentView={currentView}
+        onToggleView={setCurrentView}
       />
 
-      {/* Contenedor Principal */}
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* 2. Zona de Ingesta Inteligente */}
-        <IngestionZone
-          onLoadDemoBatch={handleLoadDemoBatch}
-          isProcessing={isProcessing}
-          onFileProcessed={handleFileUploaded}
-        />
+      {/* Contenedor Principal: Conmutador entre Panel ADMIN y Radar Contable */}
+      {currentView === 'admin' ? (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <AdminPanel 
+            onNavigateToRadar={() => setCurrentView('radar')}
+            currentUser={currentUser}
+          />
+        </main>
+      ) : (
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+          {/* 2. Zona de Ingesta Inteligente */}
+          <IngestionZone
+            onLoadDemoBatch={handleLoadDemoBatch}
+            isProcessing={isProcessing}
+            onFileProcessed={handleFileUploaded}
+          />
 
-        {/* 3. El Radar de Conciliación y Desambiguación */}
-        <StagingRadar
-          transactions={periodFilteredTransactions}
-          onApproveTransaction={handleApproveTransaction}
-          onBulkApproveYellows={handleBulkApproveYellows}
-          onOpenScoreModal={(tx) => setModalTransaction(tx)}
-          selectedYear={selectedYear}
-          onSelectYear={setSelectedYear}
-          periodType={periodType}
-          onSelectPeriodType={setPeriodType}
-          startMonth={startMonth}
-          onSelectStartMonth={setStartMonth}
-          endMonth={endMonth}
-          onSelectEndMonth={setEndMonth}
-        />
+          {/* 3. El Radar de Conciliación y Desambiguación */}
+          <StagingRadar
+            transactions={periodFilteredTransactions}
+            onApproveTransaction={handleApproveTransaction}
+            onBulkApproveYellows={handleBulkApproveYellows}
+            onOpenScoreModal={(tx) => setModalTransaction(tx)}
+            selectedYear={selectedYear}
+            onSelectYear={setSelectedYear}
+            periodType={periodType}
+            onSelectPeriodType={setPeriodType}
+            startMonth={startMonth}
+            onSelectStartMonth={setStartMonth}
+            endMonth={endMonth}
+            onSelectEndMonth={setEndMonth}
+          />
 
-        {/* 4. Panel de Descarga y Exportación a ERP */}
-        <ExportPanel
-          transactions={periodFilteredTransactions}
-          selectedErp={selectedErp}
-          onSelectErp={setSelectedErp}
-          selectedCompany={selectedCompany}
-          batchId={currentBatchId}
-        />
-      </main>
+          {/* 4. Panel de Descarga y Exportación a ERP */}
+          <ExportPanel
+            transactions={periodFilteredTransactions}
+            selectedErp={selectedErp}
+            onSelectErp={setSelectedErp}
+            selectedCompany={selectedCompany}
+            batchId={currentBatchId}
+          />
+        </main>
+      )}
 
       {/* Footer Institucional */}
       <footer className="border-t border-zinc-800/60 bg-[#0c0c0e] py-4 text-center text-xs text-zinc-500">

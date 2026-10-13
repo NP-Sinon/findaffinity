@@ -49,9 +49,10 @@ class Tenant(Base):
 
 
 class UserRole:
-    ADMIN = "ADMIN"          # Socio / Administrador del despacho
-    AUDITOR = "AUDITOR"      # Contable / Auditor (conciliación y aprobación)
-    VIEWER = "VIEWER"        # Cliente Pyme / Consulta solo lectura
+    SUPERADMIN = "SUPERADMIN"  # Administrador Global / Plataforma FINDAFINITY
+    ADMIN = "ADMIN"            # Socio / Administrador del despacho
+    AUDITOR = "AUDITOR"        # Contable / Auditor (conciliación y aprobación)
+    VIEWER = "VIEWER"          # Cliente Pyme / Consulta solo lectura
 
 
 class User(Base):

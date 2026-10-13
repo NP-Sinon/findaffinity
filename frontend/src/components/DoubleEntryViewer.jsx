@@ -53,7 +53,6 @@ export function DoubleEntryViewer({ journal, transactionId }) {
             <tr className="border-b border-zinc-800/70 text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
               <th className="py-1.5 px-2">Subcuenta</th>
               <th className="py-1.5 px-2">Concepto Contable Oficial</th>
-              <th className="py-1.5 px-2">Documento</th>
               <th className="py-1.5 px-2 text-right">Debe (€)</th>
               <th className="py-1.5 px-2 text-right">Haber (€)</th>
               <th className="py-1.5 px-2 text-center">Contrapartida</th>
@@ -86,11 +85,6 @@ export function DoubleEntryViewer({ journal, transactionId }) {
                   {/* Concept */}
                   <td className="py-1.5 px-2 text-zinc-300 font-sans text-xs">
                     {line.concept}
-                  </td>
-
-                  {/* Document */}
-                  <td className="py-1.5 px-2 text-zinc-400">
-                    {line.documentNumber || '—'}
                   </td>
 
                   {/* Debit */}

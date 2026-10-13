@@ -8,6 +8,7 @@ from src.api.v1.reconcile_api import router as v1_router
 from src.api.v1.tenant_batch_api import router as tenant_batch_router
 from src.api.v1.subscription_api import router as subscription_router
 from src.api.v1.auth_api import router as auth_router
+from src.api.v1.admin_api import router as admin_router
 from src.database.connection import init_db
 
 
@@ -15,10 +16,11 @@ from src.database.connection import init_db
 async def lifespan(app: FastAPI):
     init_db()
     from src.database.connection import get_db_context
-    from src.services.bootstrap_service import bootstrap_database_if_empty
+    from src.services.bootstrap_service import bootstrap_database_if_empty, ensure_default_accounts
     try:
         with get_db_context() as db:
             bootstrap_database_if_empty(db)
+            ensure_default_accounts(db)
     except Exception as e:
         print(f"Aviso al inicializar datos semilla: {e}")
     yield
@@ -43,6 +45,7 @@ app.include_router(v1_router, prefix="/api")
 app.include_router(tenant_batch_router, prefix="/api")
 app.include_router(subscription_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 
 @app.get("/health", tags=["Health"])

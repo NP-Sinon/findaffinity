@@ -188,4 +188,46 @@ def bootstrap_database_if_empty(db: Session) -> bool:
             file_bytes=n43_bytes,
         )
 
+    # 7. Garantizar cuentas demo de auditor y superadministrador
+    ensure_default_accounts(db)
+
     return True
+
+
+def ensure_default_accounts(db: Session):
+    """
+    Garantiza que la cuenta de Administrador Global (admin@findaffinity.com)
+    y la cuenta de auditor demo (auditor@konigpartners.es) existan siempre en la base de datos.
+    """
+    from src.database.models import User, UserRole, Tenant
+    from src.auth.security import hash_password
+
+    # 1. Cuenta Administrador Global (SUPERADMIN)
+    admin_user = db.query(User).filter(User.email == "admin@findaffinity.com").first()
+    if not admin_user:
+        admin_user = User(
+            email="admin@findaffinity.com",
+            hashed_password=hash_password("AdminPass2026!"),
+            full_name="Administrador Global FINDAFINITY",
+            role=UserRole.SUPERADMIN,
+            is_active=True,
+            tenant_id=None,
+        )
+        db.add(admin_user)
+        db.commit()
+
+    # 2. Cuenta Auditor Demo
+    demo_tenant = db.query(Tenant).filter(Tenant.fiscal_id == "B-99881122").first()
+    if demo_tenant:
+        auditor_user = db.query(User).filter(User.email == "auditor@konigpartners.es").first()
+        if not auditor_user:
+            auditor_user = User(
+                email="auditor@konigpartners.es",
+                hashed_password=hash_password("AuditPass2026!"),
+                full_name="Carlos Méndez (Auditor Senior)",
+                role=UserRole.AUDITOR,
+                is_active=True,
+                tenant_id=demo_tenant.id,
+            )
+            db.add(auditor_user)
+            db.commit()

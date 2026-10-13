@@ -46,96 +46,141 @@ export function getAuthHeaders() {
 }
 
 /**
+ * Helper para fetch seguro que nunca lanza excepción por JSON inválido
+ */
+async function safeJsonFetch(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    let data = null;
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+    } else {
+      const text = await res.text();
+      data = { detail: text || `HTTP ${res.status}: ${res.statusText}` };
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    return { ok: false, status: 0, data: { detail: err.message || 'Sin conexión con el servidor' } };
+  }
+}
+
+/**
  * Iniciar sesión con email y contraseña en FastAPI
  */
 export async function loginApi(email, password) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      saveAuthSession(data.access_token, data.user);
-      return { success: true, token: data.access_token, user: data.user };
-    }
-    return { success: false, error: data.detail || 'Credenciales incorrectas' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor de autenticación' };
+  if (ok && data?.access_token) {
+    saveAuthSession(data.access_token, data.user);
+    return { success: true, token: data.access_token, user: data.user };
   }
+  return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
 
 /**
  * Registro de nuevo usuario o despacho contable
  */
 export async function registerApi({ email, password, fullName, companyName, fiscalId, role = 'AUDITOR' }) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email,
-        password,
-        full_name: fullName,
-        company_name: companyName,
-        fiscal_id: fiscalId,
-        role,
-      }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      password,
+      full_name: fullName,
+      company_name: companyName,
+      fiscal_id: fiscalId,
+      role,
+    }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      // Iniciar sesión automáticamente tras el registro
-      return await loginApi(email, password);
-    }
-    return { success: false, error: data.detail || 'Error en el registro' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  if (ok) {
+    // Iniciar sesión automáticamente tras el registro
+    return await loginApi(email, password);
   }
+  return { success: false, error: data?.detail || 'Error en el registro' };
 }
 
 /**
  * Solicitar recuperación de contraseña
  */
 export async function forgotPasswordApi(email) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/forgot-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      return { success: true, message: data.message, demoToken: data.reset_token_demo };
-    }
-    return { success: false, error: data.detail || 'Error en la solicitud' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  if (ok) {
+    return { success: true, message: data.message, demoToken: data.reset_token_demo };
   }
+  return { success: false, error: data?.detail || 'Error en la solicitud' };
 }
 
 /**
  * Restablecer contraseña con token
  */
 export async function resetPasswordApi(token, newPassword) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/reset-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, new_password: newPassword }),
-    });
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
 
-    const data = await res.json();
-    if (res.ok) {
-      return { success: true, message: data.message };
-    }
-    return { success: false, error: data.detail || 'Token inválido o expirado' };
-  } catch (err) {
-    return { success: false, error: err.message || 'Sin conexión con el servidor' };
+  if (ok) {
+    return { success: true, message: data.message };
   }
+  return { success: false, error: data?.detail || 'Token inválido o expirado' };
+}
+
+/**
+ * Obtener lista de compañías registradas y sus licencias (Solo ADMIN / SUPERADMIN)
+ */
+export async function fetchAdminCompanies() {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies`, {
+    headers,
+  });
+  if (ok && Array.isArray(data)) {
+    return data;
+  }
+  return [];
+}
+
+/**
+ * Obtener estadísticas globales de la plataforma (Solo ADMIN / SUPERADMIN)
+ */
+export async function fetchPlatformStats() {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/stats`, {
+    headers,
+  });
+  if (ok && data) {
+    return data;
+  }
+  return null;
+}
+
+/**
+ * Modificar plan / licencia de una compañía desde el panel de control
+ */
+export async function updateCompanyPlanApi(tenantId, plan, extraBlocks = 0) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies/${tenantId}/plan`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ plan, extra_blocks: extraBlocks }),
+  });
+  return { success: ok, data, error: ok ? null : (data?.detail || 'Error al actualizar plan') };
 }
 
 /**

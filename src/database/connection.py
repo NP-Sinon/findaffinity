@@ -66,6 +66,22 @@ def get_db_context():
 
 
 def init_db(target_engine=None):
-    """Crea todas las tablas en la base de datos si no existen."""
+    """Crea todas las tablas en la base de datos si no existen y aplica migraciones ligeras."""
     eng = target_engine or engine
     Base.metadata.create_all(bind=eng)
+
+    # Migración ligera automática para asegurar columnas añadidas en revisiones
+    try:
+        from sqlalchemy import text
+        with eng.connect() as conn:
+            if eng.dialect.name == "sqlite":
+                res = conn.execute(text("PRAGMA table_info(tenants)")).fetchall()
+                cols = [r[1] for r in res]
+                if cols and "extra_blocks" not in cols:
+                    conn.execute(text("ALTER TABLE tenants ADD COLUMN extra_blocks INTEGER DEFAULT 0 NOT NULL"))
+                    conn.commit()
+            elif eng.dialect.name == "postgresql":
+                conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS extra_blocks INTEGER DEFAULT 0 NOT NULL"))
+                conn.commit()
+    except Exception:
+        pass
