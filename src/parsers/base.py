@@ -48,8 +48,8 @@ class CanonicalInvoice:
     due_date: date
     customer_id: str
     customer_name: str
-    customer_fiscal_id: Optional[str] = None
     gross_amount_cents: int = 0        # Total a cobrar en céntimos
+    customer_fiscal_id: Optional[str] = None
     concept: str = ""
     gateway_id: Optional[str] = None   # Pasarela asignada (p.ej. 'stripe', 'redsys_tpv1')
     currency: str = "EUR"
