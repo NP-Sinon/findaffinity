@@ -1,6 +1,6 @@
 /**
  * Lote de Datos de Muestra de Auditoría Realista
- * Basado en extractos bancarios Norma 43 (Santander/BBVA) y liquidaciones Stripe/Redsys
+ * Basado en extractos bancarios Norma 43 y liquidaciones Stripe/Redsys
  * Totalmente cuadrado y auditado bajo el Plan General Contable (PGC)
  */
 
@@ -57,8 +57,8 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'BATCH_PAYOUT',
     source: 'Stripe Payout #po_1Ox98aK2',
-    date: '2026-10-12',
-    valueDate: '2026-10-12',
+    date: '2026-04-12',
+    valueDate: '2026-04-12',
     bankAccountCode: '572000001',
     bankAccountName: 'Santander c/c Operativa',
     concept: 'Liquidación Agrupada Stripe #po_1Ox98aK2 (4 facturas)',
@@ -67,7 +67,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 92.50,
     status: 'GREEN',
     confidenceScore: 0.986,
-    solverUsed: 'HiGHS MILP (scipy.optimize)',
+    solverUsed: 'Liquidación Stripe',
     matchedCount: 4,
     imbalanceEur: 0.00,
     dimensions: {
@@ -76,10 +76,10 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.96,
       s_fiscal: 1.00,
     },
-    auditExplanation: 'Subset-Sum MILP HiGHS resolvió solución óptima con penalización de comisiones mínima (|c_teorica - c_real| = 0.00 €). Cuadre matemático exacto a 0 céntimos.',
+    auditExplanation: 'Liquidación de 4 facturas conciliada con comisiones exactas y descuadre cero.',
     journal: {
       entryNumber: 101,
-      date: '2026-10-12',
+      date: '2026-04-12',
       isBalanced: true,
       lines: [
         { accountCode: '572000001', concept: 'Cobro Stripe Payout #po_1Ox98aK2', documentNumber: 'PO-10492', debitEur: 3842.50, creditEur: 0.00, contrapartida: '430000104' },
@@ -96,17 +96,17 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'BATCH_PAYOUT',
     source: 'Redsys TPV #TPV-4491-01',
-    date: '2026-10-12',
-    valueDate: '2026-10-12',
+    date: '2026-04-25',
+    valueDate: '2026-04-25',
     bankAccountCode: '572000002',
     bankAccountName: 'BBVA Pasarelas y TPV',
-    concept: 'Abono Ventas TPV Redsys 11/10 (Terminal 001)',
+    concept: 'Abono Ventas TPV Redsys 24/04 (Terminal 001)',
     netAmountEur: 1285.30,
     grossAmountEur: 1300.00,
     feeAmountEur: 14.70,
     status: 'GREEN',
     confidenceScore: 0.994,
-    solverUsed: 'Meet-in-the-Middle O(2^(n/2))',
+    solverUsed: 'Liquidación Redsys TPV',
     matchedCount: 2,
     imbalanceEur: 0.00,
     dimensions: {
@@ -115,10 +115,10 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.98,
       s_fiscal: 0.99,
     },
-    auditExplanation: 'Algoritmo Horowitz-Sahni emparejó exactamente 2 facturas con tasa fija Redsys (1.13% tasa efectiva). Cuadre nulo verificado.',
+    auditExplanation: 'Liquidación de 2 ventas TPV emparejada con comisiones del 1.13% y balance verificado.',
     journal: {
       entryNumber: 102,
-      date: '2026-10-12',
+      date: '2026-04-25',
       isBalanced: true,
       lines: [
         { accountCode: '572000002', concept: 'Abono TPV Comercio Redsys Terminal 1', documentNumber: 'TPV-4491', debitEur: 1285.30, creditEur: 0.00, contrapartida: '430000201' },
@@ -133,8 +133,8 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'TRANSFER',
     source: 'Norma 43 (Banco Santander)',
-    date: '2026-10-13',
-    valueDate: '2026-10-13',
+    date: '2026-05-14',
+    valueDate: '2026-05-14',
     bankAccountCode: '572000001',
     bankAccountName: 'Santander c/c Operativa',
     concept: 'TRANSF. DE: ZELERIS EXPRESS S.A. PAGO FRA-2026-092 CIF A82193847',
@@ -143,7 +143,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 0.00,
     status: 'GREEN',
     confidenceScore: 0.982,
-    solverUsed: 'NLP Desambiguación + Módulo 11 AEAT',
+    solverUsed: 'Transferencia Directa',
     matchedCount: 1,
     imbalanceEur: 0.00,
     dimensions: {
@@ -152,10 +152,10 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.97,
       s_fiscal: 1.00,
     },
-    auditExplanation: 'NIF A-82193847 contrastado por Algoritmo Módulo 11. Coincidencia literal de número de factura FRA-2026-092 e importe 850,00 €.',
+    auditExplanation: 'NIF y número de factura contrastados. Coincidencia exacta de cliente e importe.',
     journal: {
       entryNumber: 103,
-      date: '2026-10-13',
+      date: '2026-05-14',
       isBalanced: true,
       lines: [
         { accountCode: '572000001', concept: 'Transf. Zeleris Fra FRA-2026-092', documentNumber: 'FRA-092', debitEur: 850.00, creditEur: 0.00, contrapartida: '430000092' },
@@ -168,8 +168,8 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'TRANSFER',
     source: 'Norma 43 (Banco Santander)',
-    date: '2026-10-13',
-    valueDate: '2026-10-13',
+    date: '2026-06-20',
+    valueDate: '2026-06-20',
     bankAccountCode: '572000001',
     bankAccountName: 'Santander c/c Operativa',
     concept: 'TRANSF. SEPA: AMAZON SERVICES EUROPE FRA-2026-088 NIF W0185698G',
@@ -178,7 +178,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 0.00,
     status: 'GREEN',
     confidenceScore: 0.975,
-    solverUsed: 'VIES / AEAT Direct Match',
+    solverUsed: 'Transferencia SEPA',
     matchedCount: 1,
     imbalanceEur: 0.00,
     dimensions: {
@@ -187,10 +187,10 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.95,
       s_fiscal: 0.99,
     },
-    auditExplanation: 'NIF intracomunitario W0185698G validado. Conciliación automática autorizada sin intervención humana.',
+    auditExplanation: 'NIF intracomunitario y factura identificados. Conciliación automática autorizada.',
     journal: {
       entryNumber: 104,
-      date: '2026-10-13',
+      date: '2026-06-20',
       isBalanced: true,
       lines: [
         { accountCode: '572000001', concept: 'Cobro SEPA Amazon Services Fra 088', documentNumber: 'FRA-088', debitEur: 2410.00, creditEur: 0.00, contrapartida: '430000088' },
@@ -203,8 +203,8 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'BATCH_PAYOUT',
     source: 'Stripe Payout #po_1Py82L9m',
-    date: '2026-10-14',
-    valueDate: '2026-10-14',
+    date: '2026-07-08',
+    valueDate: '2026-07-08',
     bankAccountCode: '572000001',
     bankAccountName: 'Santander c/c Operativa',
     concept: 'Liquidación Agrupada Stripe #po_1Py82L9m (2 facturas)',
@@ -213,7 +213,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 24.80,
     status: 'GREEN',
     confidenceScore: 0.968,
-    solverUsed: 'HiGHS MILP (scipy.optimize)',
+    solverUsed: 'Liquidación Stripe',
     matchedCount: 2,
     imbalanceEur: 0.00,
     dimensions: {
@@ -222,10 +222,10 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.93,
       s_fiscal: 0.99,
     },
-    auditExplanation: 'Solver HiGHS emparejó 2 facturas con fee estándar Stripe (1.4% + 0.25€ por transacción). Cuadre verificado.',
+    auditExplanation: 'Lote de 2 facturas con tarifa estándar Stripe. Cuadre perfecto verificado.',
     journal: {
       entryNumber: 105,
-      date: '2026-10-14',
+      date: '2026-07-08',
       isBalanced: true,
       lines: [
         { accountCode: '572000001', concept: 'Cobro Stripe Payout #po_1Py82L9m', documentNumber: 'PO-10521', debitEur: 945.20, creditEur: 0.00, contrapartida: '430000121' },
@@ -240,8 +240,8 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'TRANSFER',
     source: 'Norma 43 (Banco Santander)',
-    date: '2026-10-14',
-    valueDate: '2026-10-14',
+    date: '2026-07-22',
+    valueDate: '2026-07-22',
     bankAccountCode: '572000001',
     bankAccountName: 'Santander c/c Operativa',
     concept: 'TRANSF. DE: CONST. HERMANOS MARTINEZ SL FRA 091',
@@ -250,7 +250,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 0.00,
     status: 'YELLOW',
     confidenceScore: 0.885,
-    solverUsed: 'RapidFuzz Token Set Ratio + Metaphone',
+    solverUsed: 'Transferencia con Abreviatura',
     matchedCount: 1,
     imbalanceEur: 0.00,
     dimensions: {
@@ -259,7 +259,7 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.75,
       s_fiscal: 0.88,
     },
-    auditExplanation: 'Importe 1.450,00 € coincide al céntimo con Fra FRA-2026-091. Abreviatura "CONST." detectada vs razón social oficial "CONSTRUCCIONES HNOS. MARTINEZ S.L." en cartera. Requiere aprobación 1-clic.',
+    auditExplanation: 'Importe 1.450,00 € coincide con Fra FRA-2026-091. Nombre abreviado "CONST." en el extracto.',
     suggestedInvoice: {
       number: 'FRA-2026-091',
       customerName: 'CONSTRUCCIONES HNOS. MARTINEZ S.L.',
@@ -269,7 +269,7 @@ export const INITIAL_TRANSACTIONS = [
     },
     journal: {
       entryNumber: 106,
-      date: '2026-10-14',
+      date: '2026-07-22',
       isBalanced: true,
       lines: [
         { accountCode: '572000001', concept: 'Transf. Const. Hnos Martinez Fra 091', documentNumber: 'FRA-091', debitEur: 1450.00, creditEur: 0.00, contrapartida: '430000091' },
@@ -282,17 +282,17 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'TRANSFER',
     source: 'Norma 43 (BBVA)',
-    date: '2026-10-14',
-    valueDate: '2026-10-14',
+    date: '2026-08-15',
+    valueDate: '2026-08-15',
     bankAccountCode: '572000002',
     bankAccountName: 'BBVA Pasarelas y TPV',
-    concept: 'TRANSF: ALFONSO GOMEZ - ANTICIPO PEDIDO OCTUBRE',
+    concept: 'TRANSF: ALFONSO GOMEZ - ANTICIPO PEDIDO',
     netAmountEur: 620.00,
     grossAmountEur: 620.00,
     feeAmountEur: 0.00,
     status: 'YELLOW',
     confidenceScore: 0.794,
-    solverUsed: 'Double Metaphone Fonético (KM-RS)',
+    solverUsed: 'Transferencia con Nombre Invertido',
     matchedCount: 1,
     imbalanceEur: 0.00,
     dimensions: {
@@ -301,7 +301,7 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.62,
       s_fiscal: 0.70,
     },
-    auditExplanation: 'Importe 620,00 € coincide con Proforma PRO-2026-11. Ordenante invertido "ALFONSO GOMEZ" presenta resonancia fonética 94% con cliente de cartera "GOMEZ RUIZ ALFONSO". Requiere verificación.',
+    auditExplanation: 'Importe 620,00 € coincide con Proforma PRO-2026-11. Nombre en orden inverso ("ALFONSO GOMEZ" vs "GOMEZ RUIZ ALFONSO").',
     suggestedInvoice: {
       number: 'PRO-2026-11',
       customerName: 'GOMEZ RUIZ ALFONSO',
@@ -311,7 +311,7 @@ export const INITIAL_TRANSACTIONS = [
     },
     journal: {
       entryNumber: 107,
-      date: '2026-10-14',
+      date: '2026-08-15',
       isBalanced: true,
       lines: [
         { accountCode: '572000002', concept: 'Transf. Anticipo Pedido Alfonso Gomez', documentNumber: 'PRO-011', debitEur: 620.00, creditEur: 0.00, contrapartida: '430000015' },
@@ -324,8 +324,8 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'BATCH_PAYOUT',
     source: 'Redsys TPV #TPV-4502-02',
-    date: '2026-10-13',
-    valueDate: '2026-10-13',
+    date: '2026-09-18',
+    valueDate: '2026-09-18',
     bankAccountCode: '572000002',
     bankAccountName: 'BBVA Pasarelas y TPV',
     concept: 'Liquidación Diaria Redsys TPV Comercio #TPV-4502',
@@ -334,7 +334,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 12.85,
     status: 'YELLOW',
     confidenceScore: 0.842,
-    solverUsed: 'HiGHS MILP (Tolerancia ventana temporal +2d)',
+    solverUsed: 'Liquidación TPV Redsys',
     matchedCount: 3,
     imbalanceEur: 0.00,
     dimensions: {
@@ -343,9 +343,9 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.81,
       s_fiscal: 0.84,
     },
-    auditExplanation: 'Lote de 3 tickets TPV conciliado con neto 782,15 € tras 48h de retraso en cámara de compensación interbancaria (fin de semana). Comisiones 12,85 € (1.61%). Requiere visto bueno.',
+    auditExplanation: 'Lote de 3 tickets TPV conciliado tras retraso de compensación bancaria de fin de semana.',
     suggestedInvoice: {
-      number: 'TICKETS-TPV-OCT13',
+      number: 'TICKETS-TPV-SEP18',
       customerName: 'Ventas TPV Mostrador (3 tickets)',
       customerAccount: '430000999',
       customerFiscalId: 'VARIOS',
@@ -353,12 +353,12 @@ export const INITIAL_TRANSACTIONS = [
     },
     journal: {
       entryNumber: 108,
-      date: '2026-10-13',
+      date: '2026-09-18',
       isBalanced: true,
       lines: [
         { accountCode: '572000002', concept: 'Liquidación Redsys TPV-4502', documentNumber: 'TPV-4502', debitEur: 782.15, creditEur: 0.00, contrapartida: '430000999' },
         { accountCode: '626000001', concept: 'Comisión tasa descuento TPV Redsys', documentNumber: 'TPV-4502', debitEur: 12.85, creditEur: 0.00, contrapartida: '572000002' },
-        { accountCode: '430000999', concept: 'Cierre Diario Tickets TPV 11-13 Oct', documentNumber: 'TPV-4502', debitEur: 0.00, creditEur: 795.00, contrapartida: '572000002' },
+        { accountCode: '430000999', concept: 'Cierre Diario Tickets TPV Sep', documentNumber: 'TPV-4502', debitEur: 0.00, creditEur: 795.00, contrapartida: '572000002' },
       ],
     },
   },
@@ -367,8 +367,8 @@ export const INITIAL_TRANSACTIONS = [
     companyId: 'COMP-001',
     type: 'TRANSFER',
     source: 'Norma 43 (Banco Santander)',
-    date: '2026-10-13',
-    valueDate: '2026-10-13',
+    date: '2026-10-04',
+    valueDate: '2026-10-04',
     bankAccountCode: '572000001',
     bankAccountName: 'Santander c/c Operativa',
     concept: 'TRANSF: BISTRO RESTAURACION PAGO FACT 144',
@@ -377,7 +377,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 0.00,
     status: 'YELLOW',
     confidenceScore: 0.821,
-    solverUsed: 'Fuzzy Match + Inferencia de Factura',
+    solverUsed: 'Transferencia por Factura',
     matchedCount: 1,
     imbalanceEur: 0.00,
     dimensions: {
@@ -386,7 +386,7 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.71,
       s_fiscal: 0.69,
     },
-    auditExplanation: 'Importe 315,50 € cuadra con Fra FRA-2026-144 de BISTRO Y DEGUSTACION GOURMET S.L. Concepto omite sufijos societarios pero conserva el ordinal de factura.',
+    auditExplanation: 'Importe 315,50 € cuadra con Fra FRA-2026-144 de BISTRO Y DEGUSTACION GOURMET S.L.',
     suggestedInvoice: {
       number: 'FRA-2026-144',
       customerName: 'BISTRO Y DEGUSTACION GOURMET S.L.',
@@ -396,7 +396,7 @@ export const INITIAL_TRANSACTIONS = [
     },
     journal: {
       entryNumber: 109,
-      date: '2026-10-13',
+      date: '2026-10-04',
       isBalanced: true,
       lines: [
         { accountCode: '572000001', concept: 'Transf. Bistro Restauración Fra 144', documentNumber: 'FRA-144', debitEur: 315.50, creditEur: 0.00, contrapartida: '430000144' },
@@ -419,7 +419,7 @@ export const INITIAL_TRANSACTIONS = [
     feeAmountEur: 0.00,
     status: 'RED',
     confidenceScore: 0.340,
-    solverUsed: 'Ninguno (Fallo de correspondencia)',
+    solverUsed: 'Sin Coincidencia',
     matchedCount: 0,
     imbalanceEur: 0.00,
     dimensions: {
@@ -428,7 +428,7 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.15,
       s_fiscal: 0.00,
     },
-    auditExplanation: 'Sin ordenante ni NIF mercantil identificado en el registro 23 del extracto Norma 43. No existe ninguna combinación en cartera de facturas emitidas que sume 1.200,00 €. Requiere asignar a cuenta puente 555000000 o reclamar al cliente.',
+    auditExplanation: 'Ingreso en cajero sin identificar en el extracto. No existe ninguna factura pendiente por este importe.',
     journal: {
       entryNumber: 110,
       date: '2026-10-14',
@@ -448,13 +448,13 @@ export const INITIAL_TRANSACTIONS = [
     valueDate: '2026-10-14',
     bankAccountCode: '572000001',
     bankAccountName: 'Santander c/c Operativa',
-    concept: 'Liquidación Stripe #po_1Qz33M01 (Discrepancia Retención/Chargeback)',
+    concept: 'Liquidación Stripe #po_1Qz33M01 (Retención por Disputa)',
     netAmountEur: 540.00,
     grossAmountEur: 580.00,
     feeAmountEur: 40.00,
     status: 'RED',
     confidenceScore: 0.515,
-    solverUsed: 'Detección de Anomalía en Fricción',
+    solverUsed: 'Retención de Pasarela',
     matchedCount: 1,
     imbalanceEur: 0.00,
     dimensions: {
@@ -463,7 +463,7 @@ export const INITIAL_TRANSACTIONS = [
       s_texto: 0.40,
       s_fiscal: 0.26,
     },
-    auditExplanation: 'Retención asimétrica de pasarela detectada (disputa o comisión punitiva de 18,50 € adicional a la tasa de interchange contractual). Se bloquea la auto-conciliación preventiva para evitar distorsión en la cuenta 626.',
+    auditExplanation: 'Retención por disputa de cliente detectada en la liquidación. Requiere revisión manual.',
     journal: {
       entryNumber: 111,
       date: '2026-10-14',

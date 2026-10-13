@@ -7,16 +7,16 @@ root_dir = os.path.abspath(r"E:\Games\Proyecto")
 txt_compressed_path = os.path.join(root_dir, "proyecto_comprimido.txt")
 txt_plain_path = os.path.join(root_dir, "proyecto_completo.txt")
 
-exclude_dirs = {".pytest_cache", "__pycache__", ".git", "venv", ".idea", ".vscode"}
+exclude_dirs = {".pytest_cache", "__pycache__", ".git", "venv", ".idea", ".vscode", "node_modules", "dist"}
 files_to_pack = []
 
 for dirpath, dirnames, filenames in os.walk(root_dir):
     dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
     for f in filenames:
-        if f in ("proyecto_comprimido.txt", "proyecto_completo.txt"):
+        if f in ("proyecto_comprimido.txt", "proyecto_completo.txt", "package-lock.json"):
             continue
         ext = os.path.splitext(f)[1].lower()
-        if ext in (".py", ".md", ".txt", ".json", ".csv", ".xlsx"):
+        if ext in (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".html", ".css", ".svg"):
             rel_path = os.path.relpath(os.path.join(dirpath, f), root_dir)
             files_to_pack.append(rel_path)
 

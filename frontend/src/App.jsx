@@ -18,6 +18,12 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Filtro de Periodo Contable (Año, Trimestres o Rango Libre de Meses)
+  const [selectedYear, setSelectedYear] = useState(2026);
+  const [periodType, setPeriodType] = useState('ALL');
+  const [startMonth, setStartMonth] = useState(1);
+  const [endMonth, setEndMonth] = useState(12);
+
   // Probar conectividad con backend FastAPI al iniciar
   useEffect(() => {
     let isMounted = true;
@@ -37,11 +43,24 @@ export default function App() {
     }, 3000);
   };
 
-  // Cálculo de métricas en tiempo real
+  // Partidas filtradas por periodo contable
+  const periodFilteredTransactions = useMemo(() => {
+    return transactions.filter(tx => {
+      if (!tx.date) return true;
+      const parts = tx.date.split('-');
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10);
+      if (year !== selectedYear) return false;
+      if (month < startMonth || month > endMonth) return false;
+      return true;
+    });
+  }, [transactions, selectedYear, startMonth, endMonth]);
+
+  // Cálculo de métricas en tiempo real sobre el periodo activo
   const metrics = useMemo(() => {
-    const totalVolume = transactions.reduce((acc, t) => acc + (Number(t.netAmountEur) || 0), 0);
-    const greenCount = transactions.filter(t => t.status === 'GREEN').length;
-    const rate = transactions.length > 0 ? (greenCount / transactions.length) : 0;
+    const totalVolume = periodFilteredTransactions.reduce((acc, t) => acc + (Number(t.netAmountEur) || 0), 0);
+    const greenCount = periodFilteredTransactions.filter(t => t.status === 'GREEN').length;
+    const rate = periodFilteredTransactions.length > 0 ? (greenCount / periodFilteredTransactions.length) : 0;
     
     // El descuadre global de asientos cuadrados debe ser matemáticamente 0.00 €
     return {
@@ -49,7 +68,7 @@ export default function App() {
       reconciliationRate: rate,
       globalImbalanceEur: 0.00,
     };
-  }, [transactions]);
+  }, [periodFilteredTransactions]);
 
   // Manejador para aprobar una partida individual (Amarilla -> Verde)
   const handleApproveTransaction = useCallback((id) => {
@@ -132,15 +151,23 @@ export default function App() {
 
         {/* 3. El Radar de Conciliación y Desambiguación */}
         <StagingRadar
-          transactions={transactions}
+          transactions={periodFilteredTransactions}
           onApproveTransaction={handleApproveTransaction}
           onBulkApproveYellows={handleBulkApproveYellows}
           onOpenScoreModal={(tx) => setModalTransaction(tx)}
+          selectedYear={selectedYear}
+          onSelectYear={setSelectedYear}
+          periodType={periodType}
+          onSelectPeriodType={setPeriodType}
+          startMonth={startMonth}
+          onSelectStartMonth={setStartMonth}
+          endMonth={endMonth}
+          onSelectEndMonth={setEndMonth}
         />
 
         {/* 4. Panel de Descarga y Exportación a ERP */}
         <ExportPanel
-          transactions={transactions}
+          transactions={periodFilteredTransactions}
           selectedErp={selectedErp}
           onSelectErp={setSelectedErp}
           selectedCompany={selectedCompany}
@@ -151,10 +178,10 @@ export default function App() {
       <footer className="border-t border-zinc-800/60 bg-[#0c0c0e] py-4 text-center text-xs text-zinc-500">
         <div className="max-w-[1600px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="font-mono text-[11px] text-zinc-400">
-            KÖNIG RECONCILE ENGINE &bull; Zero-Liability Staging Area &bull; ISO-8859-15 & AEB Cuaderno 43 Compliant
+            FINDAFINITY &bull; Conciliación Bancaria y Pasarelas de Pago &bull; Cuadre PGC a céntimo cero
           </div>
           <div className="text-[11px] text-zinc-400">
-            Exportadores Nativos: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
+            Exportación Oficial: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
           </div>
         </div>
       </footer>

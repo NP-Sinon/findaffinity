@@ -10,6 +10,7 @@ import {
   CheckCheck
 } from 'lucide-react';
 import { TransactionRow } from './TransactionRow';
+import { PeriodFilter } from './PeriodFilter';
 import { formatEuro } from '../utils/formatters';
 
 export function StagingRadar({
@@ -17,6 +18,14 @@ export function StagingRadar({
   onApproveTransaction,
   onBulkApproveYellows,
   onOpenScoreModal,
+  selectedYear,
+  onSelectYear,
+  periodType,
+  onSelectPeriodType,
+  startMonth,
+  onSelectStartMonth,
+  endMonth,
+  onSelectEndMonth,
 }) {
   const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'GREEN' | 'YELLOW' | 'RED'
   const [searchQuery, setSearchQuery] = useState('');
@@ -74,7 +83,21 @@ export function StagingRadar({
     <div className="bg-[#101013] border border-zinc-800/80 rounded-lg overflow-hidden shadow-sm">
       {/* Top Controls: Tabs and Search Bar */}
       <div className="p-4 border-b border-zinc-800/60 bg-[#0d0d10] space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* Filtro por Año, Trimestres o Rango Personalizado de Meses */}
+        {selectedYear && (
+          <PeriodFilter
+            selectedYear={selectedYear}
+            onSelectYear={onSelectYear}
+            periodType={periodType}
+            onSelectPeriodType={onSelectPeriodType}
+            startMonth={startMonth}
+            onSelectStartMonth={onSelectStartMonth}
+            endMonth={endMonth}
+            onSelectEndMonth={onSelectEndMonth}
+          />
+        )}
+
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
           {/* Status Tabs with Live Counters */}
           <div className="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0">
             <button
@@ -230,10 +253,10 @@ export function StagingRadar({
       {/* Table Footer: Summary count */}
       <div className="p-3 border-t border-zinc-800/60 bg-[#09090b] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-zinc-400 gap-2">
         <div>
-          Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas contables en staging
+          Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
         </div>
         <div className="flex items-center gap-4 text-xs font-mono">
-          <span>Neto Visible: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + t.netAmountEur, 0))}</strong></span>
+          <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + t.netAmountEur, 0))}</strong></span>
         </div>
       </div>
     </div>
