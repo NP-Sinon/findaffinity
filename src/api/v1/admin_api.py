@@ -181,3 +181,39 @@ def get_platform_admin_stats(
         total_volume_eur=round(total_volume_cents / 100.0, 2),
         plan_distribution=distribution,
     )
+
+
+@router.delete("/companies/{tenant_id}", status_code=status.HTTP_200_OK)
+def delete_company(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
+):
+    """
+    Elimina definitivamente una compañía (tenant) y todos sus registros vinculados
+    en cascada (usuarios, clientes, lotes contables, asientos y logs).
+    Exclusivo para la cuenta SUPERADMIN.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Compañía o despacho no encontrado.",
+        )
+
+    if tenant.email == "admin@findaffinity.com":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se permite eliminar la cuenta maestra de la plataforma.",
+        )
+
+    name = tenant.name
+    fiscal_id = tenant.fiscal_id
+    db.delete(tenant)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Compañía '{name}' ({fiscal_id}) eliminada definitivamente.",
+        "deleted_tenant_id": tenant_id,
+    }

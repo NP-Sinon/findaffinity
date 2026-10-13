@@ -10,7 +10,8 @@ import {
   CreditCard,
   Check,
   BarChart2,
-  Lock
+  Lock,
+  Trash2
 } from 'lucide-react';
 import { DoubleEntryViewer } from './DoubleEntryViewer';
 import { formatEuro, formatEuroNoSymbol, formatDateSpanish, formatPercent } from '../utils/formatters';
@@ -21,6 +22,7 @@ export function TransactionRow({
   onToggleExpand,
   onOpenScoreModal,
   onApprove,
+  onDelete,
 }) {
   const [approving, setApproving] = useState(false);
 
@@ -188,34 +190,51 @@ export function TransactionRow({
 
         {/* Action Button */}
         <td className="py-2.5 px-2 text-right whitespace-nowrap">
-          {transaction.status === 'YELLOW' ? (
-            <button
-              type="button"
-              onClick={handleQuickApprove}
-              disabled={approving}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-600 active:bg-emerald-700 text-white font-medium text-[11px] transition-colors shadow-sm"
-              title="Aprobar asiento contable y transmutar a Verde"
-            >
-              <Check className="h-3 w-3" />
-              <span>Aprobar Asiento</span>
-            </button>
-          ) : transaction.status === 'GREEN' ? (
-            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
-              <CheckCircle2 className="h-3 w-3" />
-              <span>Conciliado</span>
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenScoreModal(transaction);
-              }}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 text-[10px] transition-colors"
-            >
-              <span>Inspeccionar</span>
-            </button>
-          )}
+          <div className="flex items-center justify-end gap-1.5">
+            {transaction.status === 'YELLOW' ? (
+              <button
+                type="button"
+                onClick={handleQuickApprove}
+                disabled={approving}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-600 active:bg-emerald-700 text-white font-medium text-[11px] transition-colors shadow-sm"
+                title="Aprobar asiento contable y transmutar a Verde"
+              >
+                <Check className="h-3 w-3" />
+                <span>Aprobar Asiento</span>
+              </button>
+            ) : transaction.status === 'GREEN' ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
+                <CheckCircle2 className="h-3 w-3" />
+                <span>Conciliado</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenScoreModal(transaction);
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 text-[10px] transition-colors"
+              >
+                <span>Inspeccionar</span>
+              </button>
+            )}
+
+            {/* Botón para Eliminar Partida */}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(transaction.id);
+                }}
+                className="p-1 rounded text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors"
+                title="Eliminar partida"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </td>
       </tr>
 

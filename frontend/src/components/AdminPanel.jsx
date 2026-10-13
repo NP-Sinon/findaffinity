@@ -12,9 +12,11 @@ import {
   Check, 
   Layers, 
   Sparkles,
-  Edit2
+  Edit2,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
-import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi } from '../services/api';
+import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi, deleteCompanyApi } from '../services/api';
 import { formatEuro } from '../utils/formatters';
 
 export function AdminPanel({ onNavigateToRadar, currentUser }) {
@@ -47,6 +49,9 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
   const [editExtraBlocks, setEditExtraBlocks] = useState(0);
   const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
   const [actionErrorMsg, setActionErrorMsg] = useState(null);
+  const [deletingCompany, setDeletingCompany] = useState(null);
+  const [deleteConfirmedStep1, setDeleteConfirmedStep1] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -110,6 +115,31 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
       setTimeout(() => setActionSuccessMsg(null), 3500);
     } else {
       setActionErrorMsg(res.error || 'Error al actualizar la licencia');
+    }
+  };
+
+  const handleOpenDelete = (c) => {
+    setDeletingCompany(c);
+    setDeleteConfirmedStep1(false);
+    setActionSuccessMsg(null);
+    setActionErrorMsg(null);
+  };
+
+  const handleExecuteDeleteCompany = async () => {
+    if (!deletingCompany || !deleteConfirmedStep1) return;
+    setIsDeleting(true);
+    setActionErrorMsg(null);
+
+    const res = await deleteCompanyApi(deletingCompany.id);
+    setIsDeleting(false);
+    if (res.success) {
+      setActionSuccessMsg(`Compañía '${deletingCompany.name}' eliminada definitivamente.`);
+      setDeletingCompany(null);
+      setDeleteConfirmedStep1(false);
+      await loadData();
+      setTimeout(() => setActionSuccessMsg(null), 3500);
+    } else {
+      setActionErrorMsg(res.error || 'Error al eliminar la compañía');
     }
   };
 
@@ -348,16 +378,27 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
                         Activa
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEdit(c)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-[11px] text-zinc-200 transition-colors"
-                        title="Modificar Licencia o Cuotas"
-                      >
-                        <Edit2 className="h-3 w-3 text-zinc-400" />
-                        <span>Licencia</span>
-                      </button>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(c)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-[11px] text-zinc-200 transition-colors"
+                          title="Modificar Licencia o Cuotas"
+                        >
+                          <Edit2 className="h-3 w-3 text-zinc-400" />
+                          <span>Licencia</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDelete(c)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-rose-950/80 border border-zinc-800 hover:border-rose-800/80 text-[11px] text-zinc-400 hover:text-rose-300 transition-colors"
+                          title="Eliminar Compañía"
+                        >
+                          <Trash2 className="h-3 w-3 text-zinc-400 hover:text-rose-400" />
+                          <span>Eliminar</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -442,6 +483,81 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Eliminar Compañía con Doble Confirmación */}
+      {deletingCompany && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#121215] border border-rose-900/60 rounded-xl max-w-md w-full p-6 shadow-2xl relative">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-100">
+                  Eliminación Definitiva de Compañía
+                </h3>
+                <p className="text-[11px] text-zinc-400">
+                  Operación irreversible de administración central
+                </p>
+              </div>
+            </div>
+
+            {actionErrorMsg && (
+              <div className="mb-4 p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs">
+                {actionErrorMsg}
+              </div>
+            )}
+
+            <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 mb-4 text-xs space-y-1">
+              <div><span className="text-zinc-400">Empresa:</span> <strong className="text-zinc-100">{deletingCompany.name}</strong></div>
+              <div><span className="text-zinc-400">CIF / NIF:</span> <span className="font-mono text-zinc-200">{deletingCompany.fiscal_id}</span></div>
+              <div><span className="text-zinc-400">Plan:</span> <span className="text-zinc-200">{deletingCompany.plan_name}</span></div>
+              <div><span className="text-zinc-400">Clientes & Lotes:</span> <span className="text-zinc-200">{deletingCompany.clients_count} clientes, {deletingCompany.batches_count} lotes</span></div>
+            </div>
+
+            <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+              Al eliminar este despacho se borrarán de forma inmediata e irrecuperable todas sus empresas cliente vinculadas, usuarios, asientos contables y registros de auditoría.
+            </p>
+
+            {/* Doble Confirmación: Paso 1 y Paso 2 */}
+            <div className="space-y-3 mb-5 p-3 rounded-lg bg-rose-950/20 border border-rose-900/40">
+              <label className="flex items-start gap-2.5 cursor-pointer text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={deleteConfirmedStep1}
+                  onChange={(e) => setDeleteConfirmedStep1(e.target.checked)}
+                  className="mt-0.5 rounded border-zinc-700 bg-zinc-900 text-rose-600 focus:ring-0 cursor-pointer"
+                />
+                <span className="leading-snug select-none">
+                  <strong className="text-rose-400">Confirmación 1:</strong> Entiendo el impacto y asumo la pérdida definitiva de todos los datos de este despacho.
+                </span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800/80">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingCompany(null);
+                  setDeleteConfirmedStep1(false);
+                }}
+                className="px-3.5 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!deleteConfirmedStep1 || isDeleting}
+                onClick={handleExecuteDeleteCompany}
+                className="px-4 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:hover:bg-rose-600 text-white text-xs font-semibold transition-colors shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{isDeleting ? 'Eliminando...' : 'Confirmación 2: Eliminar Definitivamente'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

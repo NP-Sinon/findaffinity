@@ -40,8 +40,8 @@ class Tenant(Base):
 
     # Relaciones
     clients = relationship("ClientCompany", back_populates="tenant", cascade="all, delete-orphan")
-    batches = relationship("ReconciliationBatch", back_populates="tenant")
-    audit_logs = relationship("AuditLog", back_populates="tenant")
+    batches = relationship("ReconciliationBatch", back_populates="tenant", cascade="all, delete-orphan")
+    audit_logs = relationship("AuditLog", back_populates="tenant", cascade="all, delete-orphan")
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -92,7 +92,7 @@ class ClientCompany(Base):
     # Relaciones
     tenant = relationship("Tenant", back_populates="clients")
     batches = relationship("ReconciliationBatch", back_populates="client", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="client")
+    audit_logs = relationship("AuditLog", back_populates="client", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_tenant_fiscal_id", "tenant_id", "fiscal_id", unique=True),
@@ -130,7 +130,7 @@ class ReconciliationBatch(Base):
     client = relationship("ClientCompany", back_populates="batches")
     transactions = relationship("BatchTransaction", back_populates="batch", cascade="all, delete-orphan")
     journal_entries = relationship("JournalEntryRecord", back_populates="batch", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="batch")
+    audit_logs = relationship("AuditLog", back_populates="batch", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<ReconciliationBatch id={self.id} year={self.period_year} movements={self.total_movements}>"

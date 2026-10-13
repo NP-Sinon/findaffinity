@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
+from src.database.models import ClientCompany, ReconciliationBatch, BatchTransaction
 from src.database.repository import ReconciliationRepository
 from src.services.batch_service import BatchReconciliationService
 
@@ -143,6 +144,28 @@ def list_clients(tenant_id: str = Query(...), db: Session = Depends(get_db)):
         )
         for c in clients
     ]
+
+
+@router.delete("/clients/{client_id}", status_code=status.HTTP_200_OK)
+def delete_client(
+    client_id: str,
+    db: Session = Depends(get_db),
+):
+    """Elimina definitivamente una empresa cliente y todos sus lotes contables vinculados."""
+    client = db.query(ClientCompany).filter(ClientCompany.id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Empresa cliente no encontrada.")
+
+    name = client.name
+    fiscal_id = client.fiscal_id
+    db.delete(client)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Empresa cliente '{name}' ({fiscal_id}) eliminada con éxito.",
+        "deleted_client_id": client_id,
+    }
 
 
 # --- ENDPOINTS DE LOTES Y AUDITORÍA ---
@@ -480,3 +503,40 @@ def export_batch(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/batches/{batch_id}", status_code=status.HTTP_200_OK)
+def delete_batch(batch_id: str, db: Session = Depends(get_db)):
+    """Elimina definitivamente un lote de conciliación completo con todas sus partidas."""
+    batch = db.query(ReconciliationBatch).filter(ReconciliationBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Lote no encontrado.")
+
+    db.delete(batch)
+    db.commit()
+    return {"success": True, "deleted_batch_id": batch_id}
+
+
+@router.delete("/batches/{batch_id}/transactions/{tx_id}", status_code=status.HTTP_200_OK)
+def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(get_db)):
+    """Elimina una partida individual dentro de un lote de conciliación."""
+    tx = db.query(BatchTransaction).filter(
+        BatchTransaction.id == tx_id,
+        BatchTransaction.batch_id == batch_id,
+    ).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Partida no encontrada en este lote.")
+
+    batch = db.query(ReconciliationBatch).filter(ReconciliationBatch.id == batch_id).first()
+    if batch:
+        batch.total_movements = max(0, (batch.total_movements or 1) - 1)
+        if tx.status == "GREEN":
+            batch.green_count = max(0, (batch.green_count or 1) - 1)
+        elif tx.status == "YELLOW":
+            batch.yellow_count = max(0, (batch.yellow_count or 1) - 1)
+        elif tx.status == "RED":
+            batch.red_count = max(0, (batch.red_count or 1) - 1)
+
+    db.delete(tx)
+    db.commit()
+    return {"success": True, "deleted_transaction_id": tx_id}

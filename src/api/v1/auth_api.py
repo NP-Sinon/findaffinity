@@ -96,21 +96,6 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
         assigned_tenant_name = assigned_tenant.name
         assigned_role = UserRole.ADMIN
 
-        # Autoprovisionar una empresa cliente por defecto para el despacho registrado
-        existing_client = db.query(ClientCompany).filter(ClientCompany.tenant_id == assigned_tenant.id).first()
-        if not existing_client:
-            default_client = ClientCompany(
-                tenant_id=assigned_tenant.id,
-                name=assigned_tenant.name,
-                fiscal_id=assigned_tenant.fiscal_id,
-                default_erp="A3",
-                account_length=9,
-                bank_account_code="572000001",
-                fee_account_code="626000001",
-            )
-            db.add(default_client)
-            db.commit()
-
     elif assigned_tenant_id:
         tenant = db.query(Tenant).filter(Tenant.id == assigned_tenant_id).first()
         if not tenant:

@@ -800,6 +800,7 @@ import { StagingRadar } from './components/StagingRadar';
 import { ExportPanel } from './components/ExportPanel';
 import { ScoreRadarModal } from './components/ScoreRadarModal';
 import { AuditTrailModal } from './components/AuditTrailModal';
+import { ClientModal } from './components/ClientModal';
 import AuthModal from './components/AuthModal';
 import { AuthScreen } from './components/AuthScreen';
 import { AdminPanel } from './components/AdminPanel';
@@ -809,6 +810,9 @@ import {
   fetchTenants, 
   fetchClients, 
   createClientApi,
+  deleteClientApi,
+  deleteBatchApi,
+  deleteTransactionApi,
   fetchBatches, 
   fetchBatchDetails,
   uploadBatchFile,
@@ -836,6 +840,11 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState({ online: false });
   const [toastMessage, setToastMessage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Modal para Añadir / Eliminar Empresa Cliente
+  const [clientModalOpen, setClientModalOpen] = useState(false);
+  const [clientModalMode, setClientModalMode] = useState('add');
+  const [clientModalTarget, setClientModalTarget] = useState(null);
 
   // Estados de Autenticación & Usuario
   const [currentUser, setCurrentUser] = useState(() => {
@@ -869,7 +878,7 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // Función para cargar lotes de una empresa cliente
+  // Carga lotes reales de la empresa seleccionada
   const loadBatchesForCompany = useCallback(async (companyId, year, sMonth, eMonth) => {
     if (!companyId) {
       setBatches([]);
@@ -911,23 +920,7 @@ export default function App() {
 
     if (user.tenant_id) {
       try {
-        let clientList = await fetchClients(user.tenant_id);
-
-        // Si el despacho no tiene empresas clientes aún, autoprovisionar una por defecto
-        if (!clientList || clientList.length === 0) {
-          const compName = user.tenant_name || user.full_name || 'Mi Empresa SL';
-          const defaultFiscal = `B${user.tenant_id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
-          const createRes = await createClientApi({
-            tenantId: user.tenant_id,
-            name: compName,
-            fiscalId: defaultFiscal,
-            defaultErp: 'A3',
-          });
-          if (createRes.success && createRes.client) {
-            clientList = [createRes.client];
-          }
-        }
-
+        const clientList = await fetchClients(user.tenant_id);
         if (clientList && clientList.length > 0) {
           setCompanies(clientList);
           const firstComp = clientList[0];
@@ -935,6 +928,7 @@ export default function App() {
           setSelectedErp(firstComp.defaultErp || 'A3');
           await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
         } else {
+          // El usuario NO tiene clientes aún: dejar lista vacía (cero empresas 'por la cara')
           setCompanies([]);
           setSelectedCompany(null);
           setTransactions([]);
@@ -955,6 +949,10 @@ export default function App() {
             setSelectedCompany(cList[0]);
             setSelectedErp(cList[0].defaultErp || 'A3');
             await loadBatchesForCompany(cList[0].id, selectedYear, startMonth, endMonth);
+          } else {
+            setCompanies([]);
+            setSelectedCompany(null);
+            setTransactions([]);
           }
         }
       } catch (err) {
@@ -979,11 +977,10 @@ export default function App() {
 
     initApp();
     return () => { isMounted = false; };
-  }, [currentUser, syncUserContext]);
+  }, [syncUserContext, currentUser]);
 
   // Partidas filtradas por periodo contable
   const periodFilteredTransactions = useMemo(() => {
-    if (!transactions || transactions.length === 0) return [];
     return transactions.filter(tx => {
       if (!tx.date) return true;
       const parts = tx.date.split('-');
@@ -995,50 +992,113 @@ export default function App() {
     });
   }, [transactions, selectedYear, startMonth, endMonth]);
 
-  // Cálculo de métricas en tiempo real sobre el periodo activo
-  const metrics = useMemo(() => {
-    if (!periodFilteredTransactions || periodFilteredTransactions.length === 0) {
-      return {
-        totalNetVolumeEur: 0.00,
-        reconciliationRate: 0,
-        globalImbalanceEur: 0.00,
-      };
+  // Handlers para Añadir y Quitar Empresa Cliente
+  const handleOpenAddClientModal = useCallback(() => {
+    setClientModalMode('add');
+    setClientModalTarget(null);
+    setClientModalOpen(true);
+  }, []);
+
+  const handleOpenDeleteClientModal = useCallback((comp) => {
+    setClientModalMode('delete');
+    setClientModalTarget(comp);
+    setClientModalOpen(true);
+  }, []);
+
+  const handleAddClient = useCallback(async ({ name, fiscalId, defaultErp, accountLength }) => {
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    if (!tenantIdToUse) {
+      throw new Error('No se ha detectado el identificador de su despacho.');
     }
 
-    const totalVolume = periodFilteredTransactions.reduce((acc, t) => acc + (Number(t.netAmountEur) || 0), 0);
-    const greenCount = periodFilteredTransactions.filter(t => t.status === 'GREEN' || t.isApproved).length;
-    const rate = periodFilteredTransactions.length > 0 ? (greenCount / periodFilteredTransactions.length) : 0;
-    
-    return {
-      totalNetVolumeEur: totalVolume,
-      reconciliationRate: rate,
-      globalImbalanceEur: 0.00,
-    };
-  }, [periodFilteredTransactions]);
+    const res = await createClientApi({
+      tenantId: tenantIdToUse,
+      name,
+      fiscalId,
+      defaultErp,
+      accountLength,
+    });
 
-  // Manejador para aprobar una partida individual (Amarilla -> Verde)
-  const handleApproveTransaction = useCallback(async (id) => {
+    if (res.success && res.client) {
+      setCompanies(prev => [...prev, res.client]);
+      setSelectedCompany(res.client);
+      setSelectedErp(res.client.defaultErp || 'A3');
+      setTransactions([]);
+      setBatches([]);
+      setCurrentBatchId(null);
+      triggerToast(`Empresa cliente '${res.client.name}' creada con éxito.`);
+    } else {
+      throw new Error(res.error || 'Error al crear la empresa cliente');
+    }
+  }, [currentUser, currentTenant, triggerToast]);
+
+  const handleDeleteClient = useCallback(async (clientId) => {
+    const res = await deleteClientApi(clientId);
+    if (res.success) {
+      setCompanies(prev => {
+        const updated = prev.filter(c => c.id !== clientId);
+        if (selectedCompany?.id === clientId) {
+          const nextComp = updated.length > 0 ? updated[0] : null;
+          setSelectedCompany(nextComp);
+          if (nextComp) {
+            setSelectedErp(nextComp.defaultErp || 'A3');
+            loadBatchesForCompany(nextComp.id, selectedYear, startMonth, endMonth);
+          } else {
+            setTransactions([]);
+            setBatches([]);
+            setCurrentBatchId(null);
+          }
+        }
+        return updated;
+      });
+      triggerToast('Empresa cliente eliminada correctamente.');
+    } else {
+      throw new Error(res.error || 'Error al eliminar la empresa cliente');
+    }
+  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
+
+  // Eliminación de partidas (individual y vaciado completo)
+  const handleDeleteTransaction = useCallback(async (txId) => {
+    setTransactions(prev => prev.filter(tx => tx.id !== txId));
+    if (currentBatchId && backendStatus.online) {
+      await deleteTransactionApi(currentBatchId, txId);
+    }
+    triggerToast('Partida eliminada.');
+  }, [currentBatchId, backendStatus.online, triggerToast]);
+
+  const handleClearAllTransactions = useCallback(async () => {
+    setTransactions([]);
+    if (currentBatchId && backendStatus.online) {
+      await deleteBatchApi(currentBatchId);
+      setBatches(prev => prev.filter(b => b.id !== currentBatchId));
+      setCurrentBatchId(null);
+    }
+    triggerToast('Todas las partidas han sido eliminadas del radar.');
+  }, [currentBatchId, backendStatus.online, triggerToast]);
+
+  // Aprobación individual de partida
+  const handleApproveTransaction = useCallback(async (txId) => {
     setTransactions(prev => prev.map(tx => {
-      if (tx.id === id) {
+      if (tx.id === txId) {
         return {
           ...tx,
           status: 'GREEN',
           confidenceScore: 0.965,
           isApproved: true,
-          auditExplanation: `${tx.auditExplanation || ''} [Aprobado por Auditor Contable].`,
+          auditExplanation: `${tx.auditExplanation || ''} [Aprobado manualmente por Auditor Contable].`,
         };
       }
       return tx;
     }));
 
     if (currentBatchId && backendStatus.online) {
-      await approveTransactionApi(currentBatchId, id);
+      await approveTransactionApi(currentBatchId, txId);
     }
 
-    triggerToast(`Partida ${id} aprobada con éxito. Asiento PGC certificado en SHA-256.`);
+    triggerToast(`Partida ${txId} aprobada. Asiento PGC certificado.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
-  // Manejador para aprobar todas las partidas amarillas en lote
+  // Aprobación masiva de todas las partidas amarillas
   const handleBulkApproveYellows = useCallback(async () => {
     let approvedCount = 0;
     setTransactions(prev => prev.map(tx => {
@@ -1167,21 +1227,19 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
-      {/* 1. Barra superior de contexto contable */}
+      {/* 1. Barra superior limpia (cero métricas invasivas, aislamiento estricto en vista Admin) */}
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
         onSelectCompany={handleSelectCompany}
         selectedErp={selectedErp}
         onSelectErp={setSelectedErp}
-        metrics={metrics}
-        backendStatus={backendStatus}
-        onOpenAuditModal={() => setShowAuditModal(true)}
         currentUser={currentUser}
-        onOpenAuthModal={handleOpenAuthModal}
         onLogout={handleLogout}
         currentView={currentView}
         onToggleView={setCurrentView}
+        onOpenAddClientModal={handleOpenAddClientModal}
+        onOpenDeleteClientModal={handleOpenDeleteClientModal}
       />
 
       {/* Contenedor Principal: Conmutador entre Panel ADMIN (Exclusivo SUPERADMIN) y Radar Contable */}
@@ -1201,7 +1259,7 @@ export default function App() {
             onFileProcessed={handleFileUploaded}
           />
 
-          {/* 3. El Radar de Conciliación y Desambiguación */}
+          {/* 3. El Radar de Conciliación y Desambiguación con vaciado y eliminación de partidas */}
           <StagingRadar
             transactions={periodFilteredTransactions}
             onApproveTransaction={handleApproveTransaction}
@@ -1216,6 +1274,10 @@ export default function App() {
             endMonth={endMonth}
             onSelectEndMonth={setEndMonth}
             onLoadDemoBatch={handleLoadDemoBatch}
+            onDeleteTransaction={handleDeleteTransaction}
+            onClearAllTransactions={handleClearAllTransactions}
+            hasCompanies={companies.length > 0}
+            onOpenAddClientModal={handleOpenAddClientModal}
           />
 
           {/* 4. Panel de Descarga y Exportación a ERP */}
@@ -1240,6 +1302,16 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Modal para Añadir o Eliminar Empresa Cliente */}
+      <ClientModal
+        isOpen={clientModalOpen}
+        mode={clientModalMode}
+        company={clientModalTarget}
+        onClose={() => setClientModalOpen(false)}
+        onAddClient={handleAddClient}
+        onDeleteClient={handleDeleteClient}
+      />
 
       {/* Modal de Inspección de Confidence Scorer */}
       {modalTransaction && (
@@ -1310,9 +1382,11 @@ import {
   Check, 
   Layers, 
   Sparkles,
-  Edit2
+  Edit2,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
-import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi } from '../services/api';
+import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi, deleteCompanyApi } from '../services/api';
 import { formatEuro } from '../utils/formatters';
 
 export function AdminPanel({ onNavigateToRadar, currentUser }) {
@@ -1345,6 +1419,9 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
   const [editExtraBlocks, setEditExtraBlocks] = useState(0);
   const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
   const [actionErrorMsg, setActionErrorMsg] = useState(null);
+  const [deletingCompany, setDeletingCompany] = useState(null);
+  const [deleteConfirmedStep1, setDeleteConfirmedStep1] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -1408,6 +1485,31 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
       setTimeout(() => setActionSuccessMsg(null), 3500);
     } else {
       setActionErrorMsg(res.error || 'Error al actualizar la licencia');
+    }
+  };
+
+  const handleOpenDelete = (c) => {
+    setDeletingCompany(c);
+    setDeleteConfirmedStep1(false);
+    setActionSuccessMsg(null);
+    setActionErrorMsg(null);
+  };
+
+  const handleExecuteDeleteCompany = async () => {
+    if (!deletingCompany || !deleteConfirmedStep1) return;
+    setIsDeleting(true);
+    setActionErrorMsg(null);
+
+    const res = await deleteCompanyApi(deletingCompany.id);
+    setIsDeleting(false);
+    if (res.success) {
+      setActionSuccessMsg(`Compañía '${deletingCompany.name}' eliminada definitivamente.`);
+      setDeletingCompany(null);
+      setDeleteConfirmedStep1(false);
+      await loadData();
+      setTimeout(() => setActionSuccessMsg(null), 3500);
+    } else {
+      setActionErrorMsg(res.error || 'Error al eliminar la compañía');
     }
   };
 
@@ -1646,16 +1748,27 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
                         Activa
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEdit(c)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-[11px] text-zinc-200 transition-colors"
-                        title="Modificar Licencia o Cuotas"
-                      >
-                        <Edit2 className="h-3 w-3 text-zinc-400" />
-                        <span>Licencia</span>
-                      </button>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(c)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-[11px] text-zinc-200 transition-colors"
+                          title="Modificar Licencia o Cuotas"
+                        >
+                          <Edit2 className="h-3 w-3 text-zinc-400" />
+                          <span>Licencia</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDelete(c)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-rose-950/80 border border-zinc-800 hover:border-rose-800/80 text-[11px] text-zinc-400 hover:text-rose-300 transition-colors"
+                          title="Eliminar Compañía"
+                        >
+                          <Trash2 className="h-3 w-3 text-zinc-400 hover:text-rose-400" />
+                          <span>Eliminar</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1740,6 +1853,81 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para Eliminar Compañía con Doble Confirmación */}
+      {deletingCompany && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#121215] border border-rose-900/60 rounded-xl max-w-md w-full p-6 shadow-2xl relative">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-100">
+                  Eliminación Definitiva de Compañía
+                </h3>
+                <p className="text-[11px] text-zinc-400">
+                  Operación irreversible de administración central
+                </p>
+              </div>
+            </div>
+
+            {actionErrorMsg && (
+              <div className="mb-4 p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs">
+                {actionErrorMsg}
+              </div>
+            )}
+
+            <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3 mb-4 text-xs space-y-1">
+              <div><span className="text-zinc-400">Empresa:</span> <strong className="text-zinc-100">{deletingCompany.name}</strong></div>
+              <div><span className="text-zinc-400">CIF / NIF:</span> <span className="font-mono text-zinc-200">{deletingCompany.fiscal_id}</span></div>
+              <div><span className="text-zinc-400">Plan:</span> <span className="text-zinc-200">{deletingCompany.plan_name}</span></div>
+              <div><span className="text-zinc-400">Clientes & Lotes:</span> <span className="text-zinc-200">{deletingCompany.clients_count} clientes, {deletingCompany.batches_count} lotes</span></div>
+            </div>
+
+            <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+              Al eliminar este despacho se borrarán de forma inmediata e irrecuperable todas sus empresas cliente vinculadas, usuarios, asientos contables y registros de auditoría.
+            </p>
+
+            {/* Doble Confirmación: Paso 1 y Paso 2 */}
+            <div className="space-y-3 mb-5 p-3 rounded-lg bg-rose-950/20 border border-rose-900/40">
+              <label className="flex items-start gap-2.5 cursor-pointer text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={deleteConfirmedStep1}
+                  onChange={(e) => setDeleteConfirmedStep1(e.target.checked)}
+                  className="mt-0.5 rounded border-zinc-700 bg-zinc-900 text-rose-600 focus:ring-0 cursor-pointer"
+                />
+                <span className="leading-snug select-none">
+                  <strong className="text-rose-400">Confirmación 1:</strong> Entiendo el impacto y asumo la pérdida definitiva de todos los datos de este despacho.
+                </span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800/80">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingCompany(null);
+                  setDeleteConfirmedStep1(false);
+                }}
+                className="px-3.5 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!deleteConfirmedStep1 || isDeleting}
+                onClick={handleExecuteDeleteCompany}
+                className="px-4 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:hover:bg-rose-600 text-white text-xs font-semibold transition-colors shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{isDeleting ? 'Eliminando...' : 'Confirmación 2: Eliminar Definitivamente'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2983,6 +3171,248 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
 
 
 ================================================================================
+FICHERO: frontend\src\components\ClientModal.jsx
+================================================================================
+
+import React, { useState } from 'react';
+import { Building2, X, Plus, Trash2, AlertTriangle, Check } from 'lucide-react';
+
+export function ClientModal({
+  isOpen,
+  mode = 'add', // 'add' | 'delete'
+  company = null,
+  onClose,
+  onAddClient,
+  onDeleteClient,
+}) {
+  const [name, setName] = useState('');
+  const [fiscalId, setFiscalId] = useState('');
+  const [defaultErp, setDefaultErp] = useState('A3');
+  const [accountLength, setAccountLength] = useState(9);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  if (!isOpen) return null;
+
+  const handleAddSubmit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      setError('El nombre de la empresa es obligatorio.');
+      return;
+    }
+    if (!fiscalId.trim()) {
+      setError('El CIF / NIF es obligatorio.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      await onAddClient({
+        name: name.trim(),
+        fiscalId: fiscalId.trim().toUpperCase(),
+        defaultErp,
+        accountLength: parseInt(accountLength, 10) || 9,
+      });
+      setName('');
+      setFiscalId('');
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Error al guardar la empresa cliente');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!company) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await onDeleteClient(company.id);
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Error al eliminar la empresa cliente');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+      <div className="bg-[#121215] border border-zinc-800 rounded-xl max-w-md w-full p-6 shadow-2xl relative">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        {mode === 'add' ? (
+          <>
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="h-8 w-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                <Building2 className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-100">
+                  Añadir Empresa Cliente
+                </h3>
+                <p className="text-[11px] text-zinc-400">
+                  Nueva sociedad o negocio para gestionar su contabilidad
+                </p>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mb-4 p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleAddSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                  Razón Social / Nombre Comercial
+                </label>
+                <input
+                  type="text"
+                  placeholder="ej. Distribuciones Mediterráneo SL"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                  NIF / CIF Fiscal
+                </label>
+                <input
+                  type="text"
+                  placeholder="ej. B-88776655"
+                  value={fiscalId}
+                  onChange={(e) => setFiscalId(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono uppercase focus:outline-none focus:border-zinc-700"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                    ERP Contable
+                  </label>
+                  <select
+                    value={defaultErp}
+                    onChange={(e) => setDefaultErp(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-700"
+                  >
+                    <option value="A3">Wolters Kluwer A3</option>
+                    <option value="SAGE">Sage 50</option>
+                    <option value="CONTASOL">DELSOL Contasol</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                    Dígitos Subcuenta
+                  </label>
+                  <select
+                    value={accountLength}
+                    onChange={(e) => setAccountLength(e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-xs text-zinc-100 focus:outline-none focus:border-zinc-700"
+                  >
+                    <option value={8}>8 dígitos</option>
+                    <option value={9}>9 dígitos</option>
+                    <option value={10}>10 dígitos</option>
+                    <option value={12}>12 dígitos</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800/80">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-4 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold transition-colors shadow-sm"
+                >
+                  {loading ? 'Guardando...' : 'Crear Empresa Cliente'}
+                </button>
+              </div>
+            </form>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="h-8 w-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+                <AlertTriangle className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-100">
+                  Eliminar Empresa Cliente
+                </h3>
+                <p className="text-[11px] text-zinc-400">
+                  Acción irreversible de supresión contable
+                </p>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mb-4 p-2.5 rounded bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs">
+                {error}
+              </div>
+            )}
+
+            <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-lg p-3 mb-4">
+              <div className="text-xs font-semibold text-zinc-200">
+                {company?.name}
+              </div>
+              <div className="text-[11px] font-mono text-zinc-400 mt-0.5">
+                CIF: {company?.fiscalId || '—'} • ERP: {company?.defaultErp || 'A3'}
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-400 mb-5 leading-relaxed">
+              ¿Estás seguro de que deseas eliminar esta empresa cliente? Se borrarán todos los lotes de conciliación, movimientos y asientos exportables asociados a ella.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800/80">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteConfirm}
+                disabled={loading}
+                className="px-4 py-1.5 rounded-md bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold transition-colors shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{loading ? 'Eliminando...' : 'Eliminar Empresa'}</span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
 FICHERO: frontend\src\components\DoubleEntryViewer.jsx
 ================================================================================
 
@@ -3423,39 +3853,39 @@ import React from 'react';
 import { 
   Building2, 
   Database, 
-  CheckCircle2, 
   Layers,
   ShieldCheck,
-  Server
+  Plus,
+  Trash2,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
-import { formatEuro, formatPercent } from '../utils/formatters';
 
 export function HeaderNav({
-  companies,
-  selectedCompany,
+  companies = [],
+  selectedCompany = null,
   onSelectCompany,
-  selectedErp,
+  selectedErp = 'A3',
   onSelectErp,
-  metrics,
-  backendStatus,
-  onOpenAuditModal,
   currentUser,
-  onOpenAuthModal,
   onLogout,
   currentView = 'radar',
   onToggleView,
+  onOpenAddClientModal,
+  onOpenDeleteClientModal,
 }) {
   const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
+  const isAdminView = currentView === 'admin';
 
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between py-3 gap-4">
+        <div className="flex items-center justify-between py-3 gap-4">
           
-          {/* Brand Identity & Context Selectors */}
-          <div className="flex flex-wrap items-center gap-4">
+          {/* Lado Izquierdo: Marca, Conmutador y Contexto de Trabajo */}
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             {/* Logo & App Name */}
-            <div className="flex items-center gap-2.5 mr-2">
+            <div className="flex items-center gap-2.5 mr-1">
               <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
                 <Layers className="h-4 w-4" />
               </div>
@@ -3464,198 +3894,165 @@ export function HeaderNav({
               </span>
             </div>
 
-            {/* Separador sutil */}
-            <div className="hidden sm:block h-6 w-px bg-zinc-800" />
-
             {/* Selector de Vistas EXCLUSIVO para SUPERADMIN */}
             {isSuperAdmin && onToggleView && (
-              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
-                <button
-                  type="button"
-                  onClick={() => onToggleView('radar')}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    currentView === 'radar'
-                      ? 'bg-zinc-800 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Radar Conciliación
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onToggleView('admin')}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                    currentView === 'admin'
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-blue-300'
-                  }`}
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>Licencias & Empresas</span>
-                </button>
-              </div>
-            )}
-
-            {/* Selector de Empresa Cliente Activa */}
-            {companies && companies.length > 0 && (
-              <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
-                <Building2 className="h-3.5 w-3.5 text-zinc-400" />
-                <div className="flex flex-col">
-                  <span className="text-[9px] uppercase tracking-wider text-zinc-400">
-                    Empresa Cliente
-                  </span>
-                  <select
-                    value={selectedCompany ? selectedCompany.id : ''}
-                    onChange={(e) => {
-                      const comp = companies.find(c => c.id === e.target.value);
-                      if (comp && onSelectCompany) onSelectCompany(comp);
-                    }}
-                    className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-3"
+              <>
+                <div className="hidden sm:block h-5 w-px bg-zinc-800" />
+                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
+                  <button
+                    type="button"
+                    onClick={() => onToggleView('radar')}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      !isAdminView
+                        ? 'bg-zinc-800 text-white shadow-sm'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
                   >
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
-                        {c.name} {c.fiscalId ? `(${c.fiscalId})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    Radar Conciliación
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onToggleView('admin')}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                      isAdminView
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-zinc-400 hover:text-blue-300'
+                    }`}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span>Licencias & Empresas</span>
+                  </button>
                 </div>
-              </div>
+              </>
             )}
 
-            {/* ERP Destino Selector */}
-            <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
-              <Database className="h-3.5 w-3.5 text-zinc-400" />
-              <div className="flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-zinc-400">
-                  Exportar a
-                </span>
-                <select
-                  value={selectedErp}
-                  onChange={(e) => onSelectErp(e.target.value)}
-                  className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-3"
-                >
-                  <option value="A3" className="bg-zinc-900 text-zinc-200">
-                    Wolters Kluwer A3
-                  </option>
-                  <option value="SAGE" className="bg-zinc-900 text-zinc-200">
-                    Sage 50 / Despachos
-                  </option>
-                  <option value="CONTASOL" className="bg-zinc-900 text-zinc-200">
-                    DELSOL Contasol
-                  </option>
-                </select>
-              </div>
-            </div>
-          </div>
+            {/* CONTEXTO DE CONCILIACIÓN: Se oculta completamente cuando estamos en el Panel de Administrador Global */}
+            {!isAdminView && (
+              <>
+                <div className="hidden sm:block h-5 w-px bg-zinc-800" />
 
-          {/* Real-time Financial Balance Indicators & Action Buttons */}
-          <div className="flex items-center gap-3 overflow-x-auto pb-1 lg:pb-0">
-            {/* Total Procesado */}
-            <div className="bg-zinc-900/80 border border-zinc-800 rounded-md px-3.5 py-1.5 min-w-[130px]">
-              <div className="text-[10px] text-zinc-400 uppercase tracking-wider">
-                Total Procesado
-              </div>
-              <div className="font-mono tabular-nums text-xs font-semibold text-zinc-100">
-                {formatEuro(metrics.totalNetVolumeEur)}
-              </div>
-            </div>
+                {/* Selector de Empresa Cliente con botones de Añadir (+) y Quitar (-) */}
+                <div className="flex items-center gap-1.5 bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5">
+                  <Building2 className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                  
+                  {companies && companies.length > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex flex-col">
+                        <span className="text-[9px] uppercase tracking-wider text-zinc-400 leading-none mb-0.5">
+                          Empresa Cliente
+                        </span>
+                        <select
+                          value={selectedCompany ? selectedCompany.id : ''}
+                          onChange={(e) => {
+                            const comp = companies.find(c => c.id === e.target.value);
+                            if (comp && onSelectCompany) onSelectCompany(comp);
+                          }}
+                          className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2 max-w-[210px] truncate"
+                        >
+                          {companies.map((c) => (
+                            <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
+                              {c.name} {c.fiscalId ? `(${c.fiscalId})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-            {/* Porcentaje Conciliado */}
-            <div className="bg-zinc-900/80 border border-zinc-800 rounded-md px-3.5 py-1.5 min-w-[110px]">
-              <div className="text-[10px] text-zinc-400 uppercase tracking-wider">
-                Conciliado
-              </div>
-              <div className="font-mono tabular-nums text-xs font-semibold text-emerald-400">
-                {formatPercent(metrics.reconciliationRate)}
-              </div>
-            </div>
+                      {/* Botón Añadir Empresa (+) */}
+                      {onOpenAddClientModal && (
+                        <button
+                          type="button"
+                          onClick={onOpenAddClientModal}
+                          className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
+                          title="Añadir nueva Empresa Cliente"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      )}
 
-            {/* Cuadre a Cero */}
-            <div className={`rounded-md px-3.5 py-1.5 min-w-[140px] border flex items-center justify-between ${
-              metrics.globalImbalanceEur === 0
-                ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-300'
-                : 'bg-rose-950/20 border-rose-800/40 text-rose-300'
-            }`}>
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" />
-                  Cuadre Contable
-                </div>
-                <div className="font-mono tabular-nums text-xs font-bold text-zinc-100">
-                  Descuadre: {formatEuro(metrics.globalImbalanceEur)}
-                </div>
-              </div>
-            </div>
-
-            {/* Botón Auditoría SHA-256 */}
-            <button
-              type="button"
-              onClick={onOpenAuditModal}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-xs font-medium text-emerald-400 transition-colors cursor-pointer shadow-sm"
-              title="Ver Certificado Legal de Auditoría con Cadena de Custodia SHA-256"
-            >
-              <ShieldCheck className="h-4 w-4 text-emerald-400" />
-              <span className="hidden sm:inline">Auditoría SHA-256</span>
-            </button>
-
-            {/* Perfil de Usuario / Botón de Inicio de Sesión */}
-            {currentUser ? (
-              <div className="flex items-center gap-2 pl-1 border-l border-zinc-800">
-                <div className="flex flex-col text-right hidden sm:block">
-                  <span className="text-xs font-medium text-zinc-200 leading-tight">
-                    {currentUser.full_name || currentUser.email}
-                  </span>
-                  <div className="flex items-center justify-end gap-1.5 mt-0.5">
-                    <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold ${
-                      currentUser.role === 'SUPERADMIN'
-                        ? 'bg-purple-950/60 text-purple-300 border border-purple-800/60'
-                        : currentUser.role === 'ADMIN' 
-                        ? 'bg-blue-950/60 text-blue-300 border border-blue-800/60'
-                        : currentUser.role === 'AUDITOR'
-                        ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'
-                        : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
-                    }`}>
-                      {currentUser.role}
-                    </span>
-                    {currentUser.tenant_name && (
-                      <span className="text-[10px] text-zinc-400 truncate max-w-[110px]" title={currentUser.tenant_name}>
-                        {currentUser.tenant_name}
+                      {/* Botón Quitar Empresa (-) */}
+                      {selectedCompany && onOpenDeleteClientModal && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenDeleteClientModal(selectedCompany)}
+                          className="p-1 rounded bg-zinc-800 hover:bg-rose-950/80 border border-transparent hover:border-rose-800/60 text-zinc-400 hover:text-rose-400 transition-colors"
+                          title={`Eliminar empresa cliente ${selectedCompany.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-400 italic">
+                        Sin empresas cliente
                       </span>
-                    )}
+                      {onOpenAddClientModal && (
+                        <button
+                          type="button"
+                          onClick={onOpenAddClientModal}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
+                        >
+                          <Plus className="h-3 w-3" />
+                          <span>Añadir Empresa</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selector ERP Destino */}
+                <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5">
+                  <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                  <div className="flex flex-col">
+                    <span className="text-[9px] uppercase tracking-wider text-zinc-400 leading-none mb-0.5">
+                      Exportar a
+                    </span>
+                    <select
+                      value={selectedErp}
+                      onChange={(e) => onSelectErp && onSelectErp(e.target.value)}
+                      className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2"
+                    >
+                      <option value="A3" className="bg-zinc-900 text-zinc-200">
+                        Wolters Kluwer A3
+                      </option>
+                      <option value="SAGE" className="bg-zinc-900 text-zinc-200">
+                        Sage 50 / Despachos
+                      </option>
+                      <option value="CONTASOL" className="bg-zinc-900 text-zinc-200">
+                        DELSOL Contasol
+                      </option>
+                    </select>
                   </div>
                 </div>
+              </>
+            )}
+          </div>
+
+          {/* Lado Derecho: Usuario y Salida */}
+          <div className="flex items-center gap-3">
+            {currentUser && (
+              <div className="flex items-center gap-2.5 pl-3 border-l border-zinc-800">
+                <div className="hidden sm:flex flex-col text-right">
+                  <span className="text-xs font-medium text-zinc-200">
+                    {currentUser.full_name || currentUser.email}
+                  </span>
+                  <span className={`text-[10px] font-mono uppercase tracking-wider ${
+                    isSuperAdmin ? 'text-blue-400 font-bold' : 'text-zinc-400'
+                  }`}>
+                    {currentUser.role}
+                  </span>
+                </div>
+
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="px-2.5 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-                  title="Cerrar Sesión"
+                  className="p-1.5 rounded-md text-zinc-400 hover:text-rose-400 hover:bg-zinc-900 transition-colors"
+                  title="Cerrar sesión"
                 >
-                  Salir
+                  <LogOut className="h-4 w-4" />
                 </button>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onOpenAuthModal && onOpenAuthModal('login')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-sm ml-1"
-              >
-                <span>Acceso Despacho</span>
-              </button>
             )}
-
-            {/* Backend Connectivity Status Dot */}
-            <div 
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-mono border ${
-                backendStatus && backendStatus.online 
-                  ? 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300' 
-                  : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-              }`}
-              title={backendStatus && backendStatus.online ? 'Conectado a FastAPI en 127.0.0.1:8000' : 'Modo Autónomo Local'}
-            >
-              <span className={`h-2 w-2 rounded-full ${backendStatus && backendStatus.online ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
-              <span className="hidden md:inline">{backendStatus && backendStatus.online ? 'En Línea' : 'Local'}</span>
-            </div>
-
           </div>
 
         </div>
@@ -4270,14 +4667,17 @@ import {
   Layers, 
   ChevronDown,
   CheckCheck,
-  Sparkles
+  Sparkles,
+  Trash2,
+  Plus,
+  Building2
 } from 'lucide-react';
 import { TransactionRow } from './TransactionRow';
 import { PeriodFilter } from './PeriodFilter';
 import { formatEuro } from '../utils/formatters';
 
 export function StagingRadar({
-  transactions,
+  transactions = [],
   onApproveTransaction,
   onBulkApproveYellows,
   onOpenScoreModal,
@@ -4290,11 +4690,16 @@ export function StagingRadar({
   endMonth,
   onSelectEndMonth,
   onLoadDemoBatch,
+  onDeleteTransaction,
+  onClearAllTransactions,
+  hasCompanies = true,
+  onOpenAddClientModal,
 }) {
   const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'GREEN' | 'YELLOW' | 'RED'
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSource, setSelectedSource] = useState('ALL');
   const [expandedId, setExpandedId] = useState(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   // Contadores en vivo para las pestañas
   const counts = useMemo(() => {
@@ -4313,57 +4718,67 @@ export function StagingRadar({
   const filteredTransactions = useMemo(() => {
     return transactions.filter(tx => {
       // Filtro por pestaña de estado
-      if (activeTab === 'GREEN' && tx.status !== 'GREEN') return false;
-      if (activeTab === 'YELLOW' && tx.status !== 'YELLOW') return false;
-      if (activeTab === 'RED' && tx.status !== 'RED') return false;
-
-      // Filtro por origen
-      if (selectedSource !== 'ALL') {
-        if (!tx.source.toLowerCase().includes(selectedSource.toLowerCase())) {
+      if (activeTab !== 'ALL' && tx.status !== activeTab) {
+        return false;
+      }
+      // Filtro por pasarela o banco
+      if (selectedSource !== 'ALL' && !tx.source.toLowerCase().includes(selectedSource.toLowerCase())) {
+        return false;
+      }
+      // Filtro por búsqueda de texto
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const matchConcept = tx.concept.toLowerCase().includes(query);
+        const matchId = tx.id.toLowerCase().includes(query);
+        const matchSolver = (tx.solverUsed || '').toLowerCase().includes(query);
+        const matchAmount = tx.netAmountEur.toString().includes(query);
+        const matchInvoices = (tx.matchedInvoices || []).some(inv => 
+          inv.invoiceNumber.toLowerCase().includes(query) ||
+          (inv.customerFiscalId || '').toLowerCase().includes(query)
+        );
+        if (!matchConcept && !matchId && !matchSolver && !matchAmount && !matchInvoices) {
           return false;
         }
       }
-
-      // Filtro por búsqueda textual
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
-        const matchesConcept = tx.concept.toLowerCase().includes(query);
-        const matchesId = tx.id.toLowerCase().includes(query);
-        const matchesSource = tx.source.toLowerCase().includes(query);
-        const matchesSolver = tx.solverUsed.toLowerCase().includes(query);
-        const matchesAmount = tx.netAmountEur.toString().includes(query);
-        return matchesConcept || matchesId || matchesSource || matchesSolver || matchesAmount;
-      }
-
       return true;
     });
   }, [transactions, activeTab, selectedSource, searchQuery]);
 
   const toggleExpand = (id) => {
-    setExpandedId(prev => prev === id ? null : id);
+    setExpandedId(prev => (prev === id ? null : id));
+  };
+
+  const handleClearAll = () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3500);
+      return;
+    }
+    setConfirmClear(false);
+    if (onClearAllTransactions) {
+      onClearAllTransactions();
+    }
   };
 
   return (
-    <div className="bg-[#101013] border border-zinc-800/80 rounded-lg overflow-hidden shadow-sm">
-      {/* Top Controls: Tabs and Search Bar */}
-      <div className="p-4 border-b border-zinc-800/60 bg-[#0d0d10] space-y-3">
-        {/* Filtro por Año, Trimestres o Rango Personalizado de Meses */}
-        {selectedYear && (
-          <PeriodFilter
-            selectedYear={selectedYear}
-            onSelectYear={onSelectYear}
-            periodType={periodType}
-            onSelectPeriodType={onSelectPeriodType}
-            startMonth={startMonth}
-            onSelectStartMonth={onSelectStartMonth}
-            endMonth={endMonth}
-            onSelectEndMonth={onSelectEndMonth}
-          />
-        )}
+    <div className="bg-[#101013] border border-zinc-800 rounded-lg overflow-hidden shadow-xl">
+      {/* Selector de Periodo Contable (Año, Trimestres o Rango de Meses) */}
+      <PeriodFilter
+        selectedYear={selectedYear}
+        onSelectYear={onSelectYear}
+        periodType={periodType}
+        onSelectPeriodType={onSelectPeriodType}
+        startMonth={startMonth}
+        onSelectStartMonth={onSelectStartMonth}
+        endMonth={endMonth}
+        onSelectEndMonth={onSelectEndMonth}
+      />
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
-          {/* Status Tabs with Live Counters */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0">
+      {/* Header del Radar: Pestañas de Semáforo y Filtros */}
+      <div className="p-4 border-b border-zinc-800/80 bg-[#0c0c0e] flex flex-col gap-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* Pestañas de Auditoría con Contadores */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
             <button
               type="button"
               onClick={() => setActiveTab('ALL')}
@@ -4405,7 +4820,7 @@ export function StagingRadar({
               }`}
             >
               <AlertCircle className="h-3 w-3 text-amber-400" />
-              <span>Amarillas (Revisión 1-Clic)</span>
+              <span>Amarillas (Revisión)</span>
               <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
                 {counts.yellow}
               </span>
@@ -4428,17 +4843,35 @@ export function StagingRadar({
             </button>
           </div>
 
-          {/* Bulk Action for Yellows if any */}
-          {counts.yellow > 0 && (
-            <button
-              type="button"
-              onClick={onBulkApproveYellows}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap self-start md:self-auto"
-            >
-              <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Aprobar Todas las Amarillas ({counts.yellow})</span>
-            </button>
-          )}
+          {/* Acciones en lote y vaciado de partidas */}
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            {counts.yellow > 0 && (
+              <button
+                type="button"
+                onClick={onBulkApproveYellows}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap"
+              >
+                <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Aprobar Amarillas ({counts.yellow})</span>
+              </button>
+            )}
+
+            {transactions.length > 0 && onClearAllTransactions && (
+              <button
+                type="button"
+                onClick={handleClearAll}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap border ${
+                  confirmClear
+                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm animate-pulse'
+                    : 'bg-zinc-900/90 hover:bg-rose-950/50 border-zinc-800 hover:border-rose-800/60 text-zinc-400 hover:text-rose-300'
+                }`}
+                title="Eliminar todas las partidas del radar"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{confirmClear ? '¿Confirmar vaciar partidas?' : 'Vaciar Partidas'}</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Filter & Search Bar */}
@@ -4481,21 +4914,45 @@ export function StagingRadar({
           <div className="h-14 w-14 rounded-full bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-400 mb-4 shadow-inner">
             <Layers className="h-7 w-7 text-zinc-400" />
           </div>
-          <h3 className="text-sm font-semibold text-zinc-100 mb-2">
-            No hay movimientos contables cargados en este periodo
-          </h3>
-          <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
-            Sube un extracto bancario o reporte de cobros arriba, o pulsa en <strong className="text-zinc-200">"Cargar Lote de Prueba"</strong> para probar el motor con datos de muestra.
-          </p>
-          {onLoadDemoBatch && (
-            <button
-              type="button"
-              onClick={onLoadDemoBatch}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 text-xs font-semibold text-amber-300 transition-colors shadow-sm"
-            >
-              <Sparkles className="h-4 w-4 text-amber-400" />
-              <span>Cargar Lote de Prueba</span>
-            </button>
+
+          {!hasCompanies ? (
+            <>
+              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
+                No tienes empresas cliente registradas
+              </h3>
+              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
+                Para empezar a conciliar, añade la primera empresa cliente de tu despacho usando el botón superior o el botón directo a continuación.
+              </p>
+              {onOpenAddClientModal && (
+                <button
+                  type="button"
+                  onClick={onOpenAddClientModal}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors shadow-sm"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Añadir Empresa Cliente</span>
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
+                No hay movimientos contables cargados en este periodo
+              </h3>
+              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
+                Sube un extracto bancario o reporte de cobros arriba, o pulsa en <strong className="text-zinc-200">"Cargar Lote de Prueba"</strong> para probar el motor con datos de muestra.
+              </p>
+              {onLoadDemoBatch && (
+                <button
+                  type="button"
+                  onClick={onLoadDemoBatch}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 text-xs font-semibold text-amber-300 transition-colors shadow-sm"
+                >
+                  <Sparkles className="h-4 w-4 text-amber-400" />
+                  <span>Cargar Lote de Prueba</span>
+                </button>
+              )}
+            </>
           )}
         </div>
       ) : (
@@ -4525,6 +4982,7 @@ export function StagingRadar({
                       onToggleExpand={() => toggleExpand(tx.id)}
                       onOpenScoreModal={onOpenScoreModal}
                       onApprove={onApproveTransaction}
+                      onDelete={onDeleteTransaction}
                     />
                   ))
                 ) : (
@@ -4544,7 +5002,7 @@ export function StagingRadar({
               Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
             </div>
             <div className="flex items-center gap-4 text-xs font-mono">
-              <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + t.netAmountEur, 0))}</strong></span>
+              <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + (t.netAmountEur || 0), 0))}</strong></span>
             </div>
           </div>
         </>
@@ -4570,7 +5028,8 @@ import {
   CreditCard,
   Check,
   BarChart2,
-  Lock
+  Lock,
+  Trash2
 } from 'lucide-react';
 import { DoubleEntryViewer } from './DoubleEntryViewer';
 import { formatEuro, formatEuroNoSymbol, formatDateSpanish, formatPercent } from '../utils/formatters';
@@ -4581,6 +5040,7 @@ export function TransactionRow({
   onToggleExpand,
   onOpenScoreModal,
   onApprove,
+  onDelete,
 }) {
   const [approving, setApproving] = useState(false);
 
@@ -4748,34 +5208,51 @@ export function TransactionRow({
 
         {/* Action Button */}
         <td className="py-2.5 px-2 text-right whitespace-nowrap">
-          {transaction.status === 'YELLOW' ? (
-            <button
-              type="button"
-              onClick={handleQuickApprove}
-              disabled={approving}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-600 active:bg-emerald-700 text-white font-medium text-[11px] transition-colors shadow-sm"
-              title="Aprobar asiento contable y transmutar a Verde"
-            >
-              <Check className="h-3 w-3" />
-              <span>Aprobar Asiento</span>
-            </button>
-          ) : transaction.status === 'GREEN' ? (
-            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
-              <CheckCircle2 className="h-3 w-3" />
-              <span>Conciliado</span>
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenScoreModal(transaction);
-              }}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 text-[10px] transition-colors"
-            >
-              <span>Inspeccionar</span>
-            </button>
-          )}
+          <div className="flex items-center justify-end gap-1.5">
+            {transaction.status === 'YELLOW' ? (
+              <button
+                type="button"
+                onClick={handleQuickApprove}
+                disabled={approving}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-600 active:bg-emerald-700 text-white font-medium text-[11px] transition-colors shadow-sm"
+                title="Aprobar asiento contable y transmutar a Verde"
+              >
+                <Check className="h-3 w-3" />
+                <span>Aprobar Asiento</span>
+              </button>
+            ) : transaction.status === 'GREEN' ? (
+              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
+                <CheckCircle2 className="h-3 w-3" />
+                <span>Conciliado</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenScoreModal(transaction);
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 text-[10px] transition-colors"
+              >
+                <span>Inspeccionar</span>
+              </button>
+            )}
+
+            {/* Botón para Eliminar Partida */}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(transaction.id);
+                }}
+                className="p-1 rounded text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors"
+                title="Eliminar partida"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </td>
       </tr>
 
@@ -5523,6 +6000,18 @@ export async function updateCompanyPlanApi(tenantId, plan, extraBlocks = 0) {
 }
 
 /**
+ * Eliminar definitivamente una compañía desde el panel de SuperAdmin
+ */
+export async function deleteCompanyApi(tenantId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies/${tenantId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar compañía') };
+}
+
+/**
  * Obtener perfil del usuario autenticado
  */
 export async function getCurrentUserApi() {
@@ -5722,6 +6211,42 @@ export async function createClientApi({
     };
   }
   return { success: false, error: data?.detail || 'Error al crear empresa cliente' };
+}
+
+/**
+ * Eliminar una empresa cliente
+ */
+export async function deleteClientApi(clientId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients/${clientId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar empresa cliente') };
+}
+
+/**
+ * Eliminar un lote completo
+ */
+export async function deleteBatchApi(batchId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar lote') };
+}
+
+/**
+ * Eliminar una partida individual de un lote
+ */
+export async function deleteTransactionApi(batchId, transactionId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/transactions/${transactionId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar partida') };
 }
 
 /**
@@ -6151,32 +6676,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "5e559564-11b3-415c-b6da-7d7e8650f4f0",
+  "tenant_id": "592b049a-69c9-4239-b9c9-2b116910a249",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-13",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "b9e0c53e296f2ca103eb9e3510f781e85cdacf81e7aa21a625b49043547466f9",
+  "head_hash_sha256": "76a72d2a0fc9f911aa4502f3d23b5037d735789b38c62193e288cb4623b4ed87",
   "audit_events": [
     {
-      "event_id": "9bec3584-e332-47b5-804f-e1c495f1be58",
+      "event_id": "0b897c3b-4ed7-450c-bf0a-61fc5108f3f4",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T18:18:36.352739",
-      "sha256_hash": "b5c5f286fac2a9637c96e089b1fb1703ae98e08579c9572505ea931f2f55fa99",
+      "timestamp": "2026-10-13T19:10:18.350371",
+      "sha256_hash": "6239062f60b194b77af48dee9d26c8b9865c70781461880f6b490deeb4640cc6",
       "details": {
-        "batch_id": "3d29dce8-e5d1-4515-a008-23d519326f04",
+        "batch_id": "a0eff86c-9a2a-49a5-9f9e-a367250fde5d",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "7fda326d-206a-482b-83bf-68a85120a84f",
+      "event_id": "ec79992c-e755-4d9f-830b-e9dd299b9e92",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T18:18:36.368261",
-      "sha256_hash": "b6ca2fea5001aa6f0d6c59117b6f8f18529e758f27b3f4c6e468801ac8f271b0",
+      "timestamp": "2026-10-13T19:10:18.362895",
+      "sha256_hash": "5a98cf9920186f1fe0e4d8f8a9190f673a3a34d9a318ec8eacf906a36c6f6c5c",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -6184,23 +6709,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "c250046a-dadb-41ff-933c-6f2893e7066e",
+      "event_id": "52482c5c-900b-4bf6-af7a-89d760a1da39",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T18:18:36.375551",
-      "sha256_hash": "8443084b083376b226ed77b013bc019ac8a51e1afa82d49ecdc2cd9d9fcc1182",
+      "timestamp": "2026-10-13T19:10:18.368551",
+      "sha256_hash": "8d2080862c4d9351630cbeb82b19e906af5a75a1da88d531016a72950f99bd18",
       "details": {
-        "batch_id": "3c1ec977-484c-4e0d-8829-57bebe6fcf85",
+        "batch_id": "8ad1d764-2c1b-49ac-b8fd-a3997e650dd9",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "c8350790-03a2-4574-909b-ec9c34d4cab4",
+      "event_id": "fcc1578c-2d5a-4a99-971a-c24051cfe710",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T18:18:36.381740",
-      "sha256_hash": "8af53c786e93bdb65b91c94d5dabc435c2ca84f0b56f463d640ea0b6a6ee0c30",
+      "timestamp": "2026-10-13T19:10:18.374733",
+      "sha256_hash": "a16f5a324575636276718d50a183f1df1c2816a7b2c25b589789131106ab5e53",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -6208,23 +6733,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "4354617b-fb5e-44ec-8c4d-16f05e47a05a",
+      "event_id": "fb665345-c06e-4831-a785-db209120d886",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T18:18:36.386623",
-      "sha256_hash": "52515fa60d2cd2d39cf13e9f219c9bf95ce38e641d43751e458bd9872b027cc8",
+      "timestamp": "2026-10-13T19:10:18.378913",
+      "sha256_hash": "56a03d6b19f5e2ec8adf8038ecef8596bec364dbdd9780646fc8783f7b06cc50",
       "details": {
-        "batch_id": "0623157f-3d3e-4dbf-a3ed-264b933fe698",
+        "batch_id": "51dd0a55-bcb6-4066-baf8-e9fb11eed813",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "c943c2c1-7a7a-4696-bce7-2713cc9b0ad6",
+      "event_id": "c2305368-be00-4589-97da-2a82bc5e6e5d",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T18:18:36.409869",
-      "sha256_hash": "b9e0c53e296f2ca103eb9e3510f781e85cdacf81e7aa21a625b49043547466f9",
+      "timestamp": "2026-10-13T19:10:18.395683",
+      "sha256_hash": "76a72d2a0fc9f911aa4502f3d23b5037d735789b38c62193e288cb4623b4ed87",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -6238,7 +6763,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xa2 in position 11: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xa9 in position 11: invalid start byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -8112,6 +8637,42 @@ def get_platform_admin_stats(
     )
 
 
+@router.delete("/companies/{tenant_id}", status_code=status.HTTP_200_OK)
+def delete_company(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
+):
+    """
+    Elimina definitivamente una compañía (tenant) y todos sus registros vinculados
+    en cascada (usuarios, clientes, lotes contables, asientos y logs).
+    Exclusivo para la cuenta SUPERADMIN.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Compañía o despacho no encontrado.",
+        )
+
+    if tenant.email == "admin@findaffinity.com":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se permite eliminar la cuenta maestra de la plataforma.",
+        )
+
+    name = tenant.name
+    fiscal_id = tenant.fiscal_id
+    db.delete(tenant)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Compañía '{name}' ({fiscal_id}) eliminada definitivamente.",
+        "deleted_tenant_id": tenant_id,
+    }
+
+
 ================================================================================
 FICHERO: src\api\v1\auth_api.py
 ================================================================================
@@ -8213,21 +8774,6 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
         assigned_tenant_id = assigned_tenant.id
         assigned_tenant_name = assigned_tenant.name
         assigned_role = UserRole.ADMIN
-
-        # Autoprovisionar una empresa cliente por defecto para el despacho registrado
-        existing_client = db.query(ClientCompany).filter(ClientCompany.tenant_id == assigned_tenant.id).first()
-        if not existing_client:
-            default_client = ClientCompany(
-                tenant_id=assigned_tenant.id,
-                name=assigned_tenant.name,
-                fiscal_id=assigned_tenant.fiscal_id,
-                default_erp="A3",
-                account_length=9,
-                bank_account_code="572000001",
-                fee_account_code="626000001",
-            )
-            db.add(default_client)
-            db.commit()
 
     elif assigned_tenant_id:
         tenant = db.query(Tenant).filter(Tenant.id == assigned_tenant_id).first()
@@ -8653,6 +9199,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
+from src.database.models import ClientCompany, ReconciliationBatch, BatchTransaction
 from src.database.repository import ReconciliationRepository
 from src.services.batch_service import BatchReconciliationService
 
@@ -8789,6 +9336,28 @@ def list_clients(tenant_id: str = Query(...), db: Session = Depends(get_db)):
         )
         for c in clients
     ]
+
+
+@router.delete("/clients/{client_id}", status_code=status.HTTP_200_OK)
+def delete_client(
+    client_id: str,
+    db: Session = Depends(get_db),
+):
+    """Elimina definitivamente una empresa cliente y todos sus lotes contables vinculados."""
+    client = db.query(ClientCompany).filter(ClientCompany.id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Empresa cliente no encontrada.")
+
+    name = client.name
+    fiscal_id = client.fiscal_id
+    db.delete(client)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Empresa cliente '{name}' ({fiscal_id}) eliminada con éxito.",
+        "deleted_client_id": client_id,
+    }
 
 
 # --- ENDPOINTS DE LOTES Y AUDITORÍA ---
@@ -9126,6 +9695,43 @@ def export_batch(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/batches/{batch_id}", status_code=status.HTTP_200_OK)
+def delete_batch(batch_id: str, db: Session = Depends(get_db)):
+    """Elimina definitivamente un lote de conciliación completo con todas sus partidas."""
+    batch = db.query(ReconciliationBatch).filter(ReconciliationBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Lote no encontrado.")
+
+    db.delete(batch)
+    db.commit()
+    return {"success": True, "deleted_batch_id": batch_id}
+
+
+@router.delete("/batches/{batch_id}/transactions/{tx_id}", status_code=status.HTTP_200_OK)
+def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(get_db)):
+    """Elimina una partida individual dentro de un lote de conciliación."""
+    tx = db.query(BatchTransaction).filter(
+        BatchTransaction.id == tx_id,
+        BatchTransaction.batch_id == batch_id,
+    ).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Partida no encontrada en este lote.")
+
+    batch = db.query(ReconciliationBatch).filter(ReconciliationBatch.id == batch_id).first()
+    if batch:
+        batch.total_movements = max(0, (batch.total_movements or 1) - 1)
+        if tx.status == "GREEN":
+            batch.green_count = max(0, (batch.green_count or 1) - 1)
+        elif tx.status == "YELLOW":
+            batch.yellow_count = max(0, (batch.yellow_count or 1) - 1)
+        elif tx.status == "RED":
+            batch.red_count = max(0, (batch.red_count or 1) - 1)
+
+    db.delete(tx)
+    db.commit()
+    return {"success": True, "deleted_transaction_id": tx_id}
 
 
 ================================================================================
@@ -9952,8 +10558,8 @@ class Tenant(Base):
 
     # Relaciones
     clients = relationship("ClientCompany", back_populates="tenant", cascade="all, delete-orphan")
-    batches = relationship("ReconciliationBatch", back_populates="tenant")
-    audit_logs = relationship("AuditLog", back_populates="tenant")
+    batches = relationship("ReconciliationBatch", back_populates="tenant", cascade="all, delete-orphan")
+    audit_logs = relationship("AuditLog", back_populates="tenant", cascade="all, delete-orphan")
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -10004,7 +10610,7 @@ class ClientCompany(Base):
     # Relaciones
     tenant = relationship("Tenant", back_populates="clients")
     batches = relationship("ReconciliationBatch", back_populates="client", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="client")
+    audit_logs = relationship("AuditLog", back_populates="client", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_tenant_fiscal_id", "tenant_id", "fiscal_id", unique=True),
@@ -10042,7 +10648,7 @@ class ReconciliationBatch(Base):
     client = relationship("ClientCompany", back_populates="batches")
     transactions = relationship("BatchTransaction", back_populates="batch", cascade="all, delete-orphan")
     journal_entries = relationship("JournalEntryRecord", back_populates="batch", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="batch")
+    audit_logs = relationship("AuditLog", back_populates="batch", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<ReconciliationBatch id={self.id} year={self.period_year} movements={self.total_movements}>"
@@ -14536,8 +15142,8 @@ def test_complete_user_journey_and_security_isolation(api_client):
     assert gomez_in_list["plan"] == "STARTER"
 
     # -------------------------------------------------------------
-    # PASO 4: Consulta de clientes y lotes del nuevo despacho
-    # Verificación de cero documentos fantasma
+    # PASO 4: Consulta de clientes del nuevo despacho
+    # Verificación de CERO empresas cliente fantasma tras registrarse
     # -------------------------------------------------------------
     existing_clients_res = api_client.get(
         f"/api/v1/clients?tenant_id={gomez_tenant_id}",
@@ -14545,8 +15151,27 @@ def test_complete_user_journey_and_security_isolation(api_client):
     )
     assert existing_clients_res.status_code == 200, existing_clients_res.text
     existing_clients = existing_clients_res.json()
-    assert len(existing_clients) >= 1
-    client_id = existing_clients[0]["id"]
+    assert len(existing_clients) == 0, "Un despacho recién registrado debe iniciar con exactamente 0 empresas cliente fantasma"
+
+    # El despacho crea explícitamente su primera Empresa Cliente vía modal/API
+    client_payload = {
+        "tenant_id": gomez_tenant_id,
+        "name": f"Restaurante El Faro {suffix.upper()} SL",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+        "default_erp": "A3",
+        "account_length": 9,
+        "bank_account_code": "572000001",
+        "fee_account_code": "626000001",
+    }
+    create_client_res = api_client.post(
+        "/api/v1/clients",
+        json=client_payload,
+        headers=gomez_headers,
+    )
+    assert create_client_res.status_code == 201, create_client_res.text
+    created_client = create_client_res.json()
+    client_id = created_client["id"]
+    assert created_client["name"] == client_payload["name"]
 
     # Consulta de lotes existentes para este nuevo cliente (debe ser lista vacía [])
     batches_res = api_client.get(
@@ -14583,6 +15208,7 @@ def test_complete_user_journey_and_security_isolation(api_client):
     )
     assert upload_res.status_code == 201, upload_res.text
     batch_data = upload_res.json()
+    batch_id = batch_data["id"]
     assert batch_data["total_movements"] >= 1
     assert batch_data["tenant_id"] == gomez_tenant_id
     assert batch_data["client_id"] == client_id
@@ -14593,11 +15219,11 @@ def test_complete_user_journey_and_security_isolation(api_client):
         headers=gomez_headers,
     ).json()
     assert len(batches_after) == 1
-    assert batches_after[0]["id"] == batch_data["id"]
+    assert batches_after[0]["id"] == batch_id
 
     # Comprobar detalle del lote
     batch_detail = api_client.get(
-        f"/api/v1/batches/{batch_data['id']}",
+        f"/api/v1/batches/{batch_id}",
         headers=gomez_headers,
     )
     assert batch_detail.status_code == 200
@@ -14605,6 +15231,91 @@ def test_complete_user_journey_and_security_isolation(api_client):
     assert len(txs) >= 1
     for tx in txs:
         assert tx["status"] in ["GREEN", "YELLOW", "RED"]
+
+    # -------------------------------------------------------------
+    # PASO 6: Eliminación granular de partidas y vaciado de lote
+    # -------------------------------------------------------------
+    target_tx = txs[0]
+    initial_movements = len(txs)
+
+    # Eliminar una partida individual
+    del_tx_res = api_client.delete(
+        f"/api/v1/batches/{batch_id}/transactions/{target_tx['id']}",
+        headers=gomez_headers,
+    )
+    assert del_tx_res.status_code == 200, del_tx_res.text
+    assert del_tx_res.json()["success"] is True
+
+    # Comprobar que la partida ya no está en el lote
+    batch_detail_after = api_client.get(
+        f"/api/v1/batches/{batch_id}",
+        headers=gomez_headers,
+    ).json()
+    remaining_txs = batch_detail_after["transactions"]
+    assert len(remaining_txs) == initial_movements - 1
+    assert not any(t["id"] == target_tx["id"] for t in remaining_txs)
+
+    # Vaciar/eliminar el lote completo
+    del_batch_res = api_client.delete(
+        f"/api/v1/batches/{batch_id}",
+        headers=gomez_headers,
+    )
+    assert del_batch_res.status_code == 200, del_batch_res.text
+    assert del_batch_res.json()["success"] is True
+
+    # Verificar que el cliente vuelve a tener 0 lotes
+    batches_empty = api_client.get(
+        f"/api/v1/batches?client_id={client_id}",
+        headers=gomez_headers,
+    ).json()
+    assert len(batches_empty) == 0
+
+    # -------------------------------------------------------------
+    # PASO 7: Eliminación de empresa cliente
+    # -------------------------------------------------------------
+    del_client_res = api_client.delete(
+        f"/api/v1/clients/{client_id}",
+        headers=gomez_headers,
+    )
+    assert del_client_res.status_code == 200, del_client_res.text
+    assert del_client_res.json()["success"] is True
+
+    clients_after_del = api_client.get(
+        f"/api/v1/clients?tenant_id={gomez_tenant_id}",
+        headers=gomez_headers,
+    ).json()
+    assert len(clients_after_del) == 0
+
+    # -------------------------------------------------------------
+    # PASO 8: Eliminación de compañía en panel ADMIN con seguridad
+    # -------------------------------------------------------------
+    # Un ADMIN corriente no puede borrar compañías (403)
+    unauthorized_del = api_client.delete(
+        f"/api/v1/admin/companies/{gomez_tenant_id}",
+        headers=gomez_headers,
+    )
+    assert unauthorized_del.status_code == 403
+
+    # SUPERADMIN no puede borrar la cuenta maestra (400)
+    master_comp = next((c for c in company_list if c["email"] == "admin@findaffinity.com"), None)
+    if master_comp:
+        master_del = api_client.delete(
+            f"/api/v1/admin/companies/{master_comp['id']}",
+            headers=sa_headers,
+        )
+        assert master_del.status_code == 400
+
+    # SUPERADMIN borra definitivamente el tenant Gómez
+    sa_del_res = api_client.delete(
+        f"/api/v1/admin/companies/{gomez_tenant_id}",
+        headers=sa_headers,
+    )
+    assert sa_del_res.status_code == 200, sa_del_res.text
+    assert sa_del_res.json()["success"] is True
+
+    # Verificar que ya no figura en la lista global de SUPERADMIN
+    sa_companies_final = api_client.get("/api/v1/admin/companies", headers=sa_headers).json()
+    assert not any(c["id"] == gomez_tenant_id for c in sa_companies_final)
 
 
 ================================================================================

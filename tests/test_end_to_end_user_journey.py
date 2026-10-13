@@ -104,8 +104,8 @@ def test_complete_user_journey_and_security_isolation(api_client):
     assert gomez_in_list["plan"] == "STARTER"
 
     # -------------------------------------------------------------
-    # PASO 4: Consulta de clientes y lotes del nuevo despacho
-    # Verificación de cero documentos fantasma
+    # PASO 4: Consulta de clientes del nuevo despacho
+    # Verificación de CERO empresas cliente fantasma tras registrarse
     # -------------------------------------------------------------
     existing_clients_res = api_client.get(
         f"/api/v1/clients?tenant_id={gomez_tenant_id}",
@@ -113,8 +113,27 @@ def test_complete_user_journey_and_security_isolation(api_client):
     )
     assert existing_clients_res.status_code == 200, existing_clients_res.text
     existing_clients = existing_clients_res.json()
-    assert len(existing_clients) >= 1
-    client_id = existing_clients[0]["id"]
+    assert len(existing_clients) == 0, "Un despacho recién registrado debe iniciar con exactamente 0 empresas cliente fantasma"
+
+    # El despacho crea explícitamente su primera Empresa Cliente vía modal/API
+    client_payload = {
+        "tenant_id": gomez_tenant_id,
+        "name": f"Restaurante El Faro {suffix.upper()} SL",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+        "default_erp": "A3",
+        "account_length": 9,
+        "bank_account_code": "572000001",
+        "fee_account_code": "626000001",
+    }
+    create_client_res = api_client.post(
+        "/api/v1/clients",
+        json=client_payload,
+        headers=gomez_headers,
+    )
+    assert create_client_res.status_code == 201, create_client_res.text
+    created_client = create_client_res.json()
+    client_id = created_client["id"]
+    assert created_client["name"] == client_payload["name"]
 
     # Consulta de lotes existentes para este nuevo cliente (debe ser lista vacía [])
     batches_res = api_client.get(
@@ -151,6 +170,7 @@ def test_complete_user_journey_and_security_isolation(api_client):
     )
     assert upload_res.status_code == 201, upload_res.text
     batch_data = upload_res.json()
+    batch_id = batch_data["id"]
     assert batch_data["total_movements"] >= 1
     assert batch_data["tenant_id"] == gomez_tenant_id
     assert batch_data["client_id"] == client_id
@@ -161,11 +181,11 @@ def test_complete_user_journey_and_security_isolation(api_client):
         headers=gomez_headers,
     ).json()
     assert len(batches_after) == 1
-    assert batches_after[0]["id"] == batch_data["id"]
+    assert batches_after[0]["id"] == batch_id
 
     # Comprobar detalle del lote
     batch_detail = api_client.get(
-        f"/api/v1/batches/{batch_data['id']}",
+        f"/api/v1/batches/{batch_id}",
         headers=gomez_headers,
     )
     assert batch_detail.status_code == 200
@@ -173,3 +193,88 @@ def test_complete_user_journey_and_security_isolation(api_client):
     assert len(txs) >= 1
     for tx in txs:
         assert tx["status"] in ["GREEN", "YELLOW", "RED"]
+
+    # -------------------------------------------------------------
+    # PASO 6: Eliminación granular de partidas y vaciado de lote
+    # -------------------------------------------------------------
+    target_tx = txs[0]
+    initial_movements = len(txs)
+
+    # Eliminar una partida individual
+    del_tx_res = api_client.delete(
+        f"/api/v1/batches/{batch_id}/transactions/{target_tx['id']}",
+        headers=gomez_headers,
+    )
+    assert del_tx_res.status_code == 200, del_tx_res.text
+    assert del_tx_res.json()["success"] is True
+
+    # Comprobar que la partida ya no está en el lote
+    batch_detail_after = api_client.get(
+        f"/api/v1/batches/{batch_id}",
+        headers=gomez_headers,
+    ).json()
+    remaining_txs = batch_detail_after["transactions"]
+    assert len(remaining_txs) == initial_movements - 1
+    assert not any(t["id"] == target_tx["id"] for t in remaining_txs)
+
+    # Vaciar/eliminar el lote completo
+    del_batch_res = api_client.delete(
+        f"/api/v1/batches/{batch_id}",
+        headers=gomez_headers,
+    )
+    assert del_batch_res.status_code == 200, del_batch_res.text
+    assert del_batch_res.json()["success"] is True
+
+    # Verificar que el cliente vuelve a tener 0 lotes
+    batches_empty = api_client.get(
+        f"/api/v1/batches?client_id={client_id}",
+        headers=gomez_headers,
+    ).json()
+    assert len(batches_empty) == 0
+
+    # -------------------------------------------------------------
+    # PASO 7: Eliminación de empresa cliente
+    # -------------------------------------------------------------
+    del_client_res = api_client.delete(
+        f"/api/v1/clients/{client_id}",
+        headers=gomez_headers,
+    )
+    assert del_client_res.status_code == 200, del_client_res.text
+    assert del_client_res.json()["success"] is True
+
+    clients_after_del = api_client.get(
+        f"/api/v1/clients?tenant_id={gomez_tenant_id}",
+        headers=gomez_headers,
+    ).json()
+    assert len(clients_after_del) == 0
+
+    # -------------------------------------------------------------
+    # PASO 8: Eliminación de compañía en panel ADMIN con seguridad
+    # -------------------------------------------------------------
+    # Un ADMIN corriente no puede borrar compañías (403)
+    unauthorized_del = api_client.delete(
+        f"/api/v1/admin/companies/{gomez_tenant_id}",
+        headers=gomez_headers,
+    )
+    assert unauthorized_del.status_code == 403
+
+    # SUPERADMIN no puede borrar la cuenta maestra (400)
+    master_comp = next((c for c in company_list if c["email"] == "admin@findaffinity.com"), None)
+    if master_comp:
+        master_del = api_client.delete(
+            f"/api/v1/admin/companies/{master_comp['id']}",
+            headers=sa_headers,
+        )
+        assert master_del.status_code == 400
+
+    # SUPERADMIN borra definitivamente el tenant Gómez
+    sa_del_res = api_client.delete(
+        f"/api/v1/admin/companies/{gomez_tenant_id}",
+        headers=sa_headers,
+    )
+    assert sa_del_res.status_code == 200, sa_del_res.text
+    assert sa_del_res.json()["success"] is True
+
+    # Verificar que ya no figura en la lista global de SUPERADMIN
+    sa_companies_final = api_client.get("/api/v1/admin/companies", headers=sa_headers).json()
+    assert not any(c["id"] == gomez_tenant_id for c in sa_companies_final)

@@ -8,14 +8,17 @@ import {
   Layers, 
   ChevronDown,
   CheckCheck,
-  Sparkles
+  Sparkles,
+  Trash2,
+  Plus,
+  Building2
 } from 'lucide-react';
 import { TransactionRow } from './TransactionRow';
 import { PeriodFilter } from './PeriodFilter';
 import { formatEuro } from '../utils/formatters';
 
 export function StagingRadar({
-  transactions,
+  transactions = [],
   onApproveTransaction,
   onBulkApproveYellows,
   onOpenScoreModal,
@@ -28,11 +31,16 @@ export function StagingRadar({
   endMonth,
   onSelectEndMonth,
   onLoadDemoBatch,
+  onDeleteTransaction,
+  onClearAllTransactions,
+  hasCompanies = true,
+  onOpenAddClientModal,
 }) {
   const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'GREEN' | 'YELLOW' | 'RED'
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSource, setSelectedSource] = useState('ALL');
   const [expandedId, setExpandedId] = useState(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   // Contadores en vivo para las pestañas
   const counts = useMemo(() => {
@@ -51,57 +59,67 @@ export function StagingRadar({
   const filteredTransactions = useMemo(() => {
     return transactions.filter(tx => {
       // Filtro por pestaña de estado
-      if (activeTab === 'GREEN' && tx.status !== 'GREEN') return false;
-      if (activeTab === 'YELLOW' && tx.status !== 'YELLOW') return false;
-      if (activeTab === 'RED' && tx.status !== 'RED') return false;
-
-      // Filtro por origen
-      if (selectedSource !== 'ALL') {
-        if (!tx.source.toLowerCase().includes(selectedSource.toLowerCase())) {
+      if (activeTab !== 'ALL' && tx.status !== activeTab) {
+        return false;
+      }
+      // Filtro por pasarela o banco
+      if (selectedSource !== 'ALL' && !tx.source.toLowerCase().includes(selectedSource.toLowerCase())) {
+        return false;
+      }
+      // Filtro por búsqueda de texto
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        const matchConcept = tx.concept.toLowerCase().includes(query);
+        const matchId = tx.id.toLowerCase().includes(query);
+        const matchSolver = (tx.solverUsed || '').toLowerCase().includes(query);
+        const matchAmount = tx.netAmountEur.toString().includes(query);
+        const matchInvoices = (tx.matchedInvoices || []).some(inv => 
+          inv.invoiceNumber.toLowerCase().includes(query) ||
+          (inv.customerFiscalId || '').toLowerCase().includes(query)
+        );
+        if (!matchConcept && !matchId && !matchSolver && !matchAmount && !matchInvoices) {
           return false;
         }
       }
-
-      // Filtro por búsqueda textual
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
-        const matchesConcept = tx.concept.toLowerCase().includes(query);
-        const matchesId = tx.id.toLowerCase().includes(query);
-        const matchesSource = tx.source.toLowerCase().includes(query);
-        const matchesSolver = tx.solverUsed.toLowerCase().includes(query);
-        const matchesAmount = tx.netAmountEur.toString().includes(query);
-        return matchesConcept || matchesId || matchesSource || matchesSolver || matchesAmount;
-      }
-
       return true;
     });
   }, [transactions, activeTab, selectedSource, searchQuery]);
 
   const toggleExpand = (id) => {
-    setExpandedId(prev => prev === id ? null : id);
+    setExpandedId(prev => (prev === id ? null : id));
+  };
+
+  const handleClearAll = () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3500);
+      return;
+    }
+    setConfirmClear(false);
+    if (onClearAllTransactions) {
+      onClearAllTransactions();
+    }
   };
 
   return (
-    <div className="bg-[#101013] border border-zinc-800/80 rounded-lg overflow-hidden shadow-sm">
-      {/* Top Controls: Tabs and Search Bar */}
-      <div className="p-4 border-b border-zinc-800/60 bg-[#0d0d10] space-y-3">
-        {/* Filtro por Año, Trimestres o Rango Personalizado de Meses */}
-        {selectedYear && (
-          <PeriodFilter
-            selectedYear={selectedYear}
-            onSelectYear={onSelectYear}
-            periodType={periodType}
-            onSelectPeriodType={onSelectPeriodType}
-            startMonth={startMonth}
-            onSelectStartMonth={onSelectStartMonth}
-            endMonth={endMonth}
-            onSelectEndMonth={onSelectEndMonth}
-          />
-        )}
+    <div className="bg-[#101013] border border-zinc-800 rounded-lg overflow-hidden shadow-xl">
+      {/* Selector de Periodo Contable (Año, Trimestres o Rango de Meses) */}
+      <PeriodFilter
+        selectedYear={selectedYear}
+        onSelectYear={onSelectYear}
+        periodType={periodType}
+        onSelectPeriodType={onSelectPeriodType}
+        startMonth={startMonth}
+        onSelectStartMonth={onSelectStartMonth}
+        endMonth={endMonth}
+        onSelectEndMonth={onSelectEndMonth}
+      />
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
-          {/* Status Tabs with Live Counters */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0">
+      {/* Header del Radar: Pestañas de Semáforo y Filtros */}
+      <div className="p-4 border-b border-zinc-800/80 bg-[#0c0c0e] flex flex-col gap-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* Pestañas de Auditoría con Contadores */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
             <button
               type="button"
               onClick={() => setActiveTab('ALL')}
@@ -143,7 +161,7 @@ export function StagingRadar({
               }`}
             >
               <AlertCircle className="h-3 w-3 text-amber-400" />
-              <span>Amarillas (Revisión 1-Clic)</span>
+              <span>Amarillas (Revisión)</span>
               <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
                 {counts.yellow}
               </span>
@@ -166,17 +184,35 @@ export function StagingRadar({
             </button>
           </div>
 
-          {/* Bulk Action for Yellows if any */}
-          {counts.yellow > 0 && (
-            <button
-              type="button"
-              onClick={onBulkApproveYellows}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap self-start md:self-auto"
-            >
-              <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Aprobar Todas las Amarillas ({counts.yellow})</span>
-            </button>
-          )}
+          {/* Acciones en lote y vaciado de partidas */}
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            {counts.yellow > 0 && (
+              <button
+                type="button"
+                onClick={onBulkApproveYellows}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap"
+              >
+                <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Aprobar Amarillas ({counts.yellow})</span>
+              </button>
+            )}
+
+            {transactions.length > 0 && onClearAllTransactions && (
+              <button
+                type="button"
+                onClick={handleClearAll}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap border ${
+                  confirmClear
+                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm animate-pulse'
+                    : 'bg-zinc-900/90 hover:bg-rose-950/50 border-zinc-800 hover:border-rose-800/60 text-zinc-400 hover:text-rose-300'
+                }`}
+                title="Eliminar todas las partidas del radar"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{confirmClear ? '¿Confirmar vaciar partidas?' : 'Vaciar Partidas'}</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Filter & Search Bar */}
@@ -219,21 +255,45 @@ export function StagingRadar({
           <div className="h-14 w-14 rounded-full bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-400 mb-4 shadow-inner">
             <Layers className="h-7 w-7 text-zinc-400" />
           </div>
-          <h3 className="text-sm font-semibold text-zinc-100 mb-2">
-            No hay movimientos contables cargados en este periodo
-          </h3>
-          <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
-            Sube un extracto bancario o reporte de cobros arriba, o pulsa en <strong className="text-zinc-200">"Cargar Lote de Prueba"</strong> para probar el motor con datos de muestra.
-          </p>
-          {onLoadDemoBatch && (
-            <button
-              type="button"
-              onClick={onLoadDemoBatch}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 text-xs font-semibold text-amber-300 transition-colors shadow-sm"
-            >
-              <Sparkles className="h-4 w-4 text-amber-400" />
-              <span>Cargar Lote de Prueba</span>
-            </button>
+
+          {!hasCompanies ? (
+            <>
+              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
+                No tienes empresas cliente registradas
+              </h3>
+              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
+                Para empezar a conciliar, añade la primera empresa cliente de tu despacho usando el botón superior o el botón directo a continuación.
+              </p>
+              {onOpenAddClientModal && (
+                <button
+                  type="button"
+                  onClick={onOpenAddClientModal}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors shadow-sm"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Añadir Empresa Cliente</span>
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
+                No hay movimientos contables cargados en este periodo
+              </h3>
+              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
+                Sube un extracto bancario o reporte de cobros arriba, o pulsa en <strong className="text-zinc-200">"Cargar Lote de Prueba"</strong> para probar el motor con datos de muestra.
+              </p>
+              {onLoadDemoBatch && (
+                <button
+                  type="button"
+                  onClick={onLoadDemoBatch}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 text-xs font-semibold text-amber-300 transition-colors shadow-sm"
+                >
+                  <Sparkles className="h-4 w-4 text-amber-400" />
+                  <span>Cargar Lote de Prueba</span>
+                </button>
+              )}
+            </>
           )}
         </div>
       ) : (
@@ -263,6 +323,7 @@ export function StagingRadar({
                       onToggleExpand={() => toggleExpand(tx.id)}
                       onOpenScoreModal={onOpenScoreModal}
                       onApprove={onApproveTransaction}
+                      onDelete={onDeleteTransaction}
                     />
                   ))
                 ) : (
@@ -282,7 +343,7 @@ export function StagingRadar({
               Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
             </div>
             <div className="flex items-center gap-4 text-xs font-mono">
-              <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + t.netAmountEur, 0))}</strong></span>
+              <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + (t.netAmountEur || 0), 0))}</strong></span>
             </div>
           </div>
         </>

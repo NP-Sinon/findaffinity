@@ -184,6 +184,18 @@ export async function updateCompanyPlanApi(tenantId, plan, extraBlocks = 0) {
 }
 
 /**
+ * Eliminar definitivamente una compañía desde el panel de SuperAdmin
+ */
+export async function deleteCompanyApi(tenantId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies/${tenantId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar compañía') };
+}
+
+/**
  * Obtener perfil del usuario autenticado
  */
 export async function getCurrentUserApi() {
@@ -383,6 +395,42 @@ export async function createClientApi({
     };
   }
   return { success: false, error: data?.detail || 'Error al crear empresa cliente' };
+}
+
+/**
+ * Eliminar una empresa cliente
+ */
+export async function deleteClientApi(clientId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients/${clientId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar empresa cliente') };
+}
+
+/**
+ * Eliminar un lote completo
+ */
+export async function deleteBatchApi(batchId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar lote') };
+}
+
+/**
+ * Eliminar una partida individual de un lote
+ */
+export async function deleteTransactionApi(batchId, transactionId) {
+  const headers = getAuthHeaders();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/transactions/${transactionId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar partida') };
 }
 
 /**

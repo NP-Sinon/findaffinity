@@ -2,39 +2,39 @@ import React from 'react';
 import { 
   Building2, 
   Database, 
-  CheckCircle2, 
   Layers,
   ShieldCheck,
-  Server
+  Plus,
+  Trash2,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
-import { formatEuro, formatPercent } from '../utils/formatters';
 
 export function HeaderNav({
-  companies,
-  selectedCompany,
+  companies = [],
+  selectedCompany = null,
   onSelectCompany,
-  selectedErp,
+  selectedErp = 'A3',
   onSelectErp,
-  metrics,
-  backendStatus,
-  onOpenAuditModal,
   currentUser,
-  onOpenAuthModal,
   onLogout,
   currentView = 'radar',
   onToggleView,
+  onOpenAddClientModal,
+  onOpenDeleteClientModal,
 }) {
   const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
+  const isAdminView = currentView === 'admin';
 
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between py-3 gap-4">
+        <div className="flex items-center justify-between py-3 gap-4">
           
-          {/* Brand Identity & Context Selectors */}
-          <div className="flex flex-wrap items-center gap-4">
+          {/* Lado Izquierdo: Marca, Conmutador y Contexto de Trabajo */}
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             {/* Logo & App Name */}
-            <div className="flex items-center gap-2.5 mr-2">
+            <div className="flex items-center gap-2.5 mr-1">
               <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
                 <Layers className="h-4 w-4" />
               </div>
@@ -43,198 +43,165 @@ export function HeaderNav({
               </span>
             </div>
 
-            {/* Separador sutil */}
-            <div className="hidden sm:block h-6 w-px bg-zinc-800" />
-
             {/* Selector de Vistas EXCLUSIVO para SUPERADMIN */}
             {isSuperAdmin && onToggleView && (
-              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
-                <button
-                  type="button"
-                  onClick={() => onToggleView('radar')}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    currentView === 'radar'
-                      ? 'bg-zinc-800 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  Radar Conciliación
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onToggleView('admin')}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                    currentView === 'admin'
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-blue-300'
-                  }`}
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>Licencias & Empresas</span>
-                </button>
-              </div>
-            )}
-
-            {/* Selector de Empresa Cliente Activa */}
-            {companies && companies.length > 0 && (
-              <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
-                <Building2 className="h-3.5 w-3.5 text-zinc-400" />
-                <div className="flex flex-col">
-                  <span className="text-[9px] uppercase tracking-wider text-zinc-400">
-                    Empresa Cliente
-                  </span>
-                  <select
-                    value={selectedCompany ? selectedCompany.id : ''}
-                    onChange={(e) => {
-                      const comp = companies.find(c => c.id === e.target.value);
-                      if (comp && onSelectCompany) onSelectCompany(comp);
-                    }}
-                    className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-3"
+              <>
+                <div className="hidden sm:block h-5 w-px bg-zinc-800" />
+                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
+                  <button
+                    type="button"
+                    onClick={() => onToggleView('radar')}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      !isAdminView
+                        ? 'bg-zinc-800 text-white shadow-sm'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
                   >
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
-                        {c.name} {c.fiscalId ? `(${c.fiscalId})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    Radar Conciliación
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onToggleView('admin')}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                      isAdminView
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-zinc-400 hover:text-blue-300'
+                    }`}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span>Licencias & Empresas</span>
+                  </button>
                 </div>
-              </div>
+              </>
             )}
 
-            {/* ERP Destino Selector */}
-            <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-1.5">
-              <Database className="h-3.5 w-3.5 text-zinc-400" />
-              <div className="flex flex-col">
-                <span className="text-[9px] uppercase tracking-wider text-zinc-400">
-                  Exportar a
-                </span>
-                <select
-                  value={selectedErp}
-                  onChange={(e) => onSelectErp(e.target.value)}
-                  className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-3"
-                >
-                  <option value="A3" className="bg-zinc-900 text-zinc-200">
-                    Wolters Kluwer A3
-                  </option>
-                  <option value="SAGE" className="bg-zinc-900 text-zinc-200">
-                    Sage 50 / Despachos
-                  </option>
-                  <option value="CONTASOL" className="bg-zinc-900 text-zinc-200">
-                    DELSOL Contasol
-                  </option>
-                </select>
-              </div>
-            </div>
-          </div>
+            {/* CONTEXTO DE CONCILIACIÓN: Se oculta completamente cuando estamos en el Panel de Administrador Global */}
+            {!isAdminView && (
+              <>
+                <div className="hidden sm:block h-5 w-px bg-zinc-800" />
 
-          {/* Real-time Financial Balance Indicators & Action Buttons */}
-          <div className="flex items-center gap-3 overflow-x-auto pb-1 lg:pb-0">
-            {/* Total Procesado */}
-            <div className="bg-zinc-900/80 border border-zinc-800 rounded-md px-3.5 py-1.5 min-w-[130px]">
-              <div className="text-[10px] text-zinc-400 uppercase tracking-wider">
-                Total Procesado
-              </div>
-              <div className="font-mono tabular-nums text-xs font-semibold text-zinc-100">
-                {formatEuro(metrics.totalNetVolumeEur)}
-              </div>
-            </div>
+                {/* Selector de Empresa Cliente con botones de Añadir (+) y Quitar (-) */}
+                <div className="flex items-center gap-1.5 bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5">
+                  <Building2 className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                  
+                  {companies && companies.length > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <div className="flex flex-col">
+                        <span className="text-[9px] uppercase tracking-wider text-zinc-400 leading-none mb-0.5">
+                          Empresa Cliente
+                        </span>
+                        <select
+                          value={selectedCompany ? selectedCompany.id : ''}
+                          onChange={(e) => {
+                            const comp = companies.find(c => c.id === e.target.value);
+                            if (comp && onSelectCompany) onSelectCompany(comp);
+                          }}
+                          className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2 max-w-[210px] truncate"
+                        >
+                          {companies.map((c) => (
+                            <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
+                              {c.name} {c.fiscalId ? `(${c.fiscalId})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-            {/* Porcentaje Conciliado */}
-            <div className="bg-zinc-900/80 border border-zinc-800 rounded-md px-3.5 py-1.5 min-w-[110px]">
-              <div className="text-[10px] text-zinc-400 uppercase tracking-wider">
-                Conciliado
-              </div>
-              <div className="font-mono tabular-nums text-xs font-semibold text-emerald-400">
-                {formatPercent(metrics.reconciliationRate)}
-              </div>
-            </div>
+                      {/* Botón Añadir Empresa (+) */}
+                      {onOpenAddClientModal && (
+                        <button
+                          type="button"
+                          onClick={onOpenAddClientModal}
+                          className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
+                          title="Añadir nueva Empresa Cliente"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      )}
 
-            {/* Cuadre a Cero */}
-            <div className={`rounded-md px-3.5 py-1.5 min-w-[140px] border flex items-center justify-between ${
-              metrics.globalImbalanceEur === 0
-                ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-300'
-                : 'bg-rose-950/20 border-rose-800/40 text-rose-300'
-            }`}>
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" />
-                  Cuadre Contable
-                </div>
-                <div className="font-mono tabular-nums text-xs font-bold text-zinc-100">
-                  Descuadre: {formatEuro(metrics.globalImbalanceEur)}
-                </div>
-              </div>
-            </div>
-
-            {/* Botón Auditoría SHA-256 */}
-            <button
-              type="button"
-              onClick={onOpenAuditModal}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-xs font-medium text-emerald-400 transition-colors cursor-pointer shadow-sm"
-              title="Ver Certificado Legal de Auditoría con Cadena de Custodia SHA-256"
-            >
-              <ShieldCheck className="h-4 w-4 text-emerald-400" />
-              <span className="hidden sm:inline">Auditoría SHA-256</span>
-            </button>
-
-            {/* Perfil de Usuario / Botón de Inicio de Sesión */}
-            {currentUser ? (
-              <div className="flex items-center gap-2 pl-1 border-l border-zinc-800">
-                <div className="flex flex-col text-right hidden sm:block">
-                  <span className="text-xs font-medium text-zinc-200 leading-tight">
-                    {currentUser.full_name || currentUser.email}
-                  </span>
-                  <div className="flex items-center justify-end gap-1.5 mt-0.5">
-                    <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold ${
-                      currentUser.role === 'SUPERADMIN'
-                        ? 'bg-purple-950/60 text-purple-300 border border-purple-800/60'
-                        : currentUser.role === 'ADMIN' 
-                        ? 'bg-blue-950/60 text-blue-300 border border-blue-800/60'
-                        : currentUser.role === 'AUDITOR'
-                        ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/60'
-                        : 'bg-zinc-800 text-zinc-300 border border-zinc-700'
-                    }`}>
-                      {currentUser.role}
-                    </span>
-                    {currentUser.tenant_name && (
-                      <span className="text-[10px] text-zinc-400 truncate max-w-[110px]" title={currentUser.tenant_name}>
-                        {currentUser.tenant_name}
+                      {/* Botón Quitar Empresa (-) */}
+                      {selectedCompany && onOpenDeleteClientModal && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenDeleteClientModal(selectedCompany)}
+                          className="p-1 rounded bg-zinc-800 hover:bg-rose-950/80 border border-transparent hover:border-rose-800/60 text-zinc-400 hover:text-rose-400 transition-colors"
+                          title={`Eliminar empresa cliente ${selectedCompany.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-400 italic">
+                        Sin empresas cliente
                       </span>
-                    )}
+                      {onOpenAddClientModal && (
+                        <button
+                          type="button"
+                          onClick={onOpenAddClientModal}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
+                        >
+                          <Plus className="h-3 w-3" />
+                          <span>Añadir Empresa</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selector ERP Destino */}
+                <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5">
+                  <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                  <div className="flex flex-col">
+                    <span className="text-[9px] uppercase tracking-wider text-zinc-400 leading-none mb-0.5">
+                      Exportar a
+                    </span>
+                    <select
+                      value={selectedErp}
+                      onChange={(e) => onSelectErp && onSelectErp(e.target.value)}
+                      className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2"
+                    >
+                      <option value="A3" className="bg-zinc-900 text-zinc-200">
+                        Wolters Kluwer A3
+                      </option>
+                      <option value="SAGE" className="bg-zinc-900 text-zinc-200">
+                        Sage 50 / Despachos
+                      </option>
+                      <option value="CONTASOL" className="bg-zinc-900 text-zinc-200">
+                        DELSOL Contasol
+                      </option>
+                    </select>
                   </div>
                 </div>
+              </>
+            )}
+          </div>
+
+          {/* Lado Derecho: Usuario y Salida */}
+          <div className="flex items-center gap-3">
+            {currentUser && (
+              <div className="flex items-center gap-2.5 pl-3 border-l border-zinc-800">
+                <div className="hidden sm:flex flex-col text-right">
+                  <span className="text-xs font-medium text-zinc-200">
+                    {currentUser.full_name || currentUser.email}
+                  </span>
+                  <span className={`text-[10px] font-mono uppercase tracking-wider ${
+                    isSuperAdmin ? 'text-blue-400 font-bold' : 'text-zinc-400'
+                  }`}>
+                    {currentUser.role}
+                  </span>
+                </div>
+
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="px-2.5 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
-                  title="Cerrar Sesión"
+                  className="p-1.5 rounded-md text-zinc-400 hover:text-rose-400 hover:bg-zinc-900 transition-colors"
+                  title="Cerrar sesión"
                 >
-                  Salir
+                  <LogOut className="h-4 w-4" />
                 </button>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onOpenAuthModal && onOpenAuthModal('login')}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors cursor-pointer shadow-sm ml-1"
-              >
-                <span>Acceso Despacho</span>
-              </button>
             )}
-
-            {/* Backend Connectivity Status Dot */}
-            <div 
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-[11px] font-mono border ${
-                backendStatus && backendStatus.online 
-                  ? 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300' 
-                  : 'bg-zinc-900 border-zinc-800 text-zinc-400'
-              }`}
-              title={backendStatus && backendStatus.online ? 'Conectado a FastAPI en 127.0.0.1:8000' : 'Modo Autónomo Local'}
-            >
-              <span className={`h-2 w-2 rounded-full ${backendStatus && backendStatus.online ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
-              <span className="hidden md:inline">{backendStatus && backendStatus.online ? 'En Línea' : 'Local'}</span>
-            </div>
-
           </div>
 
         </div>

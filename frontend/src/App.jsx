@@ -5,6 +5,7 @@ import { StagingRadar } from './components/StagingRadar';
 import { ExportPanel } from './components/ExportPanel';
 import { ScoreRadarModal } from './components/ScoreRadarModal';
 import { AuditTrailModal } from './components/AuditTrailModal';
+import { ClientModal } from './components/ClientModal';
 import AuthModal from './components/AuthModal';
 import { AuthScreen } from './components/AuthScreen';
 import { AdminPanel } from './components/AdminPanel';
@@ -14,6 +15,9 @@ import {
   fetchTenants, 
   fetchClients, 
   createClientApi,
+  deleteClientApi,
+  deleteBatchApi,
+  deleteTransactionApi,
   fetchBatches, 
   fetchBatchDetails,
   uploadBatchFile,
@@ -41,6 +45,11 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState({ online: false });
   const [toastMessage, setToastMessage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Modal para Añadir / Eliminar Empresa Cliente
+  const [clientModalOpen, setClientModalOpen] = useState(false);
+  const [clientModalMode, setClientModalMode] = useState('add');
+  const [clientModalTarget, setClientModalTarget] = useState(null);
 
   // Estados de Autenticación & Usuario
   const [currentUser, setCurrentUser] = useState(() => {
@@ -74,7 +83,7 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // Función para cargar lotes de una empresa cliente
+  // Carga lotes reales de la empresa seleccionada
   const loadBatchesForCompany = useCallback(async (companyId, year, sMonth, eMonth) => {
     if (!companyId) {
       setBatches([]);
@@ -116,23 +125,7 @@ export default function App() {
 
     if (user.tenant_id) {
       try {
-        let clientList = await fetchClients(user.tenant_id);
-
-        // Si el despacho no tiene empresas clientes aún, autoprovisionar una por defecto
-        if (!clientList || clientList.length === 0) {
-          const compName = user.tenant_name || user.full_name || 'Mi Empresa SL';
-          const defaultFiscal = `B${user.tenant_id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`;
-          const createRes = await createClientApi({
-            tenantId: user.tenant_id,
-            name: compName,
-            fiscalId: defaultFiscal,
-            defaultErp: 'A3',
-          });
-          if (createRes.success && createRes.client) {
-            clientList = [createRes.client];
-          }
-        }
-
+        const clientList = await fetchClients(user.tenant_id);
         if (clientList && clientList.length > 0) {
           setCompanies(clientList);
           const firstComp = clientList[0];
@@ -140,6 +133,7 @@ export default function App() {
           setSelectedErp(firstComp.defaultErp || 'A3');
           await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
         } else {
+          // El usuario NO tiene clientes aún: dejar lista vacía (cero empresas 'por la cara')
           setCompanies([]);
           setSelectedCompany(null);
           setTransactions([]);
@@ -160,6 +154,10 @@ export default function App() {
             setSelectedCompany(cList[0]);
             setSelectedErp(cList[0].defaultErp || 'A3');
             await loadBatchesForCompany(cList[0].id, selectedYear, startMonth, endMonth);
+          } else {
+            setCompanies([]);
+            setSelectedCompany(null);
+            setTransactions([]);
           }
         }
       } catch (err) {
@@ -184,11 +182,10 @@ export default function App() {
 
     initApp();
     return () => { isMounted = false; };
-  }, [currentUser, syncUserContext]);
+  }, [syncUserContext, currentUser]);
 
   // Partidas filtradas por periodo contable
   const periodFilteredTransactions = useMemo(() => {
-    if (!transactions || transactions.length === 0) return [];
     return transactions.filter(tx => {
       if (!tx.date) return true;
       const parts = tx.date.split('-');
@@ -200,50 +197,113 @@ export default function App() {
     });
   }, [transactions, selectedYear, startMonth, endMonth]);
 
-  // Cálculo de métricas en tiempo real sobre el periodo activo
-  const metrics = useMemo(() => {
-    if (!periodFilteredTransactions || periodFilteredTransactions.length === 0) {
-      return {
-        totalNetVolumeEur: 0.00,
-        reconciliationRate: 0,
-        globalImbalanceEur: 0.00,
-      };
+  // Handlers para Añadir y Quitar Empresa Cliente
+  const handleOpenAddClientModal = useCallback(() => {
+    setClientModalMode('add');
+    setClientModalTarget(null);
+    setClientModalOpen(true);
+  }, []);
+
+  const handleOpenDeleteClientModal = useCallback((comp) => {
+    setClientModalMode('delete');
+    setClientModalTarget(comp);
+    setClientModalOpen(true);
+  }, []);
+
+  const handleAddClient = useCallback(async ({ name, fiscalId, defaultErp, accountLength }) => {
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    if (!tenantIdToUse) {
+      throw new Error('No se ha detectado el identificador de su despacho.');
     }
 
-    const totalVolume = periodFilteredTransactions.reduce((acc, t) => acc + (Number(t.netAmountEur) || 0), 0);
-    const greenCount = periodFilteredTransactions.filter(t => t.status === 'GREEN' || t.isApproved).length;
-    const rate = periodFilteredTransactions.length > 0 ? (greenCount / periodFilteredTransactions.length) : 0;
-    
-    return {
-      totalNetVolumeEur: totalVolume,
-      reconciliationRate: rate,
-      globalImbalanceEur: 0.00,
-    };
-  }, [periodFilteredTransactions]);
+    const res = await createClientApi({
+      tenantId: tenantIdToUse,
+      name,
+      fiscalId,
+      defaultErp,
+      accountLength,
+    });
 
-  // Manejador para aprobar una partida individual (Amarilla -> Verde)
-  const handleApproveTransaction = useCallback(async (id) => {
+    if (res.success && res.client) {
+      setCompanies(prev => [...prev, res.client]);
+      setSelectedCompany(res.client);
+      setSelectedErp(res.client.defaultErp || 'A3');
+      setTransactions([]);
+      setBatches([]);
+      setCurrentBatchId(null);
+      triggerToast(`Empresa cliente '${res.client.name}' creada con éxito.`);
+    } else {
+      throw new Error(res.error || 'Error al crear la empresa cliente');
+    }
+  }, [currentUser, currentTenant, triggerToast]);
+
+  const handleDeleteClient = useCallback(async (clientId) => {
+    const res = await deleteClientApi(clientId);
+    if (res.success) {
+      setCompanies(prev => {
+        const updated = prev.filter(c => c.id !== clientId);
+        if (selectedCompany?.id === clientId) {
+          const nextComp = updated.length > 0 ? updated[0] : null;
+          setSelectedCompany(nextComp);
+          if (nextComp) {
+            setSelectedErp(nextComp.defaultErp || 'A3');
+            loadBatchesForCompany(nextComp.id, selectedYear, startMonth, endMonth);
+          } else {
+            setTransactions([]);
+            setBatches([]);
+            setCurrentBatchId(null);
+          }
+        }
+        return updated;
+      });
+      triggerToast('Empresa cliente eliminada correctamente.');
+    } else {
+      throw new Error(res.error || 'Error al eliminar la empresa cliente');
+    }
+  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
+
+  // Eliminación de partidas (individual y vaciado completo)
+  const handleDeleteTransaction = useCallback(async (txId) => {
+    setTransactions(prev => prev.filter(tx => tx.id !== txId));
+    if (currentBatchId && backendStatus.online) {
+      await deleteTransactionApi(currentBatchId, txId);
+    }
+    triggerToast('Partida eliminada.');
+  }, [currentBatchId, backendStatus.online, triggerToast]);
+
+  const handleClearAllTransactions = useCallback(async () => {
+    setTransactions([]);
+    if (currentBatchId && backendStatus.online) {
+      await deleteBatchApi(currentBatchId);
+      setBatches(prev => prev.filter(b => b.id !== currentBatchId));
+      setCurrentBatchId(null);
+    }
+    triggerToast('Todas las partidas han sido eliminadas del radar.');
+  }, [currentBatchId, backendStatus.online, triggerToast]);
+
+  // Aprobación individual de partida
+  const handleApproveTransaction = useCallback(async (txId) => {
     setTransactions(prev => prev.map(tx => {
-      if (tx.id === id) {
+      if (tx.id === txId) {
         return {
           ...tx,
           status: 'GREEN',
           confidenceScore: 0.965,
           isApproved: true,
-          auditExplanation: `${tx.auditExplanation || ''} [Aprobado por Auditor Contable].`,
+          auditExplanation: `${tx.auditExplanation || ''} [Aprobado manualmente por Auditor Contable].`,
         };
       }
       return tx;
     }));
 
     if (currentBatchId && backendStatus.online) {
-      await approveTransactionApi(currentBatchId, id);
+      await approveTransactionApi(currentBatchId, txId);
     }
 
-    triggerToast(`Partida ${id} aprobada con éxito. Asiento PGC certificado en SHA-256.`);
+    triggerToast(`Partida ${txId} aprobada. Asiento PGC certificado.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
-  // Manejador para aprobar todas las partidas amarillas en lote
+  // Aprobación masiva de todas las partidas amarillas
   const handleBulkApproveYellows = useCallback(async () => {
     let approvedCount = 0;
     setTransactions(prev => prev.map(tx => {
@@ -372,21 +432,19 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
-      {/* 1. Barra superior de contexto contable */}
+      {/* 1. Barra superior limpia (cero métricas invasivas, aislamiento estricto en vista Admin) */}
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
         onSelectCompany={handleSelectCompany}
         selectedErp={selectedErp}
         onSelectErp={setSelectedErp}
-        metrics={metrics}
-        backendStatus={backendStatus}
-        onOpenAuditModal={() => setShowAuditModal(true)}
         currentUser={currentUser}
-        onOpenAuthModal={handleOpenAuthModal}
         onLogout={handleLogout}
         currentView={currentView}
         onToggleView={setCurrentView}
+        onOpenAddClientModal={handleOpenAddClientModal}
+        onOpenDeleteClientModal={handleOpenDeleteClientModal}
       />
 
       {/* Contenedor Principal: Conmutador entre Panel ADMIN (Exclusivo SUPERADMIN) y Radar Contable */}
@@ -406,7 +464,7 @@ export default function App() {
             onFileProcessed={handleFileUploaded}
           />
 
-          {/* 3. El Radar de Conciliación y Desambiguación */}
+          {/* 3. El Radar de Conciliación y Desambiguación con vaciado y eliminación de partidas */}
           <StagingRadar
             transactions={periodFilteredTransactions}
             onApproveTransaction={handleApproveTransaction}
@@ -421,6 +479,10 @@ export default function App() {
             endMonth={endMonth}
             onSelectEndMonth={setEndMonth}
             onLoadDemoBatch={handleLoadDemoBatch}
+            onDeleteTransaction={handleDeleteTransaction}
+            onClearAllTransactions={handleClearAllTransactions}
+            hasCompanies={companies.length > 0}
+            onOpenAddClientModal={handleOpenAddClientModal}
           />
 
           {/* 4. Panel de Descarga y Exportación a ERP */}
@@ -445,6 +507,16 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Modal para Añadir o Eliminar Empresa Cliente */}
+      <ClientModal
+        isOpen={clientModalOpen}
+        mode={clientModalMode}
+        company={clientModalTarget}
+        onClose={() => setClientModalOpen(false)}
+        onAddClient={handleAddClient}
+        onDeleteClient={handleDeleteClient}
+      />
 
       {/* Modal de Inspección de Confidence Scorer */}
       {modalTransaction && (
