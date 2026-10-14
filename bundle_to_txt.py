@@ -16,7 +16,9 @@ for dirpath, dirnames, filenames in os.walk(root_dir):
         if f in ("proyecto_comprimido.txt", "proyecto_completo.txt", "package-lock.json"):
             continue
         ext = os.path.splitext(f)[1].lower()
-        if ext in (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".ts", ".tsx", ".html", ".css", ".svg", ".n43"):
+        valid_exts = (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".ts", ".tsx", ".html", ".css", ".svg", ".n43", ".yaml", ".yml", ".sh", ".bat", ".ps1")
+        valid_names = ("Dockerfile", ".dockerignore", ".env.example", ".gitignore")
+        if ext in valid_exts or f in valid_names:
             rel_path = os.path.relpath(os.path.join(dirpath, f), root_dir)
             files_to_pack.append(rel_path)
 
