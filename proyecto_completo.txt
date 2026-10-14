@@ -49,13 +49,14 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=production \
     PORT=8000
 
 WORKDIR /app
 
-# Instalar dependencias del sistema mínimas para scipy/psycopg2
+# Instalar dependencias del sistema mínimas para scipy/psycopg2/psycopg y curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc && \
+    libpq-dev gcc curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -1012,6 +1013,10 @@ FICHERO: frontend\src\App.css
 FICHERO: frontend\src\App.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/App.jsx
+ * Orquestador Principal de Producción (Sin mocks, con gestión de Planes/Paywall en vivo)
+ */
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { HeaderNav } from './components/HeaderNav';
 import { IngestionZone } from './components/IngestionZone';
@@ -1020,21 +1025,19 @@ import { ExportPanel } from './components/ExportPanel';
 import { ScoreRadarModal } from './components/ScoreRadarModal';
 import { AuditTrailModal } from './components/AuditTrailModal';
 import { ClientModal } from './components/ClientModal';
-import AuthModal from './components/AuthModal';
 import { AuthScreen } from './components/AuthScreen';
 import { AdminPanel } from './components/AdminPanel';
 import { PaywallModal } from './components/PaywallModal';
 import { StripeSyncModal } from './components/StripeSyncModal';
-import { MOCK_COMPANIES, INITIAL_TRANSACTIONS } from './data/mockAuditData';
-import { 
-  checkBackendHealth, 
-  fetchTenants, 
-  fetchClients, 
+import {
+  checkBackendHealth,
+  fetchTenants,
+  fetchClients,
   createClientApi,
   deleteClientApi,
   deleteBatchApi,
   deleteTransactionApi,
-  fetchBatches, 
+  fetchBatches,
   fetchBatchDetails,
   uploadBatchFile,
   approveTransactionApi,
@@ -1055,8 +1058,7 @@ export default function App() {
   const [selectedErp, setSelectedErp] = useState('A3');
   const [batches, setBatches] = useState([]);
   const [currentBatchId, setCurrentBatchId] = useState(null);
-  
-  // Transacciones en memoria: inicializado ESTRICTAMENTE vacío por defecto (cero documentos fantasma)
+
   const [transactions, setTransactions] = useState([]);
   const [modalTransaction, setModalTransaction] = useState(null);
   const [showAuditModal, setShowAuditModal] = useState(false);
@@ -1064,23 +1066,19 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Modal para Añadir / Eliminar Empresa Cliente
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [clientModalMode, setClientModalMode] = useState('add');
   const [clientModalTarget, setClientModalTarget] = useState(null);
 
-  // Modal de Paywall y Stripe Sync
   const [showPaywallModal, setShowPaywallModal] = useState(false);
   const [showStripeSyncModal, setShowStripeSyncModal] = useState(false);
   const [subscriptionInfo, setSubscriptionInfo] = useState(null);
 
-  // Estados de Autenticación & Usuario
   const [currentUser, setCurrentUser] = useState(() => {
     const s = getStoredAuthSession();
     return s ? s.user : null;
   });
-  
-  // Exclusividad SUPERADMIN: Solo SUPERADMIN puede tener la vista 'admin'
+
   const [currentView, setCurrentView] = useState(() => {
     const s = getStoredAuthSession();
     if (s && s.user && s.user.role === 'SUPERADMIN') {
@@ -1088,25 +1086,19 @@ export default function App() {
     }
     return 'radar';
   });
-  
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authModalView, setAuthModalView] = useState('login');
 
-  // Filtro de Periodo Contable (Año, Trimestres o Rango Libre de Meses)
   const [selectedYear, setSelectedYear] = useState(2026);
   const [periodType, setPeriodType] = useState('ALL');
   const [startMonth, setStartMonth] = useState(1);
   const [endMonth, setEndMonth] = useState(12);
 
-  // Mostrar mensaje toast temporal
   const triggerToast = useCallback((msg) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
-    }, 3200);
+    }, 3400);
   }, []);
 
-  // Carga lotes reales de la empresa seleccionada
   const loadBatchesForCompany = useCallback(async (companyId, year, sMonth, eMonth) => {
     if (!companyId) {
       setBatches([]);
@@ -1121,23 +1113,20 @@ export default function App() {
         const latestBatch = batchList[0];
         setCurrentBatchId(latestBatch.id);
         const details = await fetchBatchDetails(latestBatch.id);
-        if (details && details.transactions && details.transactions.length > 0) {
+        if (details && details.transactions) {
           setTransactions(details.transactions);
           return;
         }
       }
-      // Si la empresa no tiene lotes persistidos en este periodo, queda limpia y vacía
       setCurrentBatchId(null);
       setTransactions([]);
-    } catch (err) {
-      console.warn('Error al cargar lotes:', err);
+    } catch {
       setBatches([]);
       setCurrentBatchId(null);
       setTransactions([]);
     }
   }, []);
 
-  // Sincronización de contexto multi-tenant según el usuario activo
   const syncUserContext = useCallback(async (user) => {
     if (!user) {
       setCompanies([]);
@@ -1147,81 +1136,67 @@ export default function App() {
       return;
     }
 
-    const tenantIdToQuery = user.tenant_id;
-    if (tenantIdToQuery) {
-      try {
-        const sub = await fetchTenantSubscription(tenantIdToQuery);
-        if (sub) setSubscriptionInfo(sub);
-      } catch (err) {
-        console.warn('Error consultando suscripción:', err);
-      }
-    }
-
     if (user.tenant_id) {
-      try {
-        const clientList = await fetchClients(user.tenant_id);
-        if (clientList && clientList.length > 0) {
-          setCompanies(clientList);
-          const firstComp = clientList[0];
-          setSelectedCompany(firstComp);
-          setSelectedErp(firstComp.defaultErp || 'A3');
-          await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
+      const [sub, clientList] = await Promise.all([
+        fetchTenantSubscription(user.tenant_id),
+        fetchClients(user.tenant_id),
+      ]);
+      if (sub) setSubscriptionInfo(sub);
+
+      if (clientList && clientList.length > 0) {
+        setCompanies(clientList);
+        const firstComp = clientList[0];
+        setSelectedCompany(firstComp);
+        setSelectedErp(firstComp.defaultErp || 'A3');
+        await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
+      } else {
+        setCompanies([]);
+        setSelectedCompany(null);
+        setTransactions([]);
+      }
+    } else if (user.role === 'SUPERADMIN') {
+      const tList = await fetchTenants();
+      if (tList && tList.length > 0) {
+        setTenants(tList);
+        const firstTenant = tList[0];
+        setCurrentTenant(firstTenant);
+        const [sub, cList] = await Promise.all([
+          fetchTenantSubscription(firstTenant.id),
+          fetchClients(firstTenant.id),
+        ]);
+        if (sub) setSubscriptionInfo(sub);
+        if (cList && cList.length > 0) {
+          setCompanies(cList);
+          setSelectedCompany(cList[0]);
+          setSelectedErp(cList[0].defaultErp || 'A3');
+          await loadBatchesForCompany(cList[0].id, selectedYear, startMonth, endMonth);
         } else {
           setCompanies([]);
           setSelectedCompany(null);
           setTransactions([]);
         }
-      } catch (err) {
-        console.warn('Error sincronizando empresas del tenant:', err);
-      }
-    } else if (user.role === 'SUPERADMIN') {
-      try {
-        const tList = await fetchTenants();
-        if (tList && tList.length > 0) {
-          setTenants(tList);
-          const firstTenant = tList[0];
-          setCurrentTenant(firstTenant);
-          const sub = await fetchTenantSubscription(firstTenant.id);
-          if (sub) setSubscriptionInfo(sub);
-          const cList = await fetchClients(firstTenant.id);
-          if (cList && cList.length > 0) {
-            setCompanies(cList);
-            setSelectedCompany(cList[0]);
-            setSelectedErp(cList[0].defaultErp || 'A3');
-            await loadBatchesForCompany(cList[0].id, selectedYear, startMonth, endMonth);
-          } else {
-            setCompanies([]);
-            setSelectedCompany(null);
-            setTransactions([]);
-          }
-        }
-      } catch (err) {
-        console.warn('Error sincronizando contexto SUPERADMIN:', err);
       }
     }
   }, [loadBatchesForCompany, selectedYear, startMonth, endMonth]);
 
-  // Inicialización al montar: Conectar con FastAPI y cargar datos multi-tenant
   useEffect(() => {
     let isMounted = true;
-
     async function initApp() {
       const health = await checkBackendHealth();
       if (!isMounted) return;
       setBackendStatus(health);
-
       if (health.online && currentUser) {
         await syncUserContext(currentUser);
       }
     }
-
     initApp();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [syncUserContext, currentUser]);
 
-  // Partidas filtradas por periodo contable
   const periodFilteredTransactions = useMemo(() => {
-    return transactions.filter(tx => {
+    return transactions.filter((tx) => {
       if (!tx.date) return true;
       const parts = tx.date.split('-');
       const year = parseInt(parts[0], 10);
@@ -1232,7 +1207,6 @@ export default function App() {
     });
   }, [transactions, selectedYear, startMonth, endMonth]);
 
-  // Handlers para Añadir y Quitar Empresa Cliente
   const handleOpenAddClientModal = useCallback(() => {
     setClientModalMode('add');
     setClientModalTarget(null);
@@ -1260,13 +1234,19 @@ export default function App() {
     });
 
     if (res.success && res.client) {
-      setCompanies(prev => [...prev, res.client]);
+      setCompanies((prev) => [...prev, res.client]);
       setSelectedCompany(res.client);
       setSelectedErp(res.client.defaultErp || 'A3');
       setTransactions([]);
       setBatches([]);
       setCurrentBatchId(null);
-      triggerToast(`Empresa cliente '${res.client.name}' creada con éxito.`);
+      const sub = await fetchTenantSubscription(tenantIdToUse);
+      if (sub) setSubscriptionInfo(sub);
+      triggerToast(`Sociedad '${res.client.name}' dada de alta correctamente.`);
+    } else if (res.paywallTriggered) {
+      setClientModalOpen(false);
+      setShowPaywallModal(true);
+      throw new Error('Has alcanzado el límite de empresas de tu plan actual.');
     } else {
       throw new Error(res.error || 'Error al crear la empresa cliente');
     }
@@ -1275,8 +1255,8 @@ export default function App() {
   const handleDeleteClient = useCallback(async (clientId) => {
     const res = await deleteClientApi(clientId);
     if (res.success) {
-      setCompanies(prev => {
-        const updated = prev.filter(c => c.id !== clientId);
+      setCompanies((prev) => {
+        const updated = prev.filter((c) => c.id !== clientId);
         if (selectedCompany?.id === clientId) {
           const nextComp = updated.length > 0 ? updated[0] : null;
           setSelectedCompany(nextComp);
@@ -1291,141 +1271,128 @@ export default function App() {
         }
         return updated;
       });
-      triggerToast('Empresa cliente eliminada correctamente.');
+      triggerToast('Sociedad eliminada correctamente.');
     } else {
       throw new Error(res.error || 'Error al eliminar la empresa cliente');
     }
   }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
 
-  // Eliminación de partidas (individual y vaciado completo)
   const handleDeleteTransaction = useCallback(async (txId) => {
-    setTransactions(prev => prev.filter(tx => tx.id !== txId));
+    setTransactions((prev) => prev.filter((tx) => tx.id !== txId));
     if (currentBatchId && backendStatus.online) {
       await deleteTransactionApi(currentBatchId, txId);
     }
-    triggerToast('Partida eliminada.');
+    triggerToast('Partida eliminada del radar.');
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
   const handleClearAllTransactions = useCallback(async () => {
     setTransactions([]);
     if (currentBatchId && backendStatus.online) {
       await deleteBatchApi(currentBatchId);
-      setBatches(prev => prev.filter(b => b.id !== currentBatchId));
+      setBatches((prev) => prev.filter((b) => b.id !== currentBatchId));
       setCurrentBatchId(null);
     }
-    triggerToast('Todas las partidas han sido eliminadas del radar.');
+    triggerToast('Radar contable vaciado.');
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
-  // Aprobación individual de partida
   const handleApproveTransaction = useCallback(async (txId) => {
-    setTransactions(prev => prev.map(tx => {
-      if (tx.id === txId) {
-        return {
-          ...tx,
-          status: 'GREEN',
-          confidenceScore: 0.965,
-          isApproved: true,
-          auditExplanation: `${tx.auditExplanation || ''} [Aprobado manualmente por Auditor Contable].`,
-        };
-      }
-      return tx;
-    }));
-
+    setTransactions((prev) =>
+      prev.map((tx) =>
+        tx.id === txId
+          ? {
+              ...tx,
+              status: 'GREEN',
+              confidenceScore: 0.965,
+              isApproved: true,
+              auditExplanation: `${tx.auditExplanation || ''} [Aprobado por Auditor Contable].`,
+            }
+          : tx
+      )
+    );
     if (currentBatchId && backendStatus.online) {
       await approveTransactionApi(currentBatchId, txId);
     }
-
-    triggerToast(`Partida ${txId} aprobada. Asiento PGC certificado.`);
+    triggerToast(`Partida ${txId} aprobada y certificada.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
-  // Aprobación masiva de todas las partidas amarillas
   const handleBulkApproveYellows = useCallback(async () => {
     let approvedCount = 0;
-    setTransactions(prev => prev.map(tx => {
-      if (tx.status === 'YELLOW') {
-        approvedCount++;
-        return {
-          ...tx,
-          status: 'GREEN',
-          confidenceScore: 0.955,
-          isApproved: true,
-          auditExplanation: `${tx.auditExplanation || ''} [Aprobado en lote por Auditor Contable].`,
-        };
-      }
-      return tx;
-    }));
-
+    setTransactions((prev) =>
+      prev.map((tx) => {
+        if (tx.status === 'YELLOW') {
+          approvedCount++;
+          return {
+            ...tx,
+            status: 'GREEN',
+            confidenceScore: 0.955,
+            isApproved: true,
+            auditExplanation: `${tx.auditExplanation || ''} [Aprobado en lote por Auditor Contable].`,
+          };
+        }
+        return tx;
+      })
+    );
     if (currentBatchId && backendStatus.online) {
       await bulkApproveYellowsApi(currentBatchId);
     }
-
-    triggerToast(`Se han aprobado ${approvedCount} partidas en lote.`);
+    triggerToast(`${approvedCount} partidas aprobadas en lote.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
-  // Ingesta de fichero real arrastrado o subido
-  const handleFileUploaded = useCallback(async (file) => {
-    setIsProcessing(true);
+  const handleFileUploaded = useCallback(async (file, invoicesFile = null, ephemeralMode = false) => {
     if (!selectedCompany) {
-      setIsProcessing(false);
-      triggerToast('Añade o selecciona una Empresa Cliente antes de procesar un archivo.');
+      triggerToast('Crea o selecciona primero una Empresa Cliente para asociar el extracto.');
       handleOpenAddClientModal();
       return null;
     }
 
-    const tenantIdToUse = currentUser?.tenant_id || (currentTenant && currentTenant.id);
-    if (backendStatus.online && tenantIdToUse && selectedCompany) {
-      const res = await uploadBatchFile({
-        tenantId: tenantIdToUse,
-        clientId: selectedCompany.id,
-        year: selectedYear,
-        periodType,
-        startMonth,
-        endMonth,
-        file,
-      });
-
-      if (res && res.success) {
-        await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
-        setIsProcessing(false);
-        triggerToast(`Lote procesado y persistido con éxito (${res.data.total_movements} movimientos).`);
-        const sub = await fetchTenantSubscription(tenantIdToUse);
-        if (sub) setSubscriptionInfo(sub);
-        return res.data;
-      } else if (res && res.paywallTriggered) {
-        setIsProcessing(false);
-        setShowPaywallModal(true);
-        triggerToast('Límite del Plan Gratuito alcanzado (25 facturas). Elige un plan para continuar.');
-        return null;
-      } else {
-        setIsProcessing(false);
-        triggerToast(`Error: ${res?.error || 'No se pudo procesar el archivo'}`);
-        return null;
-      }
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    if (!tenantIdToUse) {
+      triggerToast('Sesión de despacho no válida.');
+      return null;
     }
 
-    // Fallback de demostración en modo autónomo
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        setTransactions(INITIAL_TRANSACTIONS);
-        setIsProcessing(false);
-        triggerToast('Fichero analizado y verificado mediante motor de conciliación.');
-        resolve({ total_movements: INITIAL_TRANSACTIONS.length });
-      }, 400);
+    setIsProcessing(true);
+    const res = await uploadBatchFile({
+      tenantId: tenantIdToUse,
+      clientId: selectedCompany.id,
+      year: selectedYear,
+      periodType,
+      startMonth,
+      endMonth,
+      file,
+      invoicesFile,
+      ephemeralMode,
     });
-  }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
+    setIsProcessing(false);
 
-  // Sincronización directa con Stripe API
+    if (res && res.success) {
+      if (ephemeralMode && res.data?.transactions) {
+        setTransactions(res.data.transactions);
+        setCurrentBatchId(null);
+      } else {
+        await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
+      }
+      const sub = await fetchTenantSubscription(tenantIdToUse);
+      if (sub) setSubscriptionInfo(sub);
+      triggerToast(`Fichero conciliado con éxito (${res.data.total_movements} movimientos).`);
+      return res.data;
+    } else if (res && res.paywallTriggered) {
+      setShowPaywallModal(true);
+      triggerToast('Has alcanzado el límite de 25 facturas de evaluación gratuita. Elige un plan para continuar.');
+      return null;
+    } else {
+      throw new Error(res?.error || 'No se pudo procesar el archivo contable.');
+    }
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
+
   const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
     if (!selectedCompany) {
-      triggerToast('Añade o selecciona una Empresa Cliente antes de conectar Stripe.');
+      triggerToast('Añade primero una Empresa Cliente antes de sincronizar con Stripe.');
       handleOpenAddClientModal();
       return;
     }
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
-    if (!tenantIdToUse) {
-      triggerToast('No se ha detectado el identificador de su despacho.');
-      return;
-    }
+    if (!tenantIdToUse) return;
 
     setIsProcessing(true);
     const res = await syncStripePayoutsApi({
@@ -1441,60 +1408,36 @@ export default function App() {
 
     if (res.success && res.data) {
       setTransactions(res.data.transactions || []);
-      triggerToast(`Stripe API: ${res.data.total_movements} transferencias sincronizadas y cuadradas.`);
       const sub = await fetchTenantSubscription(tenantIdToUse);
       if (sub) setSubscriptionInfo(sub);
+      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones sincronizadas y cuadradas.`);
     } else if (res.paywallTriggered) {
       setShowPaywallModal(true);
-      triggerToast('Límite del Plan Gratuito alcanzado (25 facturas). Elige un plan para continuar.');
+      triggerToast('Límite de 25 facturas gratuitas alcanzado. Elige un plan para desbloquear.');
     } else {
-      triggerToast(`Error Stripe: ${res.error || 'Fallo de conexión'}`);
+      throw new Error(res.error || 'Error conectando con Stripe API');
     }
   }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, triggerToast, handleOpenAddClientModal]);
 
-  // Actualización de plan desde el PaywallModal
   const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
     if (!tenantIdToUse) return;
     const res = await upgradeTenantPlanApi(tenantIdToUse, newPlan, extraBlocks);
     if (res.success) {
-      triggerToast(`Plan ${res.data?.new_plan || newPlan} activado con éxito. Exportación ilimitada desbloqueada.`);
       const sub = await fetchTenantSubscription(tenantIdToUse);
       if (sub) setSubscriptionInfo(sub);
+      triggerToast(`Plan ${res.data?.new_plan || newPlan} activado correctamente.`);
     } else {
-      triggerToast(`Error al actualizar suscripción: ${res.error}`);
+      triggerToast(`Error al actualizar plan: ${res.error}`);
     }
   }, [currentUser, currentTenant, triggerToast]);
 
-  // Cargar Lote Demo de Auditoría
-  const handleLoadDemoBatch = useCallback(() => {
-    setIsProcessing(true);
-    setTimeout(() => {
-      setTransactions(INITIAL_TRANSACTIONS);
-      if (!selectedCompany && MOCK_COMPANIES.length > 0) {
-        setSelectedCompany(MOCK_COMPANIES[0]);
-        setCompanies(MOCK_COMPANIES);
-      }
-      setIsProcessing(false);
-      triggerToast('Lote de prueba cargado con balance exacto a 0 céntimos.');
-    }, 250);
-  }, [selectedCompany, triggerToast]);
-
-  // Cambio de empresa cliente
   const handleSelectCompany = useCallback((company) => {
     setSelectedCompany(company);
-    if (company.defaultErp) {
-      setSelectedErp(company.defaultErp);
-    }
+    if (company.defaultErp) setSelectedErp(company.defaultErp);
     loadBatchesForCompany(company.id, selectedYear, startMonth, endMonth);
-    triggerToast(`Contexto contable: ${company.name}`);
+    triggerToast(`Sociedad activa: ${company.name}`);
   }, [loadBatchesForCompany, selectedYear, startMonth, endMonth, triggerToast]);
-
-  // Handlers de autenticación
-  const handleOpenAuthModal = useCallback((viewMode = 'login') => {
-    setAuthModalView(viewMode);
-    setShowAuthModal(true);
-  }, []);
 
   const handleAuthSuccess = useCallback(async (user) => {
     setCurrentUser(user);
@@ -1503,7 +1446,7 @@ export default function App() {
     } else {
       setCurrentView('radar');
     }
-    triggerToast(`Sesión iniciada: ${user.full_name || user.email} (${user.role})`);
+    triggerToast(`Bienvenido, ${user.full_name || user.email}`);
     await syncUserContext(user);
   }, [triggerToast, syncUserContext]);
 
@@ -1517,20 +1460,18 @@ export default function App() {
     setBatches([]);
     setCurrentBatchId(null);
     setSubscriptionInfo(null);
-    triggerToast('Sesión finalizada');
+    triggerToast('Sesión cerrada correctamente.');
   }, [triggerToast]);
 
-  // Si no está registrado o logeado, mostrar pantalla grande de autenticación
   if (!currentUser) {
     return (
       <>
-        <AuthScreen 
-          onAuthSuccess={handleAuthSuccess} 
-          backendOnline={backendStatus.online} 
+        <AuthScreen
+          onAuthSuccess={handleAuthSuccess}
+          backendOnline={backendStatus.online}
         />
-
         {toastMessage && (
-          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl animate-fade-in font-medium">
+          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl font-medium">
             <Check className="h-4 w-4 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
@@ -1541,7 +1482,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
-      {/* 1. Barra superior limpia */}
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -1554,27 +1494,26 @@ export default function App() {
         onToggleView={setCurrentView}
         onOpenAddClientModal={handleOpenAddClientModal}
         onOpenDeleteClientModal={handleOpenDeleteClientModal}
+        subscriptionInfo={subscriptionInfo}
+        onOpenPaywall={() => setShowPaywallModal(true)}
+        onOpenAuditModal={() => setShowAuditModal(true)}
       />
 
-      {/* Contenedor Principal: Conmutador entre Panel ADMIN y Radar Contable */}
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <AdminPanel 
+          <AdminPanel
             onNavigateToRadar={() => setCurrentView('radar')}
             currentUser={currentUser}
           />
         </main>
       ) : (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-          {/* 2. Zona de Ingesta Inteligente */}
           <IngestionZone
-            onLoadDemoBatch={handleLoadDemoBatch}
             isProcessing={isProcessing}
             onFileProcessed={handleFileUploaded}
             onOpenStripeSync={() => setShowStripeSyncModal(true)}
           />
 
-          {/* 3. El Radar de Conciliación y Desambiguación con vaciado y eliminación de partidas */}
           <StagingRadar
             transactions={periodFilteredTransactions}
             onApproveTransaction={handleApproveTransaction}
@@ -1588,14 +1527,12 @@ export default function App() {
             onSelectStartMonth={setStartMonth}
             endMonth={endMonth}
             onSelectEndMonth={setEndMonth}
-            onLoadDemoBatch={handleLoadDemoBatch}
             onDeleteTransaction={handleDeleteTransaction}
             onClearAllTransactions={handleClearAllTransactions}
             hasCompanies={companies.length > 0}
             onOpenAddClientModal={handleOpenAddClientModal}
           />
 
-          {/* 4. Panel de Descarga y Exportación a ERP */}
           <ExportPanel
             transactions={periodFilteredTransactions}
             selectedErp={selectedErp}
@@ -1608,11 +1545,10 @@ export default function App() {
         </main>
       )}
 
-      {/* Footer Institucional */}
       <footer className="border-t border-zinc-800/60 bg-[#0c0c0e] py-4 text-center text-xs text-zinc-500">
         <div className="max-w-[1600px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="font-mono text-[11px] text-zinc-400">
-            FINDAFINITY &bull; Conciliación Bancaria y Pasarelas &bull; Cuadre PGC a céntimo cero (0.00 €)
+            FINDAFINITY &bull; Conciliación Bancaria y Pasarelas &bull; Cuadre PGC a céntimo cero (0,00 €)
           </div>
           <div className="text-[11px] text-zinc-400">
             Exportación Oficial: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
@@ -1620,7 +1556,6 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Modal para Añadir o Eliminar Empresa Cliente */}
       <ClientModal
         isOpen={clientModalOpen}
         mode={clientModalMode}
@@ -1630,7 +1565,6 @@ export default function App() {
         onDeleteClient={handleDeleteClient}
       />
 
-      {/* Modal de Inspección de Confidence Scorer */}
       {modalTransaction && (
         <ScoreRadarModal
           transaction={modalTransaction}
@@ -1639,34 +1573,23 @@ export default function App() {
         />
       )}
 
-      {/* Modal de Cadena de Custodia SHA-256 */}
       {showAuditModal && (
         <AuditTrailModal
           batchId={currentBatchId}
-          companyName={selectedCompany ? selectedCompany.name : 'Empresa Cliente'}
+          companyName={selectedCompany ? selectedCompany.name : 'Sociedad Activa'}
           onClose={() => setShowAuditModal(false)}
         />
       )}
 
-      {/* Modal de Autenticación */}
-      <AuthModal
-        isOpen={showAuthModal}
-        initialView={authModalView}
-        onClose={() => setShowAuthModal(false)}
-        onAuthSuccess={handleAuthSuccess}
-      />
-
-      {/* Modal de Paywall Freemium (PLG) */}
       <PaywallModal
         isOpen={showPaywallModal}
         onClose={() => setShowPaywallModal(false)}
-        usedTransactions={subscriptionInfo?.current_month_transactions || 25}
+        usedTransactions={subscriptionInfo?.current_month_transactions || 0}
         freeLimit={subscriptionInfo?.max_monthly_transactions || 25}
         currentPlan={subscriptionInfo?.plan || 'FREE'}
         onSelectPlanUpgrade={handleSelectPlanUpgrade}
       />
 
-      {/* Modal de Conexión Directa con Stripe API */}
       <StripeSyncModal
         isOpen={showStripeSyncModal}
         onClose={() => setShowStripeSyncModal(false)}
@@ -1677,9 +1600,8 @@ export default function App() {
         endMonth={endMonth}
       />
 
-      {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl animate-fade-in font-medium">
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl font-medium">
           <Check className="h-4 w-4 text-emerald-400" />
           <span>{toastMessage}</span>
         </div>
@@ -2971,22 +2893,53 @@ export default function AuthModal({ isOpen, onClose, initialView = 'login', onAu
 FICHERO: frontend\src\components\AuthScreen.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/components/AuthScreen.jsx
+ * Pantalla Corporativa de Acceso y Registro B2B con Selección de Plan Inicial
+ * (Sin credenciales expuestas ni botones de cuentas demo)
+ */
 import React, { useState } from 'react';
-import { 
-  Layers, 
-  ShieldCheck, 
-  Lock, 
-  Mail, 
-  User, 
-  Building2, 
-  KeyRound, 
-  ArrowRight, 
-  CheckCircle2, 
+import {
+  Layers,
+  ShieldCheck,
+  Lock,
+  Mail,
+  User,
+  Building2,
+  KeyRound,
+  ArrowRight,
+  CheckCircle2,
   AlertCircle,
-  Sparkles,
-  Server
+  Check,
 } from 'lucide-react';
 import { loginApi, registerApi, forgotPasswordApi, resetPasswordApi } from '../services/api';
+
+const INITIAL_PLANS = [
+  {
+    code: 'FREE',
+    name: 'Evaluación Gratuita',
+    price: '0 €',
+    desc: 'Hasta 25 facturas/mes • 1 empresa',
+  },
+  {
+    code: 'PYME_DIRECTO',
+    name: 'Pyme Directo',
+    price: '39 €/mes',
+    desc: 'Hasta 2.000 facturas/mes • 1 empresa',
+  },
+  {
+    code: 'STARTER',
+    name: 'Gestoría Starter',
+    price: '49 €/mes',
+    desc: 'Hasta 10 empresas • 2.500 tx/mes',
+  },
+  {
+    code: 'PROFESSIONAL',
+    name: 'Gestoría Pro',
+    price: '119 €/mes',
+    desc: 'Hasta 30 empresas • 12.000 tx/mes',
+  },
+];
 
 export function AuthScreen({ onAuthSuccess, backendOnline }) {
   const [activeTab, setActiveTab] = useState('login'); // 'login' | 'register' | 'forgot' | 'reset'
@@ -2994,18 +2947,19 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
   const [errorMessage, setErrorMessage] = useState(null);
   const [infoMessage, setInfoMessage] = useState(null);
 
-  // Formulario Login
+  // Login
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // Formulario Registro
+  // Registro con selección de plan
   const [regFullName, setRegFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regCompanyName, setRegCompanyName] = useState('');
   const [regFiscalId, setRegFiscalId] = useState('');
+  const [regPlan, setRegPlan] = useState('FREE');
 
-  // Formulario Recuperación
+  // Recuperación
   const [forgotEmail, setForgotEmail] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
@@ -3024,14 +2978,13 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     e.preventDefault();
     clearMessages();
     setLoading(true);
-
     const res = await loginApi(loginEmail, loginPassword);
     setLoading(false);
 
     if (res.success) {
       onAuthSuccess(res.user);
     } else {
-      setErrorMessage(res.error || 'Credenciales no válidas.');
+      setErrorMessage(res.error || 'Credenciales incorrectas.');
     }
   };
 
@@ -3047,43 +3000,14 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
       companyName: regCompanyName,
       fiscalId: regFiscalId,
       role: 'ADMIN',
+      plan: regPlan,
     });
     setLoading(false);
 
     if (res.success) {
-      onAuthSuccess(res.user);
+      onAuthSuccess(res.user, regPlan !== 'FREE');
     } else {
       setErrorMessage(res.error || 'Error al completar el registro.');
-    }
-  };
-
-  const handleQuickLoginAdmin = async () => {
-    clearMessages();
-    setLoginEmail('admin@findaffinity.com');
-    setLoginPassword('AdminPass2026!');
-    setLoading(true);
-
-    const res = await loginApi('admin@findaffinity.com', 'AdminPass2026!');
-    setLoading(false);
-    if (res.success) {
-      onAuthSuccess(res.user);
-    } else {
-      setErrorMessage(res.error || 'No se pudo iniciar sesión con la cuenta de administrador.');
-    }
-  };
-
-  const handleQuickLoginDemo = async () => {
-    clearMessages();
-    setLoginEmail('auditor@konigpartners.es');
-    setLoginPassword('AuditPass2026!');
-    setLoading(true);
-
-    const res = await loginApi('auditor@konigpartners.es', 'AuditPass2026!');
-    setLoading(false);
-    if (res.success) {
-      onAuthSuccess(res.user);
-    } else {
-      setErrorMessage(res.error || 'No se pudo iniciar sesión con el despacho demo.');
     }
   };
 
@@ -3091,12 +3015,11 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     e.preventDefault();
     clearMessages();
     setLoading(true);
-
     const res = await forgotPasswordApi(forgotEmail);
     setLoading(false);
 
     if (res.success) {
-      setInfoMessage(res.message || 'Se ha generado un token de recuperación.');
+      setInfoMessage(res.message || 'Se han enviado las instrucciones de recuperación.');
       if (res.demoToken) {
         setResetToken(res.demoToken);
         setActiveTab('reset');
@@ -3110,69 +3033,59 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     e.preventDefault();
     clearMessages();
     setLoading(true);
-
     const res = await resetPasswordApi(resetToken, resetNewPassword);
     setLoading(false);
 
     if (res.success) {
-      setInfoMessage('Contraseña restablecida exitosamente. Inicia sesión con tu nueva clave.');
+      setInfoMessage('Contraseña actualizada correctamente. Ya puedes iniciar sesión.');
       setActiveTab('login');
     } else {
-      setErrorMessage(res.error || 'Error al restablecer contraseña.');
+      setErrorMessage(res.error || 'Error al restablecer la contraseña.');
     }
   };
 
   return (
     <div className="min-h-screen bg-[#08080a] flex flex-col justify-between text-zinc-100 font-sans selection:bg-emerald-500/30">
-      {/* Top Brand Nav */}
+      {/* Cabecera Institucional */}
       <header className="border-b border-zinc-800/80 bg-[#0c0c0e]/90 backdrop-blur px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
             <Layers className="h-4 w-4" />
           </div>
-          <span className="font-bold text-base tracking-tight text-white font-sans">
-            FINDAFINITY
-          </span>
+          <span className="font-bold text-base tracking-tight text-white">FINDAFINITY</span>
           <span className="text-[10px] text-zinc-500 font-mono hidden sm:inline ml-1 border-l border-zinc-800 pl-2">
-            CONCILIACIÓN CONTABLE B2B
+            CONCILIACIÓN ALGORÍTMICA & DESAMBIGUACIÓN CONTABLE
           </span>
         </div>
 
         <div className="flex items-center gap-2 text-xs">
-          <span className={`h-2 w-2 rounded-full ${backendOnline ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+          <span className={`h-2 w-2 rounded-full ${backendOnline ? 'bg-emerald-400' : 'bg-amber-500'}`} />
           <span className="text-zinc-400 font-mono text-[11px]">
-            {backendOnline ? 'Servidor Conectado' : 'Modo Autónomo'}
+            {backendOnline ? ' Cloud Activo' : 'Conectando...'}
           </span>
         </div>
       </header>
 
-      {/* Main Centered Container */}
+      {/* Contenedor Principal */}
       <main className="flex-1 flex items-center justify-center px-4 py-10">
-        <div className="max-w-[480px] w-full bg-[#101013] border border-zinc-800 rounded-xl p-6 sm:p-8 shadow-2xl relative">
-          
-          {/* Logo & Headline */}
+        <div className="max-w-[520px] w-full bg-[#101013] border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
           <div className="text-center mb-6">
             <div className="inline-flex h-11 w-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 items-center justify-center text-emerald-400 mb-3 shadow-sm">
-              <Layers className="h-5 w-5" />
+              <ShieldCheck className="h-5 w-5" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-white font-sans">
-              FINDAFINITY
-            </h1>
+            <h1 className="text-xl font-bold tracking-tight text-white">FINDAFINITY</h1>
             <p className="text-xs text-zinc-400 mt-1">
-              Plataforma de Conciliación Contable, Bancaria y Pasarelas
+              Puente algorítmico entre Norma 43, Stripe, Redsys y tu ERP contable (A3, Sage 50, Contasol)
             </p>
           </div>
 
-          {/* Large Tab Switcher */}
           {(activeTab === 'login' || activeTab === 'register') && (
             <div className="grid grid-cols-2 p-1 bg-zinc-900 border border-zinc-800 rounded-lg mb-6 text-xs font-medium">
               <button
                 type="button"
                 onClick={() => handleTabChange('login')}
                 className={`py-2 rounded-md transition-colors ${
-                  activeTab === 'login'
-                    ? 'bg-zinc-800 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                  activeTab === 'login' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 Iniciar Sesión
@@ -3181,17 +3094,14 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
                 type="button"
                 onClick={() => handleTabChange('register')}
                 className={`py-2 rounded-md transition-colors ${
-                  activeTab === 'register'
-                    ? 'bg-zinc-800 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200'
+                  activeTab === 'register' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                Registrar Despacho / Empresa
+                Crear Cuenta / Elegir Plan
               </button>
             </div>
           )}
 
-          {/* Messages */}
           {errorMessage && (
             <div className="mb-5 p-3 rounded-md bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs flex items-center gap-2">
               <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
@@ -3206,12 +3116,12 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
             </div>
           )}
 
-          {/* VISTA 1: INICIAR SESIÓN */}
+          {/* VISTA LOGIN */}
           {activeTab === 'login' && (
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
-                  Correo Electrónico
+                  Correo Electrónico Corporativo
                 </label>
                 <div className="relative">
                   <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -3220,8 +3130,8 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="auditor@tudespacho.es"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                    placeholder="nombre@despacho.es"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
@@ -3236,7 +3146,7 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
                     onClick={() => handleTabChange('forgot')}
                     className="text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
                   >
-                    ¿Olvidaste tu contraseña?
+                    ¿Has olvidado tu contraseña?
                   </button>
                 </div>
                 <div className="relative">
@@ -3247,7 +3157,7 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="••••••••••••"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
@@ -3255,47 +3165,20 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+                className="w-full mt-2 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
               >
-                {loading ? 'Accediendo...' : 'Iniciar Sesión en el Despacho'}
+                <span>{loading ? 'Verificando acceso...' : 'Acceder al Panel Contable'}</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
-
-              {/* Botones de Acceso Rápido */}
-              <div className="pt-4 border-t border-zinc-800/80 space-y-2">
-                <div className="text-[10px] text-zinc-500 uppercase tracking-wider text-center font-medium">
-                  Accesos Directos de Evaluación
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleQuickLoginAdmin}
-                  disabled={loading}
-                  className="w-full py-1.5 px-3 rounded-md bg-zinc-900 hover:bg-zinc-800/80 border border-blue-900/50 text-[11px] font-medium text-blue-300 transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <ShieldCheck className="h-3.5 w-3.5 text-blue-400" />
-                  <span>Acceso Rápido: Cuenta ADMIN (Ver Todas las Compañías)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleQuickLoginDemo}
-                  disabled={loading}
-                  className="w-full py-1.5 px-3 rounded-md bg-zinc-900 hover:bg-zinc-800/80 border border-zinc-800 text-[11px] font-medium text-zinc-300 transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Acceso Rápido: Despacho Auditor Demo (KÖNIG & ASOCIADOS)</span>
-                </button>
-              </div>
             </form>
           )}
 
-          {/* VISTA 2: REGISTRAR DESPACHO / EMPRESA */}
+          {/* VISTA REGISTRO CON SELECCIÓN DE PLAN */}
           {activeTab === 'register' && (
             <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
               <div>
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                  Nombre Completo del Auditor / Administrador
+                  Nombre y Apellidos
                 </label>
                 <div className="relative">
                   <User className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -3304,51 +3187,16 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
                     required
                     value={regFullName}
                     onChange={(e) => setRegFullName(e.target.value)}
-                    placeholder="Carlos Méndez"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                    placeholder="Laura Gómez"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                  Correo Electrónico Profesional
-                </label>
-                <div className="relative">
-                  <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    required
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                    placeholder="carlos@despachomendez.es"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                  Contraseña (mínimo 6 caracteres)
-                </label>
-                <div className="relative">
-                  <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                    Nombre del Despacho / Empresa
+                    Despacho o Razón Social
                   </label>
                   <div className="relative">
                     <Building2 className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -3357,15 +3205,15 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
                       required
                       value={regCompanyName}
                       onChange={(e) => setRegCompanyName(e.target.value)}
-                      placeholder="Méndez & Asociados SLP"
-                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                      placeholder="Asesoría Fiscal Gómez SLP"
+                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                     />
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                    CIF / NIF Fiscal
+                    NIF / CIF Fiscal
                   </label>
                   <input
                     type="text"
@@ -3373,134 +3221,170 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
                     value={regFiscalId}
                     onChange={(e) => setRegFiscalId(e.target.value.toUpperCase())}
                     placeholder="B-12345678"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
+                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                    Correo Profesional
+                  </label>
+                  <div className="relative">
+                    <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="email"
+                      required
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      placeholder="laura@asesoriagomez.es"
+                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
+                    Contraseña (mín. 6 caracteres)
+                  </label>
+                  <div className="relative">
+                    <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Selector de Plan Inicial */}
+              <div className="pt-1">
+                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-2">
+                  Selecciona tu Plan Inicial (Puedes cambiarlo en cualquier momento)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {INITIAL_PLANS.map((p) => {
+                    const active = regPlan === p.code;
+                    return (
+                      <div
+                        key={p.code}
+                        onClick={() => setRegPlan(p.code)}
+                        className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
+                          active
+                            ? 'bg-emerald-950/30 border-emerald-500 text-zinc-100'
+                            : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-xs font-semibold">
+                          <span className={active ? 'text-emerald-300' : 'text-zinc-200'}>{p.name}</span>
+                          <span className="font-mono text-white">{p.price}</span>
+                        </div>
+                        <div className="text-[10px] text-zinc-400 mt-0.5">{p.desc}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-3 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+                className="w-full mt-3 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
               >
-                {loading ? 'Creando Despacho...' : 'Crear Cuenta y Acceder a FINDAFINITY'}
+                <span>{loading ? 'Creando espacio contable...' : 'Crear Cuenta y Empezar'}</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
-
-              <div className="text-[11px] text-zinc-500 text-center mt-2">
-                Al registrarte se crea automáticamente el espacio de tu despacho con rol de Administrador.
-              </div>
             </form>
           )}
 
-          {/* VISTA 3: RECUPERAR CONTRASEÑA */}
+          {/* VISTA RECUPERAR CONTRASEÑA */}
           {activeTab === 'forgot' && (
             <form onSubmit={handleForgotSubmit} className="space-y-4">
-              <div className="text-xs text-zinc-400 mb-2">
-                Introduce el correo electrónico asociado a tu cuenta para recibir las instrucciones de restablecimiento.
-              </div>
-
+              <p className="text-xs text-zinc-400">
+                Introduce tu correo electrónico corporativo para restablecer tu contraseña.
+              </p>
               <div>
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
                   Correo Electrónico
                 </label>
-                <div className="relative">
-                  <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    required
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="auditor@tudespacho.es"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
+                <input
+                  type="email"
+                  required
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="nombre@despacho.es"
+                  className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100"
+                />
               </div>
-
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => handleTabChange('login')}
-                  className="w-1/3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+                  className="w-1/3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300"
                 >
                   Volver
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-2/3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+                  className="w-2/3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
                 >
-                  {loading ? 'Enviando...' : 'Solicitar Token'}
+                  {loading ? 'Enviando...' : 'Solicitar Restablecimiento'}
                 </button>
               </div>
             </form>
           )}
 
-          {/* VISTA 4: RESTABLECER CONTRASEÑA */}
+          {/* VISTA RESET PASSWORD */}
           {activeTab === 'reset' && (
             <form onSubmit={handleResetSubmit} className="space-y-4">
               <div>
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
-                  Token de Restablecimiento
+                  Código de Verificación
                 </label>
-                <div className="relative">
-                  <KeyRound className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    required
-                    value={resetToken}
-                    onChange={(e) => setResetToken(e.target.value)}
-                    placeholder="Pega el token recibido"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
+                <input
+                  type="text"
+                  required
+                  value={resetToken}
+                  onChange={(e) => setResetToken(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono"
+                />
               </div>
-
               <div>
                 <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
                   Nueva Contraseña
                 </label>
-                <div className="relative">
-                  <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={resetNewPassword}
-                    onChange={(e) => setResetNewPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-                  />
-                </div>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100"
+                />
               </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('login')}
-                  className="w-1/3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
-                >
-                  Volver
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-2/3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors disabled:opacity-50"
-                >
-                  {loading ? 'Restableciendo...' : 'Guardar Nueva Contraseña'}
-                </button>
-              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
+              >
+                {loading ? 'Actualizando...' : 'Guardar Nueva Contraseña'}
+              </button>
             </form>
           )}
-
         </div>
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-zinc-800/80 bg-[#0c0c0e]/80 py-3.5 text-center text-xs text-zinc-500">
         <div className="max-w-[1200px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px]">
-          <span>FINDAFINITY &bull; Zero-Liability Audit Engine &bull; Cuadre PGC a 0.00 €</span>
-          <span>Soporte Oficial: Wolters Kluwer A3 &bull; Sage 50 &bull; DELSOL Contasol</span>
+          <span>FINDAFINITY &bull; Protocolo Zero-Liability &bull; Cuadre PGC a 0,00 €</span>
+          <span>Compatible con Wolters Kluwer A3 &bull; Sage 50 &bull; DELSOL Contasol</span>
         </div>
       </footer>
     </div>
@@ -4208,16 +4092,21 @@ export function ExportPanel({
 FICHERO: frontend\src\components\HeaderNav.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/components/HeaderNav.jsx
+ * Barra Superior Ejecutiva con Medidor de Cuota, Selector de Planes y Certificado SHA-256
+ */
 import React from 'react';
-import { 
-  Building2, 
-  Database, 
+import {
+  Building2,
+  Database,
   Layers,
   ShieldCheck,
   Plus,
   Trash2,
   LogOut,
-  User as UserIcon
+  CreditCard,
+  Lock,
 } from 'lucide-react';
 
 export function HeaderNav({
@@ -4232,28 +4121,30 @@ export function HeaderNav({
   onToggleView,
   onOpenAddClientModal,
   onOpenDeleteClientModal,
+  subscriptionInfo,
+  onOpenPaywall,
+  onOpenAuditModal,
 }) {
   const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
   const isAdminView = currentView === 'admin';
 
+  const planCode = subscriptionInfo?.plan || currentUser?.plan || 'FREE';
+  const usedTx = subscriptionInfo?.current_month_transactions ?? 0;
+  const maxTx = subscriptionInfo?.max_monthly_transactions ?? 25;
+
   return (
     <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between py-3 gap-4">
-          
-          {/* Lado Izquierdo: Marca, Conmutador y Contexto de Trabajo */}
-          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-            {/* Logo & App Name */}
+        <div className="flex flex-wrap items-center justify-between py-3 gap-3">
+          {/* Lado Izquierdo: Marca y Selectores Operativos */}
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2.5 mr-1">
               <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
                 <Layers className="h-4 w-4" />
               </div>
-              <span className="font-bold text-base tracking-tight text-white font-sans">
-                FINDAFINITY
-              </span>
+              <span className="font-bold text-base tracking-tight text-white">FINDAFINITY</span>
             </div>
 
-            {/* Selector de Vistas EXCLUSIVO para SUPERADMIN */}
             {isSuperAdmin && onToggleView && (
               <>
                 <div className="hidden sm:block h-5 w-px bg-zinc-800" />
@@ -4262,9 +4153,7 @@ export function HeaderNav({
                     type="button"
                     onClick={() => onToggleView('radar')}
                     className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                      !isAdminView
-                        ? 'bg-zinc-800 text-white shadow-sm'
-                        : 'text-zinc-400 hover:text-zinc-200'
+                      !isAdminView ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
                     }`}
                   >
                     Radar Conciliación
@@ -4273,9 +4162,7 @@ export function HeaderNav({
                     type="button"
                     onClick={() => onToggleView('admin')}
                     className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                      isAdminView
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-zinc-400 hover:text-blue-300'
+                      isAdminView ? 'bg-blue-600 text-white shadow-sm' : 'text-zinc-400 hover:text-blue-300'
                     }`}
                   >
                     <ShieldCheck className="h-3.5 w-3.5" />
@@ -4285,15 +4172,13 @@ export function HeaderNav({
               </>
             )}
 
-            {/* CONTEXTO DE CONCILIACIÓN: Se oculta completamente cuando estamos en el Panel de Administrador Global */}
             {!isAdminView && (
               <>
                 <div className="hidden sm:block h-5 w-px bg-zinc-800" />
 
-                {/* Selector de Empresa Cliente con botones de Añadir (+) y Quitar (-) */}
+                {/* Selector de Empresa Cliente */}
                 <div className="flex items-center gap-1.5 bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5">
                   <Building2 className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
-                  
                   {companies && companies.length > 0 ? (
                     <div className="flex items-center gap-2">
                       <div className="flex flex-col">
@@ -4303,10 +4188,10 @@ export function HeaderNav({
                         <select
                           value={selectedCompany ? selectedCompany.id : ''}
                           onChange={(e) => {
-                            const comp = companies.find(c => c.id === e.target.value);
+                            const comp = companies.find((c) => c.id === e.target.value);
                             if (comp && onSelectCompany) onSelectCompany(comp);
                           }}
-                          className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2 max-w-[210px] truncate"
+                          className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2 max-w-[200px] truncate"
                         >
                           {companies.map((c) => (
                             <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
@@ -4316,7 +4201,6 @@ export function HeaderNav({
                         </select>
                       </div>
 
-                      {/* Botón Añadir Empresa (+) */}
                       {onOpenAddClientModal && (
                         <button
                           type="button"
@@ -4328,7 +4212,6 @@ export function HeaderNav({
                         </button>
                       )}
 
-                      {/* Botón Quitar Empresa (-) */}
                       {selectedCompany && onOpenDeleteClientModal && (
                         <button
                           type="button"
@@ -4342,17 +4225,15 @@ export function HeaderNav({
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-zinc-400 italic">
-                        Sin empresas cliente
-                      </span>
+                      <span className="text-xs text-zinc-400">Sin sociedades creadas</span>
                       {onOpenAddClientModal && (
                         <button
                           type="button"
                           onClick={onOpenAddClientModal}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
                         >
                           <Plus className="h-3 w-3" />
-                          <span>Añadir Empresa</span>
+                          <span>Añadir 1ª Empresa</span>
                         </button>
                       )}
                     </div>
@@ -4364,7 +4245,7 @@ export function HeaderNav({
                   <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                   <div className="flex flex-col">
                     <span className="text-[9px] uppercase tracking-wider text-zinc-400 leading-none mb-0.5">
-                      Exportar a
+                      ERP Contable
                     </span>
                     <select
                       value={selectedErp}
@@ -4387,20 +4268,49 @@ export function HeaderNav({
             )}
           </div>
 
-          {/* Lado Derecho: Usuario y Salida */}
-          <div className="flex items-center gap-3">
+          {/* Lado Derecho: Medidor de Facturas, Botón de Planes, Certificado SHA-256 y Usuario */}
+          <div className="flex items-center gap-2.5">
+            {!isAdminView && onOpenPaywall && (
+              <button
+                type="button"
+                onClick={onOpenPaywall}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${
+                  planCode === 'FREE'
+                    ? 'bg-amber-950/30 hover:bg-amber-950/50 border-amber-700/60 text-amber-300'
+                    : 'bg-emerald-950/30 hover:bg-emerald-950/50 border-emerald-800/60 text-emerald-300'
+                }`}
+                title="Gestionar Plan y Cuota Mensual de Facturas"
+              >
+                <CreditCard className="h-3.5 w-3.5" />
+                <span>
+                  {planCode === 'FREE' ? 'Plan Gratuito' : planCode}
+                </span>
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/40 border border-white/10">
+                  {usedTx} / {maxTx} tx
+                </span>
+              </button>
+            )}
+
+            {!isAdminView && onOpenAuditModal && (
+              <button
+                type="button"
+                onClick={onOpenAuditModal}
+                className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
+                title="Ver Certificado Legal de Auditoría SHA-256"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Auditoría SHA-256</span>
+              </button>
+            )}
+
             {currentUser && (
-              <div className="flex items-center gap-2.5 pl-3 border-l border-zinc-800">
+              <div className="flex items-center gap-2.5 pl-2.5 border-l border-zinc-800">
                 <div className="hidden sm:flex flex-col text-right">
                   <span className="text-xs font-medium text-zinc-200">
                     {currentUser.full_name || currentUser.email}
                   </span>
-                  <span className={`text-[10px] font-sans font-medium ${
-                    isSuperAdmin ? 'text-blue-400 font-semibold' : 'text-zinc-400'
-                  }`}>
-                    {currentUser.role === 'SUPERADMIN' ? 'Administrador Global' :
-                     currentUser.role === 'ADMIN' ? 'Administrador' :
-                     currentUser.role === 'AUDITOR' ? 'Auditor Contable' : 'Consulta'}
+                  <span className="text-[10px] text-zinc-400">
+                    {currentUser.company_name || 'Despacho Profesional'}
                   </span>
                 </div>
 
@@ -4415,7 +4325,6 @@ export function HeaderNav({
               </div>
             )}
           </div>
-
         </div>
       </div>
     </header>
@@ -4427,29 +4336,36 @@ export function HeaderNav({
 FICHERO: frontend\src\components\IngestionZone.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/components/IngestionZone.jsx
+ * Zona de Ingesta Profesional B2B (Extracto Bancario / Pasarela + Cartera de Facturas + Stripe API)
+ */
 import React, { useState, useRef } from 'react';
-import { 
-  UploadCloud, 
-  FileText, 
-  FileSpreadsheet, 
-  Sparkles, 
-  Check, 
-  AlertCircle, 
+import {
+  UploadCloud,
+  FileSpreadsheet,
+  Check,
+  AlertCircle,
   RefreshCw,
   Layers,
-  Zap
+  Zap,
+  FileCheck,
+  X,
 } from 'lucide-react';
 
 export function IngestionZone({
-  onLoadDemoBatch,
   onFileProcessed,
   onOpenStripeSync,
   isProcessing,
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
+  const [invoicesFile, setInvoicesFile] = useState(null);
+  const [ephemeralMode, setEphemeralMode] = useState(false);
   const [ingestionTelemetry, setIngestionTelemetry] = useState(null);
   const [localProcessing, setLocalProcessing] = useState(false);
-  const fileInputRef = useRef(null);
+
+  const bankInputRef = useRef(null);
+  const portfolioInputRef = useRef(null);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -4466,13 +4382,20 @@ export function IngestionZone({
     setIsDragOver(false);
     const files = e.dataTransfer.files;
     if (files.length > 0) {
-      processSelectedFile(files[0]);
+      await processSelectedFile(files[0]);
     }
   };
 
-  const handleFileChange = (e) => {
+  const handleBankFileChange = async (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      processSelectedFile(e.target.files[0]);
+      await processSelectedFile(e.target.files[0]);
+      e.target.value = '';
+    }
+  };
+
+  const handlePortfolioFileChange = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setInvoicesFile(e.target.files[0]);
     }
   };
 
@@ -4481,29 +4404,31 @@ export function IngestionZone({
     setIngestionTelemetry({
       filename: file.name,
       sizeKb: (file.size / 1024).toFixed(1),
-      movements: 'Analizando...',
+      movements: 'Procesando...',
       isValid: true,
       errors: [],
     });
 
     try {
       if (onFileProcessed) {
-        const result = await onFileProcessed(file);
+        const result = await onFileProcessed(file, invoicesFile, ephemeralMode);
         if (result && result.total_movements !== undefined) {
           setIngestionTelemetry({
             filename: file.name,
             sizeKb: (file.size / 1024).toFixed(1),
-            movements: `${result.total_movements} detectados`,
+            movements: `${result.total_movements} apuntes conciliados`,
             isValid: true,
             errors: [],
           });
+        } else {
+          setIngestionTelemetry(null);
         }
       }
     } catch (err) {
       setIngestionTelemetry({
         filename: file.name,
         sizeKb: (file.size / 1024).toFixed(1),
-        movements: 0,
+        movements: '0',
         isValid: false,
         errors: [err.message || 'Error al procesar el archivo contable.'],
       });
@@ -4517,99 +4442,131 @@ export function IngestionZone({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-zinc-800/60">
         <div>
           <h2 className="text-sm font-semibold text-zinc-100">
-            Importar Extractos y Ventas
+            Ingesta de Extractos Bancarios, Pasarelas y Cartera de Facturas
           </h2>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Sube extractos bancarios, reportes de cobros o conecta directamente pasarelas en vivo.
+            Sube tu fichero Norma 43 o liquidación de Stripe/Redsys para generar los pre-asientos PGC cuadrados a 0,00 €.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          {/* Selector de Modo Efímero en RAM */}
+          <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={ephemeralMode}
+              onChange={(e) => setEphemeralMode(e.target.checked)}
+              className="rounded border-zinc-700 bg-zinc-950 text-emerald-500 focus:ring-0"
+            />
+            <span>Modo Efímero RAM (Zero-Storage)</span>
+          </label>
+
+          {/* Adjuntar Cartera de Facturas Emitidas Opcional */}
+          <input
+            ref={portfolioInputRef}
+            type="file"
+            onChange={handlePortfolioFileChange}
+            accept=".xlsx,.csv,.json"
+            className="hidden"
+          />
+          {invoicesFile ? (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-950/40 border border-emerald-800/60 text-xs text-emerald-300">
+              <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="truncate max-w-[140px]">{invoicesFile.name}</span>
+              <button
+                type="button"
+                onClick={() => setInvoicesFile(null)}
+                className="text-zinc-400 hover:text-white"
+                title="Quitar cartera de facturas"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => portfolioInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-xs font-medium text-zinc-200 transition-colors"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
+              <span>1. Adjuntar Cartera Facturas (Opcional)</span>
+            </button>
+          )}
+
+          {/* Conectar Stripe API en 1 Clic */}
           {onOpenStripeSync && (
             <button
               type="button"
               onClick={onOpenStripeSync}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-semibold text-indigo-300 transition-colors shadow-sm"
+              disabled={isProcessing || localProcessing}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition-colors shadow-sm disabled:opacity-50"
             >
-              <Zap className="h-3.5 w-3.5 text-indigo-400" />
+              <Zap className="h-3.5 w-3.5" />
               <span>Conectar Stripe API</span>
             </button>
           )}
-
-          {/* Botón de datos de prueba */}
-          <button
-            type="button"
-            onClick={onLoadDemoBatch}
-            disabled={isProcessing || localProcessing}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700/80 active:bg-zinc-800 border border-zinc-700/60 text-xs font-medium text-zinc-100 transition-colors shadow-sm disabled:opacity-50"
-          >
-            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-            Cargar Lote de Prueba
-          </button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Dropzone */}
+        {/* Dropzone Principal */}
         <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`lg:col-span-2 border border-dashed rounded-md p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${
-            isDragOver 
-              ? 'border-zinc-500 bg-zinc-900/80' 
+          onClick={() => bankInputRef.current?.click()}
+          className={`lg:col-span-2 border border-dashed rounded-md p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${
+            isDragOver
+              ? 'border-emerald-500 bg-emerald-950/20'
               : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/30 hover:bg-zinc-900/50'
           }`}
         >
           <input
-            ref={fileInputRef}
+            ref={bankInputRef}
             type="file"
-            onChange={handleFileChange}
-            accept=".n43,.txt,.csv,.xlsx,.json"
+            onChange={handleBankFileChange}
+            accept=".n43,.txt,.csv,.xlsx"
             className="hidden"
           />
 
-          <div className="h-9 w-9 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 mb-2">
-            {localProcessing ? (
-              <RefreshCw className="h-4 w-4 animate-spin text-zinc-300" />
+          <div className="h-10 w-10 rounded-full bg-zinc-800/90 border border-zinc-700/60 flex items-center justify-center text-emerald-400 mb-2.5">
+            {localProcessing || isProcessing ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
             ) : (
-              <UploadCloud className="h-4 w-4 text-zinc-300" />
+              <UploadCloud className="h-4 w-4" />
             )}
           </div>
 
-          <p className="text-xs text-zinc-200 font-medium">
-            Arrastra aquí tus archivos o haz clic para seleccionarlos
+          <p className="text-xs text-zinc-100 font-medium">
+            2. Arrastra aquí el Extracto Bancario (Norma 43) o el CSV de Liquidaciones (Stripe / Redsys)
           </p>
           <p className="text-[11px] text-zinc-500 mt-1">
-            Formatos soportados: Norma 43 (.n43), Stripe / Redsys (.csv), Cartera Facturas (.xlsx, .json)
+            Formatos oficiales soportados: Cuaderno 43 AEB (.n43, .txt), Stripe Balance (.csv), Redsys TPV (.csv)
           </p>
         </div>
 
-        {/* Estado / Resumen de Carga */}
+        {/* Telemetría del Archivo */}
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-md p-3.5 flex flex-col justify-between">
           <div>
             <div className="text-[11px] text-zinc-400 font-medium pb-2 border-b border-zinc-800/60 mb-2.5">
-              ESTADO DEL ARCHIVO
+              TELEMETRÍA DE INGESTA
             </div>
 
             {ingestionTelemetry ? (
               <div className="space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Archivo:</span>
-                  <span className="text-zinc-200 font-mono text-[11px] truncate max-w-[150px]" title={ingestionTelemetry.filename}>
+                  <span className="text-zinc-400">Fichero:</span>
+                  <span className="text-zinc-200 font-mono text-[11px] truncate max-w-[160px]" title={ingestionTelemetry.filename}>
                     {ingestionTelemetry.filename}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-400">Tamaño:</span>
-                  <span className="text-zinc-200 font-mono text-[11px]">
-                    {ingestionTelemetry.sizeKb} KB
-                  </span>
+                  <span className="text-zinc-200 font-mono text-[11px]">{ingestionTelemetry.sizeKb} KB</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Movimientos:</span>
-                  <span className="text-zinc-200 font-mono text-[11px] font-medium text-emerald-400">
+                  <span className="text-zinc-400">Resultado:</span>
+                  <span className="text-emerald-400 font-mono text-[11px] font-medium">
                     {ingestionTelemetry.movements}
                   </span>
                 </div>
@@ -4618,33 +4575,31 @@ export function IngestionZone({
                   {ingestionTelemetry.isValid ? (
                     <div className="flex items-center gap-1.5 text-[11px] text-emerald-400">
                       <Check className="h-3.5 w-3.5" />
-                      <span>Archivo verificado correctamente</span>
+                      <span>Cuadre contable verificado</span>
                     </div>
                   ) : (
                     <div className="space-y-1">
                       <div className="flex items-center gap-1 text-[11px] text-rose-400">
                         <AlertCircle className="h-3.5 w-3.5" />
-                        <span>Incidencia en la ingesta</span>
+                        <span>Incidencia en el archivo</span>
                       </div>
                       {ingestionTelemetry.errors.map((err, i) => (
-                        <p key={i} className="text-[10px] text-zinc-500 leading-tight">
-                          {err}
-                        </p>
+                        <p key={i} className="text-[10px] text-zinc-500 leading-tight">{err}</p>
                       ))}
                     </div>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="py-4 text-center text-zinc-500 text-xs">
-                <Layers className="h-6 w-6 mx-auto mb-1 opacity-40" />
-                Ningún archivo seleccionado aún.
+              <div className="py-5 text-center text-zinc-500 text-xs">
+                <Layers className="h-6 w-6 mx-auto mb-1.5 opacity-40" />
+                Esperando fichero de extracto o liquidación para iniciar el motor.
               </div>
             )}
           </div>
 
           <div className="text-[10px] text-zinc-500 pt-2 border-t border-zinc-800/60">
-            Los datos se procesan con validación algorítmica y sellado legal SHA-256.
+            Validación automática de Registro 33 AEB y sellado SHA-256.
           </div>
         </div>
       </div>
@@ -5273,20 +5228,20 @@ export function ScoreRadarModal({ transaction, onClose, onApprove }) {
 FICHERO: frontend\src\components\StagingRadar.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/components/StagingRadar.jsx
+ * Radar de Conciliación de Alta Densidad (100% Producción, Cero Datos Demo)
+ */
 import React, { useState, useMemo } from 'react';
-import { 
-  Search, 
-  Filter, 
-  CheckCircle2, 
-  AlertCircle, 
-  AlertOctagon, 
-  Layers, 
-  ChevronDown,
+import {
+  Search,
+  CheckCircle2,
+  AlertCircle,
+  AlertOctagon,
+  Layers,
   CheckCheck,
-  Sparkles,
   Trash2,
   Plus,
-  Building2
 } from 'lucide-react';
 import { TransactionRow } from './TransactionRow';
 import { PeriodFilter } from './PeriodFilter';
@@ -5305,24 +5260,22 @@ export function StagingRadar({
   onSelectStartMonth,
   endMonth,
   onSelectEndMonth,
-  onLoadDemoBatch,
   onDeleteTransaction,
   onClearAllTransactions,
-  hasCompanies = true,
+  hasCompanies = false,
   onOpenAddClientModal,
 }) {
-  const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'GREEN' | 'YELLOW' | 'RED'
+  const [activeTab, setActiveTab] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSource, setSelectedSource] = useState('ALL');
   const [expandedId, setExpandedId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  // Contadores en vivo para las pestañas
   const counts = useMemo(() => {
     let green = 0;
     let yellow = 0;
     let red = 0;
-    transactions.forEach(tx => {
+    transactions.forEach((tx) => {
       if (tx.status === 'GREEN') green++;
       else if (tx.status === 'YELLOW') yellow++;
       else red++;
@@ -5330,38 +5283,26 @@ export function StagingRadar({
     return { all: transactions.length, green, yellow, red };
   }, [transactions]);
 
-  // Filtrado reactivo de transacciones
   const filteredTransactions = useMemo(() => {
-    return transactions.filter(tx => {
-      // Filtro por pestaña de estado
-      if (activeTab !== 'ALL' && tx.status !== activeTab) {
+    return transactions.filter((tx) => {
+      if (activeTab !== 'ALL' && tx.status !== activeTab) return false;
+      if (selectedSource !== 'ALL' && !(tx.source || '').toLowerCase().includes(selectedSource.toLowerCase())) {
         return false;
       }
-      // Filtro por pasarela o banco
-      if (selectedSource !== 'ALL' && !tx.source.toLowerCase().includes(selectedSource.toLowerCase())) {
-        return false;
-      }
-      // Filtro por búsqueda de texto
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
-        const matchConcept = tx.concept.toLowerCase().includes(query);
-        const matchId = tx.id.toLowerCase().includes(query);
+        const matchConcept = (tx.concept || '').toLowerCase().includes(query);
+        const matchId = (tx.id || '').toLowerCase().includes(query);
         const matchSolver = (tx.solverUsed || '').toLowerCase().includes(query);
-        const matchAmount = tx.netAmountEur.toString().includes(query);
-        const matchInvoices = (tx.matchedInvoices || []).some(inv => 
-          inv.invoiceNumber.toLowerCase().includes(query) ||
-          (inv.customerFiscalId || '').toLowerCase().includes(query)
-        );
-        if (!matchConcept && !matchId && !matchSolver && !matchAmount && !matchInvoices) {
-          return false;
-        }
+        const matchAmount = String(tx.netAmountEur || '').includes(query);
+        if (!matchConcept && !matchId && !matchSolver && !matchAmount) return false;
       }
       return true;
     });
   }, [transactions, activeTab, selectedSource, searchQuery]);
 
   const toggleExpand = (id) => {
-    setExpandedId(prev => (prev === id ? null : id));
+    setExpandedId((prev) => (prev === id ? null : id));
   };
 
   const handleClearAll = () => {
@@ -5371,14 +5312,11 @@ export function StagingRadar({
       return;
     }
     setConfirmClear(false);
-    if (onClearAllTransactions) {
-      onClearAllTransactions();
-    }
+    if (onClearAllTransactions) onClearAllTransactions();
   };
 
   return (
     <div className="bg-[#101013] border border-zinc-800 rounded-lg overflow-hidden shadow-xl">
-      {/* Selector de Periodo Contable (Año, Trimestres o Rango de Meses) */}
       <PeriodFilter
         selectedYear={selectedYear}
         onSelectYear={onSelectYear}
@@ -5390,10 +5328,8 @@ export function StagingRadar({
         onSelectEndMonth={onSelectEndMonth}
       />
 
-      {/* Header del Radar: Pestañas de Semáforo y Filtros */}
       <div className="p-4 border-b border-zinc-800/80 bg-[#0c0c0e] flex flex-col gap-3">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Pestañas de Auditoría con Contadores */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
             <button
               type="button"
@@ -5436,7 +5372,7 @@ export function StagingRadar({
               }`}
             >
               <AlertCircle className="h-3 w-3 text-amber-400" />
-              <span>Amarillas (Revisión)</span>
+              <span>Amarillas (Revisión 1-Clic)</span>
               <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
                 {counts.yellow}
               </span>
@@ -5452,20 +5388,19 @@ export function StagingRadar({
               }`}
             >
               <AlertOctagon className="h-3 w-3 text-rose-400" />
-              <span>Rojas (Excepciones)</span>
+              <span>Rojas (Cuenta 555)</span>
               <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-800/50 text-rose-300">
                 {counts.red}
               </span>
             </button>
           </div>
 
-          {/* Acciones en lote y vaciado de partidas */}
           <div className="flex items-center gap-2 self-start md:self-auto">
             {counts.yellow > 0 && (
               <button
                 type="button"
                 onClick={onBulkApproveYellows}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors"
               >
                 <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
                 <span>Aprobar Amarillas ({counts.yellow})</span>
@@ -5476,98 +5411,80 @@ export function StagingRadar({
               <button
                 type="button"
                 onClick={handleClearAll}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap border ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors border ${
                   confirmClear
-                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm animate-pulse'
+                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm'
                     : 'bg-zinc-900/90 hover:bg-rose-950/50 border-zinc-800 hover:border-rose-800/60 text-zinc-400 hover:text-rose-300'
                 }`}
-                title="Eliminar todas las partidas del radar"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                <span>{confirmClear ? '¿Confirmar vaciar partidas?' : 'Vaciar Partidas'}</span>
+                <span>{confirmClear ? '¿Confirmar vaciado?' : 'Vaciar Radar'}</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Filter & Search Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-          {/* Search Input */}
           <div className="relative flex-1 max-w-md">
             <Search className="h-3.5 w-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por concepto, factura, CIF, importe..."
-              className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
+              placeholder="Filtrar por concepto bancario, factura, NIF/CIF o importe..."
+              className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
             />
           </div>
 
-          {/* Source Filter Dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-zinc-400 uppercase tracking-wider hidden sm:inline">
-              Origen:
-            </span>
+            <span className="text-[11px] text-zinc-400 uppercase tracking-wider hidden sm:inline">Origen:</span>
             <select
               value={selectedSource}
               onChange={(e) => setSelectedSource(e.target.value)}
-              className="bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
+              className="bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
             >
               <option value="ALL">Todas las Fuentes</option>
               <option value="Stripe">Stripe</option>
               <option value="Redsys">Redsys TPV</option>
-              <option value="Santander">Banco Santander (N43)</option>
-              <option value="BBVA">BBVA (N43)</option>
+              <option value="Norma 43">Extracto Bancario Norma 43</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* High-Density Transactions Table o Empty State */}
       {transactions.length === 0 ? (
         <div className="py-16 px-6 text-center flex flex-col items-center justify-center bg-[#0c0c0f]">
-          <div className="h-14 w-14 rounded-full bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-400 mb-4 shadow-inner">
-            <Layers className="h-7 w-7 text-zinc-400" />
+          <div className="h-12 w-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 mb-3">
+            <Layers className="h-5 w-5 text-emerald-400" />
           </div>
 
           {!hasCompanies ? (
             <>
-              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
-                No tienes empresas cliente registradas
+              <h3 className="text-sm font-semibold text-zinc-100 mb-1.5">
+                Paso 1: Da de alta la primera sociedad o empresa cliente
               </h3>
-              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
-                Para empezar a conciliar, añade la primera empresa cliente de tu despacho usando el botón superior o el botón directo a continuación.
+              <p className="text-xs text-zinc-400 max-w-md mx-auto mb-5 leading-relaxed">
+                Tu espacio de despacho está recién creado y limpio. Añade una sociedad indicando su CIF y su ERP de destino (A3, Sage 50 o Contasol) para empezar a conciliar.
               </p>
               {onOpenAddClientModal && (
                 <button
                   type="button"
                   onClick={onOpenAddClientModal}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors shadow-sm"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors shadow-sm"
                 >
                   <Plus className="h-4 w-4" />
-                  <span>Añadir Empresa Cliente</span>
+                  <span>Añadir Primera Empresa Cliente</span>
                 </button>
               )}
             </>
           ) : (
             <>
-              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
-                No hay movimientos contables cargados en este periodo
+              <h3 className="text-sm font-semibold text-zinc-100 mb-1.5">
+                Radar listo para conciliar
               </h3>
-              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
-                Sube un extracto bancario o reporte de cobros arriba, o pulsa en <strong className="text-zinc-200">"Cargar Lote de Prueba"</strong> para probar el motor con datos de muestra.
+              <p className="text-xs text-zinc-400 max-w-md mx-auto leading-relaxed">
+                Arrastra un fichero Norma 43 (.n43) o un CSV de liquidaciones de Stripe / Redsys en el panel superior, o conecta directamente la API de Stripe para generar los pre-asientos contables.
               </p>
-              {onLoadDemoBatch && (
-                <button
-                  type="button"
-                  onClick={onLoadDemoBatch}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 text-xs font-semibold text-amber-300 transition-colors shadow-sm"
-                >
-                  <Sparkles className="h-4 w-4 text-amber-400" />
-                  <span>Cargar Lote de Prueba</span>
-                </button>
-              )}
             </>
           )}
         </div>
@@ -5580,11 +5497,11 @@ export function StagingRadar({
                   <th className="py-2.5 px-2 w-8 text-center"></th>
                   <th className="py-2.5 px-2">ID & Origen</th>
                   <th className="py-2.5 px-2">Fechas</th>
-                  <th className="py-2.5 px-2">Concepto Bancario / Tipo de Operación</th>
+                  <th className="py-2.5 px-2">Concepto Bancario / Operación</th>
                   <th className="py-2.5 px-2 text-right">Banco Neto (€)</th>
                   <th className="py-2.5 px-2 text-right">Bruto Fra (€)</th>
                   <th className="py-2.5 px-2 text-right">Comisión (€)</th>
-                  <th className="py-2.5 px-2 text-center">Score</th>
+                  <th className="py-2.5 px-2 text-center">Afinidad</th>
                   <th className="py-2.5 px-2 text-right">Estado / Acción</th>
                 </tr>
               </thead>
@@ -5612,13 +5529,18 @@ export function StagingRadar({
             </table>
           </div>
 
-          {/* Table Footer: Summary count */}
           <div className="p-3 border-t border-zinc-800/60 bg-[#09090b] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-zinc-400 gap-2">
             <div>
-              Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
+              Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de{' '}
+              <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
             </div>
             <div className="flex items-center gap-4 text-xs font-mono">
-              <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + (t.netAmountEur || 0), 0))}</strong></span>
+              <span>
+                Neto Conciliado:{' '}
+                <strong className="text-zinc-100">
+                  {formatEuro(filteredTransactions.reduce((acc, t) => acc + (t.netAmountEur || 0), 0))}
+                </strong>
+              </span>
             </div>
           </div>
         </>
@@ -6590,8 +6512,7 @@ FICHERO: frontend\src\services\api.js
 
 /**
  * FICHERO: frontend/src/services/api.js
- * Cliente de Conectividad con la API REST de Reconciliación Contable (FastAPI v1)
- * Preparado para Producción Cloud (Cloudflare Pages / Vercel + Render / Railway)
+ * Cliente API de Producción para FINDAFINITY (Sin datos fantasma ni credenciales expuestas)
  */
 
 const getBaseUrl = () => {
@@ -6605,7 +6526,7 @@ const getBaseUrl = () => {
     }
     return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
   }
-  return 'http://127.0.0.1:8000';
+  return '';
 };
 
 export const BASE_URL = getBaseUrl();
@@ -6688,7 +6609,15 @@ export async function loginApi(email, password) {
   return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
 
-export async function registerApi({ email, password, fullName, companyName, fiscalId, role = 'ADMIN' }) {
+export async function registerApi({
+  email,
+  password,
+  fullName,
+  companyName,
+  fiscalId,
+  role = 'ADMIN',
+  plan = 'FREE',
+}) {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -6699,13 +6628,14 @@ export async function registerApi({ email, password, fullName, companyName, fisc
       company_name: companyName,
       fiscal_id: fiscalId,
       role,
+      plan,
     }),
   });
 
   if (ok) {
     return await loginApi(email, password);
   }
-  return { success: false, error: data?.detail || 'Error en el registro' };
+  return { success: false, error: data?.detail || 'Error al registrar la cuenta' };
 }
 
 export async function forgotPasswordApi(email) {
@@ -6819,7 +6749,7 @@ export async function deleteCompanyApi(tenantId) {
 export async function checkBackendHealth() {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(`${BASE_URL}/health`, {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
@@ -6831,7 +6761,7 @@ export async function checkBackendHealth() {
     }
     return { online: false, reason: `HTTP ${res.status}` };
   } catch (err) {
-    return { online: false, reason: err.message || 'Modo Autónomo' };
+    return { online: false, reason: err.message || 'Sin conexión' };
   }
 }
 
@@ -6839,13 +6769,12 @@ export async function fetchTenants() {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/tenants`, {
     headers: getAuthHeaders(),
   });
-  if (ok && Array.isArray(data)) return data;
-  return [];
+  return ok && Array.isArray(data) ? data : [];
 }
 
 export async function fetchClients(tenantId) {
   if (!tenantId) return [];
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients?tenant_id=${tenantId}`, {
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients?tenant_id=${encodeURIComponent(tenantId)}`, {
     headers: getAuthHeaders(),
   });
   if (ok && Array.isArray(data)) {
@@ -6871,7 +6800,7 @@ export async function createClientApi({
   bankAccountCode = '572000001',
   feeAccountCode = '626000001',
 }) {
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients`, {
+  const { ok, status, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({
@@ -6899,7 +6828,11 @@ export async function createClientApi({
       },
     };
   }
-  return { success: false, error: data?.detail || 'Error al crear empresa cliente' };
+  return {
+    success: false,
+    paywallTriggered: status === 402,
+    error: typeof data?.detail === 'object' ? data.detail.message : (data?.detail || 'Error al crear empresa cliente'),
+  };
 }
 
 export async function deleteClientApi(clientId) {
@@ -6930,7 +6863,8 @@ export async function deleteTransactionApi(batchId, transactionId) {
 }
 
 export async function fetchBatches(clientId, year, startMonth, endMonth) {
-  let url = `${BASE_URL}/api/v1/batches?client_id=${clientId}`;
+  if (!clientId) return [];
+  let url = `${BASE_URL}/api/v1/batches?client_id=${encodeURIComponent(clientId)}`;
   if (year) url += `&year=${year}`;
   if (startMonth) url += `&start_month=${startMonth}`;
   if (endMonth) url += `&end_month=${endMonth}`;
@@ -6940,6 +6874,7 @@ export async function fetchBatches(clientId, year, startMonth, endMonth) {
 }
 
 export async function fetchBatchDetails(batchId) {
+  if (!batchId) return null;
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
     headers: getAuthHeaders(),
   });
@@ -7042,7 +6977,7 @@ export async function approveTransactionApi(batchId, transactionId, note = 'Apro
     headers: getAuthHeaders(),
     body: JSON.stringify({ approved_by: actor, note }),
   });
-  return ok ? data : { status: 'fallback', is_approved: true };
+  return ok ? data : { status: 'error' };
 }
 
 export async function bulkApproveYellowsApi(batchId) {
@@ -7052,10 +6987,11 @@ export async function bulkApproveYellowsApi(batchId) {
     headers: getAuthHeaders(),
     body: JSON.stringify({ approved_by: actor, note: 'Aprobación masiva certificada' }),
   });
-  return ok ? data : { status: 'fallback' };
+  return ok ? data : { status: 'error' };
 }
 
 export async function fetchAuditTrailApi(batchId) {
+  if (!batchId) return null;
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/audit-trail`, {
     headers: getAuthHeaders(),
   });
@@ -7344,32 +7280,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "04f1439e-d63f-4e0d-88a8-3b80d40fef9f",
+  "tenant_id": "fc86d0cb-4ed4-4dd8-802f-af1e589d47be",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-14",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "a37e6763d45c949442db5364d31e8bbdce6246a092e7d60f2c2bc74aa67f1786",
+  "head_hash_sha256": "a8357650c58d24ea22f55688905f875b6366faf9781d4d81dfe0ba25e62a620f",
   "audit_events": [
     {
-      "event_id": "93d935eb-d8f9-48d7-936e-496748550eb6",
+      "event_id": "3d5b0875-c3f8-4f56-80b7-38a286ed60a5",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T17:46:07.566912",
-      "sha256_hash": "cc9faa2655aacd87121d1e10f01e87d247ae6c5a34d0cea4c9cf8e00ba9bd2ab",
+      "timestamp": "2026-10-14T18:18:01.913947",
+      "sha256_hash": "c0fe2d3fe3b0c150a245904cb3270a188ef593ddfbcbc03d8a1ae8b099c7870c",
       "details": {
-        "batch_id": "0cd829ca-2abb-45a4-a39b-be942bcc878e",
+        "batch_id": "f1be1d73-1b30-4645-8af4-2a61a2ed8d2c",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "8b4e19c7-ab37-449a-b65d-45e7af101879",
+      "event_id": "b26d0471-449f-4243-97c7-3c606799dedc",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T17:46:07.580431",
-      "sha256_hash": "49fc091f4cd4fdf79c6f01793f02b062cd5caaa8292b109a09957f5b6081cc87",
+      "timestamp": "2026-10-14T18:18:01.927484",
+      "sha256_hash": "66c0bd90e7e9bf41d93d4ee65d92374c8f1468096f5f6fca069638658702e5c5",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7377,23 +7313,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "624699a5-789a-4075-ae28-f79dff8e9a9a",
+      "event_id": "0f559749-827c-40b3-b51a-c4dcbcb91455",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T17:46:07.587055",
-      "sha256_hash": "34b47b43a6b6e2a645f10abf2c337e5c7f14f73202bd7bfd07454146cb1c93cd",
+      "timestamp": "2026-10-14T18:18:01.933353",
+      "sha256_hash": "63eebba315101747a6816dd632f3d4fc8b9232867385784a966ca58050b5dc90",
       "details": {
-        "batch_id": "9252bc1e-3b37-49ca-b89c-f96dd16d35fa",
+        "batch_id": "9c1dee2c-15d3-4d1e-8c78-61186cda833d",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "45978735-02f8-4669-b2dc-f1853db37877",
+      "event_id": "56da81c3-89c6-403b-9064-247446523230",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T17:46:07.593218",
-      "sha256_hash": "50952bf7bf83e9a1f3be6186f5130a0ae9aca47b5d643dabec4e24d00ab22faa",
+      "timestamp": "2026-10-14T18:18:01.940594",
+      "sha256_hash": "c73e5e8a8954c9a27ad3fd81d035de6a06c65222f465b17ab0f2823cd369161a",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7401,23 +7337,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "bf278fb2-7c3d-4322-a7b8-4f6447b6732d",
+      "event_id": "db01dcbb-662c-4b3d-9965-7586cc86268c",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T17:46:07.598221",
-      "sha256_hash": "d3f1b7595b7ff6618fae61dccdf6ecf38cdb0eb62c8229cfbf774ddaad535dc1",
+      "timestamp": "2026-10-14T18:18:01.945572",
+      "sha256_hash": "ae6c7b64d1b9d29b3ea2e85143debeb59d711740d613c99c0c6b1c91f3ae72b8",
       "details": {
-        "batch_id": "cfd67907-03e6-473b-9b4c-f592e9f2bbee",
+        "batch_id": "03182809-2361-4003-8b2c-d483c4dcd097",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "ad1d766d-7ee8-4939-8720-1e2638b6f0c3",
+      "event_id": "6937ba19-766b-4742-a3f6-3d0c562db50b",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T17:46:07.615491",
-      "sha256_hash": "a37e6763d45c949442db5364d31e8bbdce6246a092e7d60f2c2bc74aa67f1786",
+      "timestamp": "2026-10-14T18:18:01.963697",
+      "sha256_hash": "a8357650c58d24ea22f55688905f875b6366faf9781d4d81dfe0ba25e62a620f",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7431,7 +7367,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xc7 in position 15: invalid continuation byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xa2 in position 11: invalid start byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -7506,7 +7442,7 @@ FICHERO: render.yaml
 
 # ==============================================================================
 # FICHERO: render.yaml
-# Despliegue Cloud Coste 0 € (Web Service Docker + PostgreSQL Free Tier)
+# Despliegue Cloud en Render conectado a Supabase PostgreSQL
 # ==============================================================================
 services:
   - type: web
@@ -7516,19 +7452,17 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: findaffinity-db
-          property: connectionString
+        sync: false
       - key: JWT_SECRET_KEY
         generateValue: true
+      - key: ADMIN_EMAIL
+        value: admin@findaffinity.com
+      - key: ADMIN_PASSWORD
+        sync: false
       - key: DEFAULT_TENANT_PLAN
         value: FREE
-
-databases:
-  - name: findaffinity-db
-    plan: free
-    databaseName: findaffinity
-    user: findaffinity_admin
+      - key: SEED_DEMO_DATA
+        value: "false"
 
 
 ================================================================================
@@ -9688,6 +9622,7 @@ class UserRegisterDTO(BaseModel):
     company_name: Optional[str] = Field(None, json_schema_extra={"example": "KÖNIG & ASOCIADOS AUDITORES SLP"})
     fiscal_id: Optional[str] = Field(None, json_schema_extra={"example": "B-99881122"})
     role: str = Field(UserRole.AUDITOR, json_schema_extra={"example": "AUDITOR"})
+    plan: Optional[str] = Field("FREE", json_schema_extra={"example": "FREE"})
 
 
 class UserLoginDTO(BaseModel):
@@ -9711,6 +9646,9 @@ class UserResponseDTO(BaseModel):
     role: str
     tenant_id: Optional[str]
     tenant_name: Optional[str] = None
+    company_name: Optional[str] = None
+    plan: Optional[str] = None
+    message: Optional[str] = None
     is_active: bool
 
 
@@ -9734,13 +9672,18 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
     assigned_tenant_name = None
     assigned_role = payload.role.upper() if payload.role else UserRole.AUDITOR
 
+    selected_plan = (payload.plan or "FREE").upper().strip()
+    from src.billing.pricing_plans import PLAN_CONFIGS
+    if selected_plan not in PLAN_CONFIGS:
+        selected_plan = "FREE"
+
     # La cuenta SUPERADMIN es reservada exclusivamente para la administración central de FINDAFINITY
     if assigned_role == UserRole.SUPERADMIN:
         assigned_role = UserRole.ADMIN
 
     # Si no se proporciona tenant_id pero sí nombre de empresa/despacho, crearlo
     if not assigned_tenant_id and payload.company_name:
-        fiscal_clean = (payload.fiscal_id or f"B{uuid.uuid4().hex[:8].upper()}").strip()
+        fiscal_clean = (payload.fiscal_id or f"B{uuid.uuid4().hex[:8].upper()}").strip().upper()
         existing_tenant = db.query(Tenant).filter(Tenant.fiscal_id == fiscal_clean).first()
         if existing_tenant:
             assigned_tenant = existing_tenant
@@ -9749,7 +9692,8 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
                 name=payload.company_name.strip(),
                 fiscal_id=fiscal_clean,
                 email=payload.email.lower().strip(),
-                plan="STARTER",
+                plan=selected_plan,
+                extra_blocks=0,
             )
             db.add(assigned_tenant)
             db.commit()
@@ -9766,6 +9710,7 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
                 detail="El despacho (tenant) especificado no existe.",
             )
         assigned_tenant_name = tenant.name
+        selected_plan = tenant.plan
 
     valid_roles = [UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.AUDITOR, UserRole.VIEWER]
     if assigned_role not in valid_roles:
@@ -9793,6 +9738,9 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
         role=new_user.role,
         tenant_id=new_user.tenant_id,
         tenant_name=assigned_tenant_name,
+        company_name=assigned_tenant_name,
+        plan=selected_plan,
+        message="Despacho registrado correctamente sin datos residuales.",
         is_active=new_user.is_active,
     )
 
@@ -9824,6 +9772,9 @@ def login_user(payload: UserLoginDTO, db: Session = Depends(get_db)):
     }
     access_token = create_access_token(token_payload)
 
+    tenant_name = user.tenant.name if user.tenant else ("Administración Global" if user.role == UserRole.SUPERADMIN else "Despacho Profesional")
+    tenant_plan = user.tenant.plan if user.tenant else "ENTERPRISE"
+
     return TokenResponseDTO(
         access_token=access_token,
         token_type="bearer",
@@ -9833,7 +9784,9 @@ def login_user(payload: UserLoginDTO, db: Session = Depends(get_db)):
             full_name=user.full_name,
             role=user.role,
             tenant_id=user.tenant_id,
-            tenant_name=user.tenant.name if user.tenant else None,
+            tenant_name=tenant_name,
+            company_name=tenant_name,
+            plan=tenant_plan,
             is_active=user.is_active,
         ),
     )
@@ -9842,7 +9795,8 @@ def login_user(payload: UserLoginDTO, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserResponseDTO)
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
     """Obtiene el perfil y permisos del usuario actualmente autenticado."""
-    tenant_name = current_user.tenant.name if current_user.tenant else None
+    tenant_name = current_user.tenant.name if current_user.tenant else ("Administración Global" if current_user.role == UserRole.SUPERADMIN else "FINDAFINITY")
+    tenant_plan = current_user.tenant.plan if current_user.tenant else "ENTERPRISE"
     return UserResponseDTO(
         id=current_user.id,
         email=current_user.email,
@@ -9850,6 +9804,8 @@ def get_current_user_profile(current_user: User = Depends(get_current_user)):
         role=current_user.role,
         tenant_id=current_user.tenant_id,
         tenant_name=tenant_name,
+        company_name=tenant_name,
+        plan=tenant_plan,
         is_active=current_user.is_active,
     )
 
@@ -11163,6 +11119,9 @@ def hash_password(password: str) -> str:
     return f"{salt.hex()}:{key.hex()}"
 
 
+get_password_hash = hash_password
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifica si la contraseña en texto plano coincide con el hash almacenado."""
     try:
@@ -11852,6 +11811,7 @@ if is_sqlite:
 else:
     engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
     engine_kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+    engine_kwargs["pool_recycle"] = 300
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
@@ -12548,6 +12508,64 @@ class ReconciliationRepository:
 
 
 ================================================================================
+FICHERO: src\database\seed.py
+================================================================================
+
+"""
+FICHERO: src/database/seed.py
+Inicialización Limpia de Producción: Crea únicamente la cuenta maestra SUPERADMIN
+sin inyectar empresas ni lotes de demostración en las cuentas de clientes cuando SEED_DEMO_DATA=false.
+"""
+import os
+import uuid
+from sqlalchemy.orm import Session
+from src.database.models import Tenant, User, UserRole
+from src.auth.security import hash_password, get_password_hash
+
+
+def seed_initial_data(db: Session) -> None:
+    admin_email = os.getenv("ADMIN_EMAIL", "admin@findaffinity.com").strip().lower()
+    admin_password = os.getenv("ADMIN_PASSWORD", "AdminPass2026!")
+
+    existing_superadmin = db.query(User).filter(User.email == admin_email).first()
+    if not existing_superadmin:
+        master_tenant = db.query(Tenant).filter(Tenant.email == admin_email).first()
+        if not master_tenant:
+            master_tenant = Tenant(
+                id=str(uuid.uuid4()),
+                name="FINDAFINITY GLOBAL ADMINISTRATION",
+                fiscal_id="B-00000000",
+                email=admin_email,
+                plan="ENTERPRISE",
+                extra_blocks=0,
+            )
+            db.add(master_tenant)
+            db.flush()
+
+        superadmin_user = User(
+            id=str(uuid.uuid4()),
+            tenant_id=master_tenant.id,
+            email=admin_email,
+            full_name="Administrador Global",
+            hashed_password=hash_password(admin_password),
+            role=UserRole.SUPERADMIN,
+            is_active=True,
+        )
+        db.add(superadmin_user)
+        db.commit()
+    else:
+        existing_superadmin.hashed_password = hash_password(admin_password)
+        db.commit()
+
+    # Si se solicita explícitamente sembrar datos de demo para testing/piloto
+    seed_demo = os.getenv("SEED_DEMO_DATA", "false").strip().lower() in ("true", "1", "yes")
+    if seed_demo:
+        from src.services.bootstrap_service import bootstrap_database_if_empty, ensure_default_accounts
+        bootstrap_database_if_empty(db)
+        ensure_default_accounts(db)
+
+
+================================================================================
 FICHERO: src\disambiguation\confidence_scorer.py
 ================================================================================
 
@@ -13035,11 +13053,10 @@ from src.database.connection import init_db
 async def lifespan(app: FastAPI):
     init_db()
     from src.database.connection import get_db_context
-    from src.services.bootstrap_service import bootstrap_database_if_empty, ensure_default_accounts
+    from src.database.seed import seed_initial_data
     try:
         with get_db_context() as db:
-            bootstrap_database_if_empty(db)
-            ensure_default_accounts(db)
+            seed_initial_data(db)
     except Exception as e:
         print(f"Aviso al inicializar datos semilla: {e}")
     yield
@@ -16858,6 +16875,7 @@ def test_complete_user_journey_and_security_isolation(api_client):
         "full_name": f"Laura Gómez {suffix}",
         "company_name": test_company,
         "fiscal_id": test_fiscal,
+        "plan": "STARTER",
     }
     reg_res = api_client.post("/api/v1/auth/register", json=new_user_payload)
     assert reg_res.status_code == 201, f"Fallo al registrar usuario: {reg_res.text}"
@@ -17108,6 +17126,7 @@ def test_deletion_routes_and_slash_variants_never_return_405(api_client):
         "full_name": "Test Delete",
         "company_name": f"Test Delete {suffix} SL",
         "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+        "plan": "PROFESSIONAL",
     })
     tenant_id = reg_res.json()["tenant_id"]
 

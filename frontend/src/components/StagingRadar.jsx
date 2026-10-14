@@ -1,17 +1,17 @@
+/**
+ * FICHERO: frontend/src/components/StagingRadar.jsx
+ * Radar de Conciliación de Alta Densidad (100% Producción, Cero Datos Demo)
+ */
 import React, { useState, useMemo } from 'react';
-import { 
-  Search, 
-  Filter, 
-  CheckCircle2, 
-  AlertCircle, 
-  AlertOctagon, 
-  Layers, 
-  ChevronDown,
+import {
+  Search,
+  CheckCircle2,
+  AlertCircle,
+  AlertOctagon,
+  Layers,
   CheckCheck,
-  Sparkles,
   Trash2,
   Plus,
-  Building2
 } from 'lucide-react';
 import { TransactionRow } from './TransactionRow';
 import { PeriodFilter } from './PeriodFilter';
@@ -30,24 +30,22 @@ export function StagingRadar({
   onSelectStartMonth,
   endMonth,
   onSelectEndMonth,
-  onLoadDemoBatch,
   onDeleteTransaction,
   onClearAllTransactions,
-  hasCompanies = true,
+  hasCompanies = false,
   onOpenAddClientModal,
 }) {
-  const [activeTab, setActiveTab] = useState('ALL'); // 'ALL' | 'GREEN' | 'YELLOW' | 'RED'
+  const [activeTab, setActiveTab] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSource, setSelectedSource] = useState('ALL');
   const [expandedId, setExpandedId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  // Contadores en vivo para las pestañas
   const counts = useMemo(() => {
     let green = 0;
     let yellow = 0;
     let red = 0;
-    transactions.forEach(tx => {
+    transactions.forEach((tx) => {
       if (tx.status === 'GREEN') green++;
       else if (tx.status === 'YELLOW') yellow++;
       else red++;
@@ -55,38 +53,26 @@ export function StagingRadar({
     return { all: transactions.length, green, yellow, red };
   }, [transactions]);
 
-  // Filtrado reactivo de transacciones
   const filteredTransactions = useMemo(() => {
-    return transactions.filter(tx => {
-      // Filtro por pestaña de estado
-      if (activeTab !== 'ALL' && tx.status !== activeTab) {
+    return transactions.filter((tx) => {
+      if (activeTab !== 'ALL' && tx.status !== activeTab) return false;
+      if (selectedSource !== 'ALL' && !(tx.source || '').toLowerCase().includes(selectedSource.toLowerCase())) {
         return false;
       }
-      // Filtro por pasarela o banco
-      if (selectedSource !== 'ALL' && !tx.source.toLowerCase().includes(selectedSource.toLowerCase())) {
-        return false;
-      }
-      // Filtro por búsqueda de texto
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
-        const matchConcept = tx.concept.toLowerCase().includes(query);
-        const matchId = tx.id.toLowerCase().includes(query);
+        const matchConcept = (tx.concept || '').toLowerCase().includes(query);
+        const matchId = (tx.id || '').toLowerCase().includes(query);
         const matchSolver = (tx.solverUsed || '').toLowerCase().includes(query);
-        const matchAmount = tx.netAmountEur.toString().includes(query);
-        const matchInvoices = (tx.matchedInvoices || []).some(inv => 
-          inv.invoiceNumber.toLowerCase().includes(query) ||
-          (inv.customerFiscalId || '').toLowerCase().includes(query)
-        );
-        if (!matchConcept && !matchId && !matchSolver && !matchAmount && !matchInvoices) {
-          return false;
-        }
+        const matchAmount = String(tx.netAmountEur || '').includes(query);
+        if (!matchConcept && !matchId && !matchSolver && !matchAmount) return false;
       }
       return true;
     });
   }, [transactions, activeTab, selectedSource, searchQuery]);
 
   const toggleExpand = (id) => {
-    setExpandedId(prev => (prev === id ? null : id));
+    setExpandedId((prev) => (prev === id ? null : id));
   };
 
   const handleClearAll = () => {
@@ -96,14 +82,11 @@ export function StagingRadar({
       return;
     }
     setConfirmClear(false);
-    if (onClearAllTransactions) {
-      onClearAllTransactions();
-    }
+    if (onClearAllTransactions) onClearAllTransactions();
   };
 
   return (
     <div className="bg-[#101013] border border-zinc-800 rounded-lg overflow-hidden shadow-xl">
-      {/* Selector de Periodo Contable (Año, Trimestres o Rango de Meses) */}
       <PeriodFilter
         selectedYear={selectedYear}
         onSelectYear={onSelectYear}
@@ -115,10 +98,8 @@ export function StagingRadar({
         onSelectEndMonth={onSelectEndMonth}
       />
 
-      {/* Header del Radar: Pestañas de Semáforo y Filtros */}
       <div className="p-4 border-b border-zinc-800/80 bg-[#0c0c0e] flex flex-col gap-3">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Pestañas de Auditoría con Contadores */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
             <button
               type="button"
@@ -161,7 +142,7 @@ export function StagingRadar({
               }`}
             >
               <AlertCircle className="h-3 w-3 text-amber-400" />
-              <span>Amarillas (Revisión)</span>
+              <span>Amarillas (Revisión 1-Clic)</span>
               <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
                 {counts.yellow}
               </span>
@@ -177,20 +158,19 @@ export function StagingRadar({
               }`}
             >
               <AlertOctagon className="h-3 w-3 text-rose-400" />
-              <span>Rojas (Excepciones)</span>
+              <span>Rojas (Cuenta 555)</span>
               <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-800/50 text-rose-300">
                 {counts.red}
               </span>
             </button>
           </div>
 
-          {/* Acciones en lote y vaciado de partidas */}
           <div className="flex items-center gap-2 self-start md:self-auto">
             {counts.yellow > 0 && (
               <button
                 type="button"
                 onClick={onBulkApproveYellows}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors"
               >
                 <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
                 <span>Aprobar Amarillas ({counts.yellow})</span>
@@ -201,98 +181,80 @@ export function StagingRadar({
               <button
                 type="button"
                 onClick={handleClearAll}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap border ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors border ${
                   confirmClear
-                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm animate-pulse'
+                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm'
                     : 'bg-zinc-900/90 hover:bg-rose-950/50 border-zinc-800 hover:border-rose-800/60 text-zinc-400 hover:text-rose-300'
                 }`}
-                title="Eliminar todas las partidas del radar"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                <span>{confirmClear ? '¿Confirmar vaciar partidas?' : 'Vaciar Partidas'}</span>
+                <span>{confirmClear ? '¿Confirmar vaciado?' : 'Vaciar Radar'}</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Filter & Search Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-          {/* Search Input */}
           <div className="relative flex-1 max-w-md">
             <Search className="h-3.5 w-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar por concepto, factura, CIF, importe..."
-              className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
+              placeholder="Filtrar por concepto bancario, factura, NIF/CIF o importe..."
+              className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
             />
           </div>
 
-          {/* Source Filter Dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-zinc-400 uppercase tracking-wider hidden sm:inline">
-              Origen:
-            </span>
+            <span className="text-[11px] text-zinc-400 uppercase tracking-wider hidden sm:inline">Origen:</span>
             <select
               value={selectedSource}
               onChange={(e) => setSelectedSource(e.target.value)}
-              className="bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600 cursor-pointer"
+              className="bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
             >
               <option value="ALL">Todas las Fuentes</option>
               <option value="Stripe">Stripe</option>
               <option value="Redsys">Redsys TPV</option>
-              <option value="Santander">Banco Santander (N43)</option>
-              <option value="BBVA">BBVA (N43)</option>
+              <option value="Norma 43">Extracto Bancario Norma 43</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* High-Density Transactions Table o Empty State */}
       {transactions.length === 0 ? (
         <div className="py-16 px-6 text-center flex flex-col items-center justify-center bg-[#0c0c0f]">
-          <div className="h-14 w-14 rounded-full bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center text-zinc-400 mb-4 shadow-inner">
-            <Layers className="h-7 w-7 text-zinc-400" />
+          <div className="h-12 w-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 mb-3">
+            <Layers className="h-5 w-5 text-emerald-400" />
           </div>
 
           {!hasCompanies ? (
             <>
-              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
-                No tienes empresas cliente registradas
+              <h3 className="text-sm font-semibold text-zinc-100 mb-1.5">
+                Paso 1: Da de alta la primera sociedad o empresa cliente
               </h3>
-              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
-                Para empezar a conciliar, añade la primera empresa cliente de tu despacho usando el botón superior o el botón directo a continuación.
+              <p className="text-xs text-zinc-400 max-w-md mx-auto mb-5 leading-relaxed">
+                Tu espacio de despacho está recién creado y limpio. Añade una sociedad indicando su CIF y su ERP de destino (A3, Sage 50 o Contasol) para empezar a conciliar.
               </p>
               {onOpenAddClientModal && (
                 <button
                   type="button"
                   onClick={onOpenAddClientModal}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors shadow-sm"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors shadow-sm"
                 >
                   <Plus className="h-4 w-4" />
-                  <span>Añadir Empresa Cliente</span>
+                  <span>Añadir Primera Empresa Cliente</span>
                 </button>
               )}
             </>
           ) : (
             <>
-              <h3 className="text-sm font-semibold text-zinc-100 mb-2">
-                No hay movimientos contables cargados en este periodo
+              <h3 className="text-sm font-semibold text-zinc-100 mb-1.5">
+                Radar listo para conciliar
               </h3>
-              <p className="text-xs text-zinc-400 max-w-lg mx-auto mb-6 leading-relaxed">
-                Sube un extracto bancario o reporte de cobros arriba, o pulsa en <strong className="text-zinc-200">"Cargar Lote de Prueba"</strong> para probar el motor con datos de muestra.
+              <p className="text-xs text-zinc-400 max-w-md mx-auto leading-relaxed">
+                Arrastra un fichero Norma 43 (.n43) o un CSV de liquidaciones de Stripe / Redsys en el panel superior, o conecta directamente la API de Stripe para generar los pre-asientos contables.
               </p>
-              {onLoadDemoBatch && (
-                <button
-                  type="button"
-                  onClick={onLoadDemoBatch}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/80 text-xs font-semibold text-amber-300 transition-colors shadow-sm"
-                >
-                  <Sparkles className="h-4 w-4 text-amber-400" />
-                  <span>Cargar Lote de Prueba</span>
-                </button>
-              )}
             </>
           )}
         </div>
@@ -305,11 +267,11 @@ export function StagingRadar({
                   <th className="py-2.5 px-2 w-8 text-center"></th>
                   <th className="py-2.5 px-2">ID & Origen</th>
                   <th className="py-2.5 px-2">Fechas</th>
-                  <th className="py-2.5 px-2">Concepto Bancario / Tipo de Operación</th>
+                  <th className="py-2.5 px-2">Concepto Bancario / Operación</th>
                   <th className="py-2.5 px-2 text-right">Banco Neto (€)</th>
                   <th className="py-2.5 px-2 text-right">Bruto Fra (€)</th>
                   <th className="py-2.5 px-2 text-right">Comisión (€)</th>
-                  <th className="py-2.5 px-2 text-center">Score</th>
+                  <th className="py-2.5 px-2 text-center">Afinidad</th>
                   <th className="py-2.5 px-2 text-right">Estado / Acción</th>
                 </tr>
               </thead>
@@ -337,13 +299,18 @@ export function StagingRadar({
             </table>
           </div>
 
-          {/* Table Footer: Summary count */}
           <div className="p-3 border-t border-zinc-800/60 bg-[#09090b] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-zinc-400 gap-2">
             <div>
-              Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
+              Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de{' '}
+              <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
             </div>
             <div className="flex items-center gap-4 text-xs font-mono">
-              <span>Neto Periodo: <strong className="text-zinc-100">{formatEuro(filteredTransactions.reduce((acc, t) => acc + (t.netAmountEur || 0), 0))}</strong></span>
+              <span>
+                Neto Conciliado:{' '}
+                <strong className="text-zinc-100">
+                  {formatEuro(filteredTransactions.reduce((acc, t) => acc + (t.netAmountEur || 0), 0))}
+                </strong>
+              </span>
             </div>
           </div>
         </>

@@ -43,6 +43,7 @@ def test_complete_user_journey_and_security_isolation(api_client):
         "full_name": f"Laura Gómez {suffix}",
         "company_name": test_company,
         "fiscal_id": test_fiscal,
+        "plan": "STARTER",
     }
     reg_res = api_client.post("/api/v1/auth/register", json=new_user_payload)
     assert reg_res.status_code == 201, f"Fallo al registrar usuario: {reg_res.text}"
@@ -293,6 +294,7 @@ def test_deletion_routes_and_slash_variants_never_return_405(api_client):
         "full_name": "Test Delete",
         "company_name": f"Test Delete {suffix} SL",
         "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+        "plan": "PROFESSIONAL",
     })
     tenant_id = reg_res.json()["tenant_id"]
 

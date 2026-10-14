@@ -26,6 +26,7 @@ class UserRegisterDTO(BaseModel):
     company_name: Optional[str] = Field(None, json_schema_extra={"example": "KÖNIG & ASOCIADOS AUDITORES SLP"})
     fiscal_id: Optional[str] = Field(None, json_schema_extra={"example": "B-99881122"})
     role: str = Field(UserRole.AUDITOR, json_schema_extra={"example": "AUDITOR"})
+    plan: Optional[str] = Field("FREE", json_schema_extra={"example": "FREE"})
 
 
 class UserLoginDTO(BaseModel):
@@ -49,6 +50,9 @@ class UserResponseDTO(BaseModel):
     role: str
     tenant_id: Optional[str]
     tenant_name: Optional[str] = None
+    company_name: Optional[str] = None
+    plan: Optional[str] = None
+    message: Optional[str] = None
     is_active: bool
 
 
@@ -72,13 +76,18 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
     assigned_tenant_name = None
     assigned_role = payload.role.upper() if payload.role else UserRole.AUDITOR
 
+    selected_plan = (payload.plan or "FREE").upper().strip()
+    from src.billing.pricing_plans import PLAN_CONFIGS
+    if selected_plan not in PLAN_CONFIGS:
+        selected_plan = "FREE"
+
     # La cuenta SUPERADMIN es reservada exclusivamente para la administración central de FINDAFINITY
     if assigned_role == UserRole.SUPERADMIN:
         assigned_role = UserRole.ADMIN
 
     # Si no se proporciona tenant_id pero sí nombre de empresa/despacho, crearlo
     if not assigned_tenant_id and payload.company_name:
-        fiscal_clean = (payload.fiscal_id or f"B{uuid.uuid4().hex[:8].upper()}").strip()
+        fiscal_clean = (payload.fiscal_id or f"B{uuid.uuid4().hex[:8].upper()}").strip().upper()
         existing_tenant = db.query(Tenant).filter(Tenant.fiscal_id == fiscal_clean).first()
         if existing_tenant:
             assigned_tenant = existing_tenant
@@ -87,7 +96,8 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
                 name=payload.company_name.strip(),
                 fiscal_id=fiscal_clean,
                 email=payload.email.lower().strip(),
-                plan="STARTER",
+                plan=selected_plan,
+                extra_blocks=0,
             )
             db.add(assigned_tenant)
             db.commit()
@@ -104,6 +114,7 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
                 detail="El despacho (tenant) especificado no existe.",
             )
         assigned_tenant_name = tenant.name
+        selected_plan = tenant.plan
 
     valid_roles = [UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.AUDITOR, UserRole.VIEWER]
     if assigned_role not in valid_roles:
@@ -131,6 +142,9 @@ def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
         role=new_user.role,
         tenant_id=new_user.tenant_id,
         tenant_name=assigned_tenant_name,
+        company_name=assigned_tenant_name,
+        plan=selected_plan,
+        message="Despacho registrado correctamente sin datos residuales.",
         is_active=new_user.is_active,
     )
 
@@ -162,6 +176,9 @@ def login_user(payload: UserLoginDTO, db: Session = Depends(get_db)):
     }
     access_token = create_access_token(token_payload)
 
+    tenant_name = user.tenant.name if user.tenant else ("Administración Global" if user.role == UserRole.SUPERADMIN else "Despacho Profesional")
+    tenant_plan = user.tenant.plan if user.tenant else "ENTERPRISE"
+
     return TokenResponseDTO(
         access_token=access_token,
         token_type="bearer",
@@ -171,7 +188,9 @@ def login_user(payload: UserLoginDTO, db: Session = Depends(get_db)):
             full_name=user.full_name,
             role=user.role,
             tenant_id=user.tenant_id,
-            tenant_name=user.tenant.name if user.tenant else None,
+            tenant_name=tenant_name,
+            company_name=tenant_name,
+            plan=tenant_plan,
             is_active=user.is_active,
         ),
     )
@@ -180,7 +199,8 @@ def login_user(payload: UserLoginDTO, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserResponseDTO)
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
     """Obtiene el perfil y permisos del usuario actualmente autenticado."""
-    tenant_name = current_user.tenant.name if current_user.tenant else None
+    tenant_name = current_user.tenant.name if current_user.tenant else ("Administración Global" if current_user.role == UserRole.SUPERADMIN else "FINDAFINITY")
+    tenant_plan = current_user.tenant.plan if current_user.tenant else "ENTERPRISE"
     return UserResponseDTO(
         id=current_user.id,
         email=current_user.email,
@@ -188,6 +208,8 @@ def get_current_user_profile(current_user: User = Depends(get_current_user)):
         role=current_user.role,
         tenant_id=current_user.tenant_id,
         tenant_name=tenant_name,
+        company_name=tenant_name,
+        plan=tenant_plan,
         is_active=current_user.is_active,
     )
 

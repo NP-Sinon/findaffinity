@@ -12,13 +12,14 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=production \
     PORT=8000
 
 WORKDIR /app
 
-# Instalar dependencias del sistema mínimas para scipy/psycopg2
+# Instalar dependencias del sistema mínimas para scipy/psycopg2/psycopg y curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc && \
+    libpq-dev gcc curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

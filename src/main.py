@@ -16,11 +16,10 @@ from src.database.connection import init_db
 async def lifespan(app: FastAPI):
     init_db()
     from src.database.connection import get_db_context
-    from src.services.bootstrap_service import bootstrap_database_if_empty, ensure_default_accounts
+    from src.database.seed import seed_initial_data
     try:
         with get_db_context() as db:
-            bootstrap_database_if_empty(db)
-            ensure_default_accounts(db)
+            seed_initial_data(db)
     except Exception as e:
         print(f"Aviso al inicializar datos semilla: {e}")
     yield

@@ -1,7 +1,6 @@
 /**
  * FICHERO: frontend/src/services/api.js
- * Cliente de Conectividad con la API REST de Reconciliación Contable (FastAPI v1)
- * Preparado para Producción Cloud (Cloudflare Pages / Vercel + Render / Railway)
+ * Cliente API de Producción para FINDAFINITY (Sin datos fantasma ni credenciales expuestas)
  */
 
 const getBaseUrl = () => {
@@ -15,7 +14,7 @@ const getBaseUrl = () => {
     }
     return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
   }
-  return 'http://127.0.0.1:8000';
+  return '';
 };
 
 export const BASE_URL = getBaseUrl();
@@ -98,7 +97,15 @@ export async function loginApi(email, password) {
   return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
 
-export async function registerApi({ email, password, fullName, companyName, fiscalId, role = 'ADMIN' }) {
+export async function registerApi({
+  email,
+  password,
+  fullName,
+  companyName,
+  fiscalId,
+  role = 'ADMIN',
+  plan = 'FREE',
+}) {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -109,13 +116,14 @@ export async function registerApi({ email, password, fullName, companyName, fisc
       company_name: companyName,
       fiscal_id: fiscalId,
       role,
+      plan,
     }),
   });
 
   if (ok) {
     return await loginApi(email, password);
   }
-  return { success: false, error: data?.detail || 'Error en el registro' };
+  return { success: false, error: data?.detail || 'Error al registrar la cuenta' };
 }
 
 export async function forgotPasswordApi(email) {
@@ -229,7 +237,7 @@ export async function deleteCompanyApi(tenantId) {
 export async function checkBackendHealth() {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(`${BASE_URL}/health`, {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
@@ -241,7 +249,7 @@ export async function checkBackendHealth() {
     }
     return { online: false, reason: `HTTP ${res.status}` };
   } catch (err) {
-    return { online: false, reason: err.message || 'Modo Autónomo' };
+    return { online: false, reason: err.message || 'Sin conexión' };
   }
 }
 
@@ -249,13 +257,12 @@ export async function fetchTenants() {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/tenants`, {
     headers: getAuthHeaders(),
   });
-  if (ok && Array.isArray(data)) return data;
-  return [];
+  return ok && Array.isArray(data) ? data : [];
 }
 
 export async function fetchClients(tenantId) {
   if (!tenantId) return [];
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients?tenant_id=${tenantId}`, {
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients?tenant_id=${encodeURIComponent(tenantId)}`, {
     headers: getAuthHeaders(),
   });
   if (ok && Array.isArray(data)) {
@@ -281,7 +288,7 @@ export async function createClientApi({
   bankAccountCode = '572000001',
   feeAccountCode = '626000001',
 }) {
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients`, {
+  const { ok, status, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients`, {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({
@@ -309,7 +316,11 @@ export async function createClientApi({
       },
     };
   }
-  return { success: false, error: data?.detail || 'Error al crear empresa cliente' };
+  return {
+    success: false,
+    paywallTriggered: status === 402,
+    error: typeof data?.detail === 'object' ? data.detail.message : (data?.detail || 'Error al crear empresa cliente'),
+  };
 }
 
 export async function deleteClientApi(clientId) {
@@ -340,7 +351,8 @@ export async function deleteTransactionApi(batchId, transactionId) {
 }
 
 export async function fetchBatches(clientId, year, startMonth, endMonth) {
-  let url = `${BASE_URL}/api/v1/batches?client_id=${clientId}`;
+  if (!clientId) return [];
+  let url = `${BASE_URL}/api/v1/batches?client_id=${encodeURIComponent(clientId)}`;
   if (year) url += `&year=${year}`;
   if (startMonth) url += `&start_month=${startMonth}`;
   if (endMonth) url += `&end_month=${endMonth}`;
@@ -350,6 +362,7 @@ export async function fetchBatches(clientId, year, startMonth, endMonth) {
 }
 
 export async function fetchBatchDetails(batchId) {
+  if (!batchId) return null;
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
     headers: getAuthHeaders(),
   });
@@ -452,7 +465,7 @@ export async function approveTransactionApi(batchId, transactionId, note = 'Apro
     headers: getAuthHeaders(),
     body: JSON.stringify({ approved_by: actor, note }),
   });
-  return ok ? data : { status: 'fallback', is_approved: true };
+  return ok ? data : { status: 'error' };
 }
 
 export async function bulkApproveYellowsApi(batchId) {
@@ -462,10 +475,11 @@ export async function bulkApproveYellowsApi(batchId) {
     headers: getAuthHeaders(),
     body: JSON.stringify({ approved_by: actor, note: 'Aprobación masiva certificada' }),
   });
-  return ok ? data : { status: 'fallback' };
+  return ok ? data : { status: 'error' };
 }
 
 export async function fetchAuditTrailApi(batchId) {
+  if (!batchId) return null;
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/audit-trail`, {
     headers: getAuthHeaders(),
   });

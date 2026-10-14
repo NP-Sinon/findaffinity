@@ -20,6 +20,9 @@ def hash_password(password: str) -> str:
     return f"{salt.hex()}:{key.hex()}"
 
 
+get_password_hash = hash_password
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifica si la contraseña en texto plano coincide con el hash almacenado."""
     try:
