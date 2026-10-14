@@ -7125,32 +7125,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "df3d4fb2-0274-47bb-a5a5-d60e7744057b",
+  "tenant_id": "04f1439e-d63f-4e0d-88a8-3b80d40fef9f",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-14",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "583431635ca559e282df9d1cd0a54fe34e53220b48f1b603424f0697ca27c9b0",
+  "head_hash_sha256": "a37e6763d45c949442db5364d31e8bbdce6246a092e7d60f2c2bc74aa67f1786",
   "audit_events": [
     {
-      "event_id": "f3848959-ab0f-41e6-8a55-32b60540c3d9",
+      "event_id": "93d935eb-d8f9-48d7-936e-496748550eb6",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T17:09:01.571977",
-      "sha256_hash": "380de206e4c51e2dd420e9f8dbfca6551e9afc9b13d7ad2e96c0850fb117299e",
+      "timestamp": "2026-10-14T17:46:07.566912",
+      "sha256_hash": "cc9faa2655aacd87121d1e10f01e87d247ae6c5a34d0cea4c9cf8e00ba9bd2ab",
       "details": {
-        "batch_id": "30830fb1-ba48-4d49-b554-8addefa04710",
+        "batch_id": "0cd829ca-2abb-45a4-a39b-be942bcc878e",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "d8592041-4297-4131-95e2-ce6d27285121",
+      "event_id": "8b4e19c7-ab37-449a-b65d-45e7af101879",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T17:09:01.584494",
-      "sha256_hash": "373f9f47a457d12084929efc059a6a7086ac3f696cf9a6e383998c82667d55b3",
+      "timestamp": "2026-10-14T17:46:07.580431",
+      "sha256_hash": "49fc091f4cd4fdf79c6f01793f02b062cd5caaa8292b109a09957f5b6081cc87",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7158,23 +7158,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "86a1169a-2600-4e12-a580-e9a68ad94daa",
+      "event_id": "624699a5-789a-4075-ae28-f79dff8e9a9a",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T17:09:01.592201",
-      "sha256_hash": "5ffda821b7aba1929d4e5ff77488af1d55c5575fda4a0ef0ce555806313e288f",
+      "timestamp": "2026-10-14T17:46:07.587055",
+      "sha256_hash": "34b47b43a6b6e2a645f10abf2c337e5c7f14f73202bd7bfd07454146cb1c93cd",
       "details": {
-        "batch_id": "61199dbf-4e74-43f6-8992-195d64039cb9",
+        "batch_id": "9252bc1e-3b37-49ca-b89c-f96dd16d35fa",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "72b3ed2e-7c90-4323-ad56-18d42c9fad3f",
+      "event_id": "45978735-02f8-4669-b2dc-f1853db37877",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T17:09:01.600443",
-      "sha256_hash": "6be9fa31a1b8300b37ea6ef87f2c5199cd11613c2a15437ba6a6549ece542418",
+      "timestamp": "2026-10-14T17:46:07.593218",
+      "sha256_hash": "50952bf7bf83e9a1f3be6186f5130a0ae9aca47b5d643dabec4e24d00ab22faa",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7182,23 +7182,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "35399add-c522-4f66-8377-3c6e7b3ab91a",
+      "event_id": "bf278fb2-7c3d-4322-a7b8-4f6447b6732d",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T17:09:01.607675",
-      "sha256_hash": "cf1b40abc6217b2235cb9a234eb69deb8415a48ec41ac2ac6208dad2e201c729",
+      "timestamp": "2026-10-14T17:46:07.598221",
+      "sha256_hash": "d3f1b7595b7ff6618fae61dccdf6ecf38cdb0eb62c8229cfbf774ddaad535dc1",
       "details": {
-        "batch_id": "93837333-04e7-4f6d-81fd-a9f122311526",
+        "batch_id": "cfd67907-03e6-473b-9b4c-f592e9f2bbee",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "040d6182-792a-4639-b84c-a5e08d3b1136",
+      "event_id": "ad1d766d-7ee8-4939-8720-1e2638b6f0c3",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T17:09:01.626542",
-      "sha256_hash": "583431635ca559e282df9d1cd0a54fe34e53220b48f1b603424f0697ca27c9b0",
+      "timestamp": "2026-10-14T17:46:07.615491",
+      "sha256_hash": "a37e6763d45c949442db5364d31e8bbdce6246a092e7d60f2c2bc74aa67f1786",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7212,7 +7212,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0x99 in position 11: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xc7 in position 15: invalid continuation byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -7297,6 +7297,7 @@ sqlalchemy>=2.0.0
 pyjwt>=2.9.0
 pytest>=8.3.0
 httpx>=0.27.0
+psycopg[binary]>=3.2.0
 psycopg2-binary>=2.9.9
 stripe>=8.0.0
 
@@ -15329,22 +15330,37 @@ def ensure_default_accounts(db: Session):
         )
         db.add(admin_user)
         db.commit()
+    else:
+        admin_user.hashed_password = hash_password("AdminPass2026!")
+        db.commit()
 
     # 2. Cuenta Auditor Demo
     demo_tenant = db.query(Tenant).filter(Tenant.fiscal_id == "B-99881122").first()
-    if demo_tenant:
-        auditor_user = db.query(User).filter(User.email == "auditor@konigpartners.es").first()
-        if not auditor_user:
-            auditor_user = User(
-                email="auditor@konigpartners.es",
-                hashed_password=hash_password("AuditPass2026!"),
-                full_name="Carlos Méndez (Auditor Senior)",
-                role=UserRole.AUDITOR,
-                is_active=True,
-                tenant_id=demo_tenant.id,
+    if not demo_tenant:
+        demo_tenant = db.query(Tenant).first()
+        if not demo_tenant:
+            demo_tenant = ReconciliationRepository.create_tenant(
+                db=db,
+                name="KÖNIG & ASOCIADOS AUDITORES SLP",
+                fiscal_id="B-99881122",
+                email="auditoria@konigpartners.es",
+                plan="PROFESSIONAL",
             )
-            db.add(auditor_user)
-            db.commit()
+    auditor_user = db.query(User).filter(User.email == "auditor@konigpartners.es").first()
+    if not auditor_user and demo_tenant:
+        auditor_user = User(
+            email="auditor@konigpartners.es",
+            hashed_password=hash_password("AuditPass2026!"),
+            full_name="Carlos Méndez (Auditor Senior)",
+            role=UserRole.AUDITOR,
+            is_active=True,
+            tenant_id=demo_tenant.id,
+        )
+        db.add(auditor_user)
+        db.commit()
+    elif auditor_user:
+        auditor_user.hashed_password = hash_password("AuditPass2026!")
+        db.commit()
 
 
 ================================================================================

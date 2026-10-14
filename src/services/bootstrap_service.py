@@ -215,19 +215,34 @@ def ensure_default_accounts(db: Session):
         )
         db.add(admin_user)
         db.commit()
+    else:
+        admin_user.hashed_password = hash_password("AdminPass2026!")
+        db.commit()
 
     # 2. Cuenta Auditor Demo
     demo_tenant = db.query(Tenant).filter(Tenant.fiscal_id == "B-99881122").first()
-    if demo_tenant:
-        auditor_user = db.query(User).filter(User.email == "auditor@konigpartners.es").first()
-        if not auditor_user:
-            auditor_user = User(
-                email="auditor@konigpartners.es",
-                hashed_password=hash_password("AuditPass2026!"),
-                full_name="Carlos Méndez (Auditor Senior)",
-                role=UserRole.AUDITOR,
-                is_active=True,
-                tenant_id=demo_tenant.id,
+    if not demo_tenant:
+        demo_tenant = db.query(Tenant).first()
+        if not demo_tenant:
+            demo_tenant = ReconciliationRepository.create_tenant(
+                db=db,
+                name="KÖNIG & ASOCIADOS AUDITORES SLP",
+                fiscal_id="B-99881122",
+                email="auditoria@konigpartners.es",
+                plan="PROFESSIONAL",
             )
-            db.add(auditor_user)
-            db.commit()
+    auditor_user = db.query(User).filter(User.email == "auditor@konigpartners.es").first()
+    if not auditor_user and demo_tenant:
+        auditor_user = User(
+            email="auditor@konigpartners.es",
+            hashed_password=hash_password("AuditPass2026!"),
+            full_name="Carlos Méndez (Auditor Senior)",
+            role=UserRole.AUDITOR,
+            is_active=True,
+            tenant_id=demo_tenant.id,
+        )
+        db.add(auditor_user)
+        db.commit()
+    elif auditor_user:
+        auditor_user.hashed_password = hash_password("AuditPass2026!")
+        db.commit()
