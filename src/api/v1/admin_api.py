@@ -10,7 +10,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
-from src.database.models import Tenant, User, UserRole, ClientCompany, ReconciliationBatch
+from src.database.models import (
+    Tenant,
+    User,
+    UserRole,
+    ClientCompany,
+    ReconciliationBatch,
+    BatchTransaction,
+    JournalEntryRecord,
+    AuditLog,
+)
 from src.auth.dependencies import get_current_user, require_roles
 from src.billing.pricing_plans import PLAN_CONFIGS
 
@@ -201,20 +210,57 @@ def delete_company(
             detail="Compañía o despacho no encontrado.",
         )
 
-    if tenant.email == "admin@findaffinity.com":
+    if tenant.email == "admin@findaffinity.com" or (current_user.tenant_id and tenant.id == current_user.tenant_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No se permite eliminar la cuenta maestra de la plataforma.",
+            detail="No se permite eliminar la cuenta maestra o el despacho administrador de la plataforma.",
         )
 
     name = tenant.name
     fiscal_id = tenant.fiscal_id
-    db.delete(tenant)
-    db.commit()
+
+    try:
+        # Recopilar IDs subordinados para borrado en cascada estricto
+        client_ids = [c.id for c in db.query(ClientCompany.id).filter(ClientCompany.tenant_id == tenant_id).all()]
+        batch_ids = [b.id for b in db.query(ReconciliationBatch.id).filter(ReconciliationBatch.tenant_id == tenant_id).all()]
+        if client_ids:
+            batch_ids_by_client = [b.id for b in db.query(ReconciliationBatch.id).filter(ReconciliationBatch.client_id.in_(client_ids)).all()]
+            batch_ids = list(set(batch_ids + batch_ids_by_client))
+
+        # 1. Eliminar audit_logs vinculados al tenant, clientes o lotes
+        audit_query = db.query(AuditLog).filter(
+            (AuditLog.tenant_id == tenant_id) |
+            (AuditLog.client_id.in_(client_ids) if client_ids else False) |
+            (AuditLog.batch_id.in_(batch_ids) if batch_ids else False)
+        )
+        audit_query.delete(synchronize_session=False)
+
+        # 2. Eliminar asientos (journal_entry_records) y transacciones de lotes
+        if batch_ids:
+            db.query(JournalEntryRecord).filter(JournalEntryRecord.batch_id.in_(batch_ids)).delete(synchronize_session=False)
+            db.query(BatchTransaction).filter(BatchTransaction.batch_id.in_(batch_ids)).delete(synchronize_session=False)
+            db.query(ReconciliationBatch).filter(ReconciliationBatch.id.in_(batch_ids)).delete(synchronize_session=False)
+
+        # 3. Eliminar empresas cliente
+        if client_ids:
+            db.query(ClientCompany).filter(ClientCompany.id.in_(client_ids)).delete(synchronize_session=False)
+
+        # 4. Eliminar usuarios asignados al tenant (excepto el propio superadmin si coincidiera)
+        db.query(User).filter(User.tenant_id == tenant_id, User.email != "admin@findaffinity.com").delete(synchronize_session=False)
+
+        # 5. Eliminar el tenant propiamente
+        db.delete(tenant)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al eliminar compañía en cascada: {str(e)}",
+        )
 
     return {
         "success": True,
-        "message": f"Compañía '{name}' ({fiscal_id}) eliminada definitivamente.",
+        "message": f"Compañía '{name}' ({fiscal_id}) eliminada definitivamente junto con todos sus registros.",
         "deleted_tenant_id": tenant_id,
     }
 

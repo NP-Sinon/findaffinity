@@ -124,3 +124,78 @@ def test_unauthenticated_request_rejected(client):
     """Peticiones sin token a /api/v1/admin/* son rechazadas con 401."""
     res = client.get("/api/v1/admin/companies")
     assert res.status_code == 401
+
+
+def test_delete_company_and_cascade(client):
+    """Verifica que el SUPERADMIN puede eliminar una compañía y todos sus registros en cascada."""
+    # Login superadmin
+    login_res = client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Crear un nuevo tenant de prueba para borrar
+    tenant_res = client.post("/api/v1/tenants", json={
+        "name": "Despacho Test Borrado S.L.",
+        "fiscal_id": "B-99887766",
+        "email": "borrado@testdespacho.com",
+        "plan": "STARTER",
+    }, headers=headers)
+    assert tenant_res.status_code in (200, 201), tenant_res.text
+    tenant_id = tenant_res.json()["id"]
+
+    # 2. Crear una empresa cliente en este tenant
+    client_res = client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": "Cliente de Prueba Borrado",
+        "fiscal_id": "A-11223344",
+        "default_erp": "A3",
+        "account_length": 9,
+        "bank_account_code": "572000001",
+        "fee_account_code": "626000001",
+    }, headers=headers)
+    assert client_res.status_code in (200, 201), client_res.text
+    client_id = client_res.json()["id"]
+
+    # 3. Intentar borrar el tenant maestro admin@findaffinity.com -> Debe dar 400
+    companies = client.get("/api/v1/admin/companies", headers=headers).json()
+    master_admin_comp = next((c for c in companies if c["email"] == "admin@findaffinity.com"), None)
+    if master_admin_comp:
+        del_master_res = client.delete(f"/api/v1/admin/companies/{master_admin_comp['id']}", headers=headers)
+        assert del_master_res.status_code == 400
+
+    # 4. Eliminar el tenant de prueba mediante DELETE /api/v1/admin/companies/{tenant_id}
+    del_res = client.delete(f"/api/v1/admin/companies/{tenant_id}", headers=headers)
+    assert del_res.status_code == 200, del_res.text
+    assert del_res.json()["success"] is True
+
+    # 5. Comprobar que ya no aparece en el listado
+    after_companies = client.get("/api/v1/admin/companies", headers=headers).json()
+    assert not any(c["id"] == tenant_id for c in after_companies)
+
+    # 6. Comprobar que el cliente también fue eliminado
+    clients_check = client.get(f"/api/v1/clients?tenant_id={tenant_id}", headers=headers).json()
+    assert len(clients_check) == 0
+
+
+def test_seed_initial_data_heals_superadmin_role():
+    """Verifica que seed_initial_data restablece el rol SUPERADMIN si un usuario tenía rol ADMIN."""
+    from src.database.seed import seed_initial_data
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "admin@findaffinity.com").first()
+        if user:
+            # Simular degradación de rol accidental
+            user.role = UserRole.ADMIN
+            db.commit()
+
+        # Ejecutar seed
+        seed_initial_data(db)
+
+        # Verificar que fue reparado a SUPERADMIN
+        repaired = db.query(User).filter(User.email == "admin@findaffinity.com").first()
+        assert repaired is not None
+        assert repaired.role == UserRole.SUPERADMIN
+        assert repaired.is_active is True
+

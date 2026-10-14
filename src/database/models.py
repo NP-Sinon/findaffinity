@@ -107,8 +107,8 @@ class ReconciliationBatch(Base):
     __tablename__ = "reconciliation_batches"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
-    client_id = Column(String(36), ForeignKey("client_companies.id"), nullable=False, index=True)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id = Column(String(36), ForeignKey("client_companies.id", ondelete="CASCADE"), nullable=False, index=True)
     period_year = Column(Integer, nullable=False, index=True)
     period_type = Column(String(20), default="ALL", nullable=False)  # ALL | Q1 | Q2 | Q3 | Q4 | CUSTOM
     start_month = Column(Integer, default=1, nullable=False)
@@ -198,9 +198,9 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
-    client_id = Column(String(36), ForeignKey("client_companies.id"), nullable=False, index=True)
-    batch_id = Column(String(36), ForeignKey("reconciliation_batches.id"), nullable=True, index=True)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id = Column(String(36), ForeignKey("client_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    batch_id = Column(String(36), ForeignKey("reconciliation_batches.id", ondelete="CASCADE"), nullable=True, index=True)
     action = Column(String(50), nullable=False, index=True)
     actor = Column(String(120), nullable=False)
     details_json = Column(Text, nullable=True)

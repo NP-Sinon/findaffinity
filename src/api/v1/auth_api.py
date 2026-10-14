@@ -65,7 +65,14 @@ class TokenResponseDTO(BaseModel):
 @router.post("/register", response_model=UserResponseDTO, status_code=status.HTTP_201_CREATED)
 def register_user(payload: UserRegisterDTO, db: Session = Depends(get_db)):
     """Registra un nuevo usuario en la plataforma o autoprovisiona un nuevo despacho/empresa."""
-    existing = db.query(User).filter(User.email == payload.email.lower().strip()).first()
+    email_clean = payload.email.lower().strip()
+    if email_clean == "admin@findaffinity.com":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El correo admin@findaffinity.com está reservado exclusivamente para la administración central.",
+        )
+
+    existing = db.query(User).filter(User.email == email_clean).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -97,6 +97,16 @@ export async function loginApi(email, password) {
   return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
 
+export async function fetchMeApi() {
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/me`, {
+    headers: getAuthHeaders(),
+  });
+  if (ok && data && data.id) {
+    return { success: true, user: data };
+  }
+  return { success: false, error: data?.detail || 'Sesión no válida o expirada' };
+}
+
 export async function registerApi({
   email,
   password,

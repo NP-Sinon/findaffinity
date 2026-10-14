@@ -28,7 +28,9 @@ import {
   approveTransactionApi,
   bulkApproveYellowsApi,
   getStoredAuthSession,
+  saveAuthSession,
   clearAuthSession,
+  fetchMeApi,
   fetchTenantSubscription,
   upgradeTenantPlanApi,
   syncStripePayoutsApi,
@@ -67,7 +69,8 @@ export default function App() {
   const [currentView, setCurrentView] = useState(() => {
     const s = getStoredAuthSession();
     if (s && s.user && s.user.role === 'SUPERADMIN') {
-      return 'admin';
+      const saved = localStorage.getItem('findaffinity_active_view');
+      return saved === 'radar' ? 'radar' : 'admin';
     }
     return 'radar';
   });
@@ -121,28 +124,10 @@ export default function App() {
       return;
     }
 
-    if (user.tenant_id) {
-      const [sub, clientList] = await Promise.all([
-        fetchTenantSubscription(user.tenant_id),
-        fetchClients(user.tenant_id),
-      ]);
-      if (sub) setSubscriptionInfo(sub);
-
-      if (clientList && clientList.length > 0) {
-        setCompanies(clientList);
-        const firstComp = clientList[0];
-        setSelectedCompany(firstComp);
-        setSelectedErp(firstComp.defaultErp || 'A3');
-        await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
-      } else {
-        setCompanies([]);
-        setSelectedCompany(null);
-        setTransactions([]);
-      }
-    } else if (user.role === 'SUPERADMIN') {
+    if (user.role === 'SUPERADMIN') {
       const tList = await fetchTenants();
+      setTenants(tList || []);
       if (tList && tList.length > 0) {
-        setTenants(tList);
         const firstTenant = tList[0];
         setCurrentTenant(firstTenant);
         const [sub, cList] = await Promise.all([
@@ -161,6 +146,24 @@ export default function App() {
           setTransactions([]);
         }
       }
+    } else if (user.tenant_id) {
+      const [sub, clientList] = await Promise.all([
+        fetchTenantSubscription(user.tenant_id),
+        fetchClients(user.tenant_id),
+      ]);
+      if (sub) setSubscriptionInfo(sub);
+
+      if (clientList && clientList.length > 0) {
+        setCompanies(clientList);
+        const firstComp = clientList[0];
+        setSelectedCompany(firstComp);
+        setSelectedErp(firstComp.defaultErp || 'A3');
+        await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
+      } else {
+        setCompanies([]);
+        setSelectedCompany(null);
+        setTransactions([]);
+      }
     }
   }, [loadBatchesForCompany, selectedYear, startMonth, endMonth]);
 
@@ -170,15 +173,33 @@ export default function App() {
       const health = await checkBackendHealth();
       if (!isMounted) return;
       setBackendStatus(health);
-      if (health.online && currentUser) {
-        await syncUserContext(currentUser);
+
+      const session = getStoredAuthSession();
+      if (session && session.token) {
+        const meRes = await fetchMeApi();
+        if (!isMounted) return;
+        if (meRes.success && meRes.user) {
+          saveAuthSession(session.token, meRes.user);
+          setCurrentUser(meRes.user);
+          if (meRes.user.role === 'SUPERADMIN') {
+            const saved = localStorage.getItem('findaffinity_active_view');
+            setCurrentView(saved === 'radar' ? 'radar' : 'admin');
+          }
+          await syncUserContext(meRes.user);
+        } else if (meRes.status === 401 || meRes.status === 403) {
+          clearAuthSession();
+          setCurrentUser(null);
+        } else if (session.user) {
+          // Si el servidor está temporalmente inaccesible pero hay sesión local
+          await syncUserContext(session.user);
+        }
       }
     }
     initApp();
     return () => {
       isMounted = false;
     };
-  }, [syncUserContext, currentUser]);
+  }, [syncUserContext]);
 
   const periodFilteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
@@ -424,10 +445,16 @@ export default function App() {
     triggerToast(`Sociedad activa: ${company.name}`);
   }, [loadBatchesForCompany, selectedYear, startMonth, endMonth, triggerToast]);
 
+  const handleToggleView = useCallback((view) => {
+    setCurrentView(view);
+    localStorage.setItem('findaffinity_active_view', view);
+  }, []);
+
   const handleAuthSuccess = useCallback(async (user) => {
     setCurrentUser(user);
     if (user.role === 'SUPERADMIN') {
-      setCurrentView('admin');
+      const saved = localStorage.getItem('findaffinity_active_view');
+      setCurrentView(saved === 'radar' ? 'radar' : 'admin');
     } else {
       setCurrentView('radar');
     }
@@ -437,6 +464,7 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     clearAuthSession();
+    localStorage.removeItem('findaffinity_active_view');
     setCurrentUser(null);
     setCurrentView('radar');
     setCompanies([]);
@@ -476,7 +504,7 @@ export default function App() {
         currentUser={currentUser}
         onLogout={handleLogout}
         currentView={currentView}
-        onToggleView={setCurrentView}
+        onToggleView={handleToggleView}
         onOpenAddClientModal={handleOpenAddClientModal}
         onOpenDeleteClientModal={handleOpenDeleteClientModal}
         subscriptionInfo={subscriptionInfo}

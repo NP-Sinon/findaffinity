@@ -8,7 +8,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
-from src.database.models import Tenant, ClientCompany, ReconciliationBatch, BatchTransaction
+from src.database.models import (
+    Tenant,
+    ClientCompany,
+    ReconciliationBatch,
+    BatchTransaction,
+    JournalEntryRecord,
+    AuditLog,
+)
 from src.database.repository import ReconciliationRepository
 from src.services.batch_service import BatchReconciliationService
 
@@ -159,12 +166,31 @@ def delete_client(
 
     name = client.name
     fiscal_id = client.fiscal_id
-    db.delete(client)
-    db.commit()
+
+    try:
+        batch_ids = [b.id for b in db.query(ReconciliationBatch.id).filter(ReconciliationBatch.client_id == client_id).all()]
+        audit_filter = (AuditLog.client_id == client_id)
+        if batch_ids:
+            audit_filter = audit_filter | (AuditLog.batch_id.in_(batch_ids))
+        db.query(AuditLog).filter(audit_filter).delete(synchronize_session=False)
+
+        if batch_ids:
+            db.query(JournalEntryRecord).filter(JournalEntryRecord.batch_id.in_(batch_ids)).delete(synchronize_session=False)
+            db.query(BatchTransaction).filter(BatchTransaction.batch_id.in_(batch_ids)).delete(synchronize_session=False)
+            db.query(ReconciliationBatch).filter(ReconciliationBatch.id.in_(batch_ids)).delete(synchronize_session=False)
+
+        db.delete(client)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al eliminar empresa cliente en cascada: {str(e)}",
+        )
 
     return {
         "success": True,
-        "message": f"Empresa cliente '{name}' ({fiscal_id}) eliminada con éxito.",
+        "message": f"Empresa cliente '{name}' ({fiscal_id}) eliminada con éxito junto con sus lotes contables.",
         "deleted_client_id": client_id,
     }
 
@@ -798,8 +824,16 @@ def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     if not batch:
         raise HTTPException(status_code=404, detail="Lote no encontrado.")
 
-    db.delete(batch)
-    db.commit()
+    try:
+        db.query(AuditLog).filter(AuditLog.batch_id == batch_id).delete(synchronize_session=False)
+        db.query(JournalEntryRecord).filter(JournalEntryRecord.batch_id == batch_id).delete(synchronize_session=False)
+        db.query(BatchTransaction).filter(BatchTransaction.batch_id == batch_id).delete(synchronize_session=False)
+        db.delete(batch)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar lote: {str(e)}")
+
     return {"success": True, "deleted_batch_id": batch_id}
 
 
@@ -828,8 +862,14 @@ def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(ge
         elif tx.status == "RED":
             batch.red_count = max(0, (batch.red_count or 1) - 1)
 
-    db.delete(tx)
-    db.commit()
+    try:
+        db.query(JournalEntryRecord).filter(JournalEntryRecord.transaction_id == tx_id).delete(synchronize_session=False)
+        db.delete(tx)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar partida: {str(e)}")
+
     return {"success": True, "deleted_transaction_id": tx_id}
 
 
