@@ -411,3 +411,100 @@ def test_sample_data_folder_all_files_ingestion(api_client):
             assert res.status_code == 201, f"Error en PDF: {res.text}"
             assert res.json()["total_movements"] > 0
 
+
+def test_ephemeral_ram_zero_storage_mode(api_client):
+    """
+    Verifica que el 'Modo Efímero RAM (Zero-Storage)' procesa y concilia
+    perfectamente en memoria sin persistir en base de datos ni provocar crashes.
+    """
+    import uuid
+    from pathlib import Path
+
+    sa_login = api_client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    assert sa_login.status_code == 200
+    user_info = sa_login.json()["user"]
+    tenant_id = user_info["tenant_id"]
+
+    new_c = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": f"Ephemeral Test Corp {uuid.uuid4().hex[:6]}",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    assert new_c.status_code == 201
+    client_id = new_c.json()["id"]
+
+    # Contar lotes previos en DB para este cliente (debe ser 0)
+    batches_pre = api_client.get(f"/api/v1/batches?client_id={client_id}").json()
+    assert len(batches_pre) == 0
+
+    data_dir = Path(__file__).resolve().parent.parent / "prueba Data"
+    n43_path = data_dir / "extracto_bancario_norma43.n43"
+    inv_path = data_dir / "cartera_facturas_emitidas_20.csv"
+    stripe_path = data_dir / "extracto_stripe_ventas.csv"
+
+    # 1. Probar Norma 43 + Cartera en Modo Efímero RAM
+    with open(n43_path, "rb") as f_bank, open(inv_path, "rb") as f_inv:
+        res = api_client.post(
+            "/api/v1/batches",
+            data={
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "period_year": 2026,
+                "period_type": "ALL",
+                "start_month": 1,
+                "end_month": 12,
+                "ephemeral_mode": "true",
+            },
+            files={
+                "file": (n43_path.name, f_bank.read()),
+                "invoices_file": (inv_path.name, f_inv.read()),
+            },
+        )
+        assert res.status_code == 201, f"Error en ephemeral N43: {res.text}"
+        data = res.json()
+        assert data.get("ephemeral") is True
+        assert data["id"] == "BATCH-EPHEMERAL-RAM"
+        assert data["total_movements"] > 0
+        assert "transactions" in data
+        assert len(data["transactions"]) == data["total_movements"]
+        # Verificar integridad de campos en cada transacción efímera
+        for tx in data["transactions"]:
+            assert tx["status"] in ["GREEN", "YELLOW", "RED"]
+            assert "netAmountEur" in tx
+            assert "grossAmountEur" in tx
+            assert "dimensions" in tx
+            if tx.get("journal"):
+                assert "lines" in tx["journal"]
+                assert tx["journal"]["isBalanced"] is True
+
+    # 2. Probar Liquidación Stripe en Modo Efímero RAM
+    with open(stripe_path, "rb") as f_stripe, open(inv_path, "rb") as f_inv:
+        res_stripe = api_client.post(
+            "/api/v1/batches",
+            data={
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "period_year": 2026,
+                "period_type": "ALL",
+                "start_month": 1,
+                "end_month": 12,
+                "ephemeral_mode": "true",
+            },
+            files={
+                "file": (stripe_path.name, f_stripe.read()),
+                "invoices_file": (inv_path.name, f_inv.read()),
+            },
+        )
+        assert res_stripe.status_code == 201, f"Error en ephemeral Stripe: {res_stripe.text}"
+        data_stripe = res_stripe.json()
+        assert data_stripe.get("ephemeral") is True
+        assert data_stripe["total_movements"] > 0
+        assert len(data_stripe["transactions"]) > 0
+
+    # 3. Comprobar que CERO lotes fueron guardados en Base de Datos (Zero-Storage estricto)
+    batches_post = api_client.get(f"/api/v1/batches?client_id={client_id}").json()
+    assert len(batches_post) == 0, f"Se persistieron {len(batches_post)} lotes cuando debió ser Zero-Storage."
+

@@ -7328,32 +7328,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "17c9bbc8-7bda-4ea9-a6d6-cc1f185d3fde",
+  "tenant_id": "3650572c-4ae6-4da8-a4c0-57c23ea03457",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-14",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "7d9fe951a5dca0741d701cd19aa170d9befedfc2e5adeec982e427ac2ee5ecf6",
+  "head_hash_sha256": "d8a87c895e7e9c376415b981276f9900f8e1726561ae770595f4075cb45e8d3c",
   "audit_events": [
     {
-      "event_id": "dee326c4-6cd2-4ee8-a8bc-13296aa14683",
+      "event_id": "00bc472e-413c-46a4-875a-8060ac3ca68e",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T19:15:43.270950",
-      "sha256_hash": "b520942e23e57b9a3a4f719b1ba84a36ef0d0b4c9582517afd52e8594277e811",
+      "timestamp": "2026-10-14T19:34:10.746882",
+      "sha256_hash": "0fee07da1cc5de1bf301e50d10ee56e6dba72a781268dc252023bb19561cc394",
       "details": {
-        "batch_id": "ae30ca79-94fa-4a9d-bad1-ce9a4afe00cf",
+        "batch_id": "155d0c3c-3a33-40e8-b7e7-b789a87dac68",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "569711f2-8fcb-4e7b-ab08-0dac364b68af",
+      "event_id": "950c5934-71bc-49e2-8071-e3dede8acfb2",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T19:15:43.283949",
-      "sha256_hash": "052e7f57f444b04016144ae8a4e33998f19c11739df21c0789c5aeb9104bf8bd",
+      "timestamp": "2026-10-14T19:34:10.758401",
+      "sha256_hash": "5fa2627feba376d91a1986bdeefbbeebfe0accc1c65d3bfedea4e6502f68ad28",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7361,23 +7361,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "1383e0dd-b36a-4a89-b349-686244cf9963",
+      "event_id": "00945251-ba95-44cb-b32a-b02cdc07a75a",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T19:15:43.289686",
-      "sha256_hash": "541200a1ba5860582c94645a50aa14e115fddd7df9f0b3127d4c70cf82ea7080",
+      "timestamp": "2026-10-14T19:34:10.764271",
+      "sha256_hash": "2a97083a196eb5669d93f1895d4b7f50ac71c500ccbf95350cfb81f59a8cc596",
       "details": {
-        "batch_id": "38c2d170-795c-41ab-a093-3d0381ca53e6",
+        "batch_id": "06b26c01-973b-446e-b9c3-0fabf3e6a1cf",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "893a0b0d-2cdc-4340-a668-3949e06a5fc9",
+      "event_id": "bc8ead68-f949-4c5f-a429-28ec0bf7c4b3",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T19:15:43.295387",
-      "sha256_hash": "49a9762be1c21c6963697681e0ae1ff328125408e65ce08363a9603fd893cd3d",
+      "timestamp": "2026-10-14T19:34:10.769957",
+      "sha256_hash": "f95d930c90d0b1457898812cb8bf442cc2486888ce663b5389b68d8f4b7e1f31",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7385,23 +7385,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "b3fb40c4-44af-4faa-8049-cc509e9fb50c",
+      "event_id": "19d51807-d963-4c4b-b9e3-9f172ae9db9d",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T19:15:43.299566",
-      "sha256_hash": "cf35f55d13557b2781d19fc97068f6ca74d4e53e040441f227ef3dad870484ac",
+      "timestamp": "2026-10-14T19:34:10.774069",
+      "sha256_hash": "ce4ece59134a14f29f115c8025b5dd4913c02abe2090585b65d22b0d0e093674",
       "details": {
-        "batch_id": "5b9178da-8798-4329-8953-276c5566ac01",
+        "batch_id": "0980eed8-b274-45cf-8944-8a96e0f2280a",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "9331cbe6-e49d-455c-87b2-f2dd2831fbbf",
+      "event_id": "1378110f-2040-4871-ae77-d7f19b9a0e7a",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T19:15:43.318330",
-      "sha256_hash": "7d9fe951a5dca0741d701cd19aa170d9befedfc2e5adeec982e427ac2ee5ecf6",
+      "timestamp": "2026-10-14T19:34:10.792072",
+      "sha256_hash": "d8a87c895e7e9c376415b981276f9900f8e1726561ae770595f4075cb45e8d3c",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7415,7 +7415,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xf5 in position 10: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xac in position 11: invalid start byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -12081,71 +12081,206 @@ async def upload_and_process_batch(
         is_ephemeral = bool(ephemeral_mode and str(ephemeral_mode).lower() in ("true", "1"))
         if is_ephemeral:
             from src.reconciliation.engine import BatchPayoutReconciliationEngine
-            from src.accounting.double_entry import AccountingEntryBuilder
+            from src.disambiguation.confidence_scorer import BankDisambiguationScorer
+            from src.accounting.double_entry import AccountingEntryBuilder, DoubleEntryJournal, JournalEntryLine
 
-            reconciled_groups = BatchPayoutReconciliationEngine.reconcile_payouts(
-                bank_transactions=bank_txs,
-                open_invoices=open_invoices,
-                gateway_transactions=gw_txs,
-            )
+            payout_engine = BatchPayoutReconciliationEngine()
+            remaining_invoices = list(open_invoices)
             response_txs = []
-            for idx, grp in enumerate(reconciled_groups, start=1):
-                bank_tx = grp.bank_tx
-                invoices = grp.matched_invoices
-                matched_inv_dicts = [
-                    {
-                        "account_code": inv.customer_fiscal_id or f"430{i:06d}",
-                        "invoice_number": inv.invoice_number,
-                        "gross_cents": inv.gross_amount_cents,
-                        "fee_cents": grp.allocated_fee_cents // max(1, len(invoices)),
-                        "customer_name": inv.customer_name,
-                    }
-                    for i, inv in enumerate(invoices, start=1)
-                ]
-                journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
-                    entry_number=idx,
-                    entry_date=bank_tx.operation_date,
-                    bank_account_code=client.bank_account_code or "572000001",
-                    fee_account_code=client.fee_account_code or "626000001",
-                    payout_net_cents=bank_tx.amount_cents,
-                    matched_invoices=matched_inv_dicts,
-                    gateway_name=resolved_gw,
-                    account_length=client.account_length or 9,
-                )
-                response_txs.append({
-                    "id": f"TX-EPHEMERAL-{idx:04d}",
-                    "type": "BATCH_PAYOUT",
-                    "source": bank_tx.transaction_id,
-                    "date": bank_tx.operation_date.isoformat(),
-                    "valueDate": bank_tx.value_date.isoformat(),
-                    "bankAccountCode": client.bank_account_code or "572000001",
-                    "concept": bank_tx.concept,
-                    "netAmountEur": round(bank_tx.amount_cents / 100.0, 2),
-                    "grossAmountEur": round(grp.total_matched_gross_cents / 100.0, 2),
-                    "feeAmountEur": round(grp.allocated_fee_cents / 100.0, 2),
-                    "status": grp.status,
-                    "confidenceScore": grp.confidence_score,
-                    "solverUsed": grp.solver_used,
-                    "matchedCount": len(invoices),
-                    "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2),
-                    "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 1.0, "s_fiscal": 1.0},
-                    "auditExplanation": "Procesado en Modo Efímero RAM (Zero-Storage) sin retención en disco.",
-                    "journal": {
+            entry_counter = 100
+
+            for bank_tx in bank_txs:
+                entry_counter += 1
+                entry_date = bank_tx.operation_date
+                concept_upper = bank_tx.concept.upper()
+                is_gw = any(k in concept_upper for k in ["STRIPE", "REDSYS", "PAYPAL", "TPV", "SUMUP", "LIQUIDACION"])
+
+                if is_gw and len(remaining_invoices) > 0:
+                    report = payout_engine.reconcile_payout(
+                        bank_tx=bank_tx,
+                        open_invoices=remaining_invoices,
+                        gateway_transactions=gw_txs,
+                        gateway_id=resolved_gw,
+                        bank_account_code=client.bank_account_code or "572000001",
+                        fee_account_code=client.fee_account_code or "626000001",
+                        entry_number=entry_counter,
+                    )
+                    if report.is_reconciled and report.journal_entry:
+                        status_str = "GREEN"
+                        conf = 0.985
+                        solver = report.solver_used
+                        explanation = f"Liquidación {resolved_gw} de {len(report.matched_invoice_ids)} facturas con descuadre 0.00 €."
+                        gross_cents = report.total_gross_cents
+                        fee_cents = report.total_fees_cents
+                        matched_cnt = len(report.matched_invoice_ids)
+                        journal = report.journal_entry
+                        matched_set = set(report.matched_invoice_ids)
+                        remaining_invoices = [inv for inv in remaining_invoices if inv.invoice_id not in matched_set]
+                    else:
+                        status_str = "YELLOW" if report.total_gross_cents > 0 else "RED"
+                        conf = 0.75 if status_str == "YELLOW" else 0.40
+                        solver = "Revisión Heurística"
+                        explanation = "Liquidación con diferencia respecto a la cartera viva disponible."
+                        gross_cents = bank_tx.amount_cents
+                        fee_cents = 0
+                        matched_cnt = 0
+                        journal = None
+                else:
+                    best_match_inv = None
+                    best_score_res = None
+                    for inv in remaining_invoices:
+                        score_res = BankDisambiguationScorer.evaluate(bank_tx, inv)
+                        if best_score_res is None or score_res.confidence_score > best_score_res.confidence_score:
+                            best_score_res = score_res
+                            best_match_inv = inv
+
+                    if best_score_res and best_score_res.confidence_score >= 0.70:
+                        status_str = best_score_res.status.value
+                        conf = best_score_res.confidence_score
+                        solver = "Desambiguación Difusa"
+                        explanation = best_score_res.explanation
+                        gross_cents = best_match_inv.gross_amount_cents
+                        fee_cents = 0
+                        matched_cnt = 1
+                        cust_acc_suffix = getattr(best_match_inv, "customer_id", None) or getattr(best_match_inv, "customer_fiscal_id", None) or f"{entry_counter}"
+                        customer_acc = f"430{str(cust_acc_suffix)[-6:].zfill(6)}"
+                        journal = DoubleEntryJournal(
+                            entry_number=entry_counter,
+                            entry_date=entry_date,
+                            description=f"Cobro Transf. {best_match_inv.invoice_number}"[:30],
+                        )
+                        journal.lines.append(
+                            JournalEntryLine(
+                                account_code=client.bank_account_code or "572000001",
+                                account_name="Bancos c/c",
+                                concept=f"Transf. {best_match_inv.invoice_number}"[:30],
+                                document_number=best_match_inv.invoice_number,
+                                debit_cents=bank_tx.amount_cents,
+                                credit_cents=0,
+                                contrapartida=customer_acc,
+                            )
+                        )
+                        journal.lines.append(
+                            JournalEntryLine(
+                                account_code=customer_acc,
+                                account_name=f"Cliente: {best_match_inv.customer_name}"[:40],
+                                concept=f"Canc. {best_match_inv.invoice_number}"[:30],
+                                document_number=best_match_inv.invoice_number,
+                                debit_cents=0,
+                                credit_cents=bank_tx.amount_cents,
+                                contrapartida=client.bank_account_code or "572000001",
+                            )
+                        )
+                        journal.check_balance()
+                        if status_str == "GREEN":
+                            remaining_invoices = [inv for inv in remaining_invoices if inv.invoice_id != best_match_inv.invoice_id]
+                    else:
+                        status_str = "RED"
+                        conf = 0.35
+                        solver = "Sin Coincidencia"
+                        explanation = "Ingreso bancario sin factura viva coincidente en cartera."
+                        gross_cents = bank_tx.amount_cents
+                        fee_cents = 0
+                        matched_cnt = 0
+                        journal = DoubleEntryJournal(
+                            entry_number=entry_counter,
+                            entry_date=entry_date,
+                            description=f"Partida Pte. Aplicación {entry_date}"[:30],
+                        )
+                        journal.lines.append(
+                            JournalEntryLine(
+                                account_code=client.bank_account_code or "572000001",
+                                account_name="Bancos c/c",
+                                concept="Ingreso pte. identificar"[:30],
+                                document_number=f"DOC-{entry_counter}",
+                                debit_cents=bank_tx.amount_cents,
+                                credit_cents=0,
+                                contrapartida="555000000",
+                            )
+                        )
+                        journal.lines.append(
+                            JournalEntryLine(
+                                account_code="555000000",
+                                account_name="Partidas pendientes de aplicación",
+                                concept="Pendiente aplicación"[:30],
+                                document_number=f"DOC-{entry_counter}",
+                                debit_cents=0,
+                                credit_cents=bank_tx.amount_cents,
+                                contrapartida=client.bank_account_code or "572000001",
+                            )
+                        )
+                        journal.check_balance()
+
+                journal_dict = None
+                if journal:
+                    journal_dict = {
                         "entryNumber": journal.entry_number,
+                        "entry_number": journal.entry_number,
                         "date": journal.entry_date.isoformat(),
                         "isBalanced": journal.is_balanced,
+                        "is_balanced": journal.is_balanced,
+                        "entryHashSha256": "EPHEMERAL_RAM_HASH",
+                        "entry_hash_sha256": "EPHEMERAL_RAM_HASH",
                         "lines": [
                             {
                                 "accountCode": l.account_code,
+                                "account_code": l.account_code,
+                                "accountName": l.account_name,
+                                "account_name": l.account_name,
                                 "concept": l.concept,
                                 "documentNumber": l.document_number,
+                                "document_number": l.document_number,
                                 "debitEur": round(l.debit_cents / 100.0, 2),
                                 "creditEur": round(l.credit_cents / 100.0, 2),
+                                "debit_cents": l.debit_cents,
+                                "credit_cents": l.credit_cents,
                                 "contrapartida": l.contrapartida,
                             }
                             for l in journal.lines
                         ],
-                    },
+                    }
+
+                dims_dict = {
+                    "s_importe": 1.0 if status_str == "GREEN" else 0.85,
+                    "s_fecha": 0.95,
+                    "s_texto": 0.90 if status_str == "GREEN" else 0.65,
+                    "s_fiscal": 1.0 if status_str == "GREEN" else 0.70,
+                }
+
+                tx_type = "BATCH_PAYOUT" if is_gw else ("TRANSFER" if matched_cnt > 0 else "EXCEPTION")
+
+                response_txs.append({
+                    "id": f"TX-EPHEMERAL-{entry_counter:04d}",
+                    "externalId": bank_tx.transaction_id,
+                    "external_id": bank_tx.transaction_id,
+                    "type": tx_type,
+                    "source": bank_tx.payer_or_payee or (f"Liquidación {resolved_gw}" if is_gw else "Extracto Bancario"),
+                    "date": bank_tx.operation_date.isoformat(),
+                    "valueDate": bank_tx.value_date.isoformat(),
+                    "value_date": bank_tx.value_date.isoformat(),
+                    "bankAccountCode": client.bank_account_code or "572000001",
+                    "bank_account_code": client.bank_account_code or "572000001",
+                    "concept": bank_tx.concept,
+                    "netAmountEur": round(bank_tx.amount_cents / 100.0, 2),
+                    "net_amount_eur": round(bank_tx.amount_cents / 100.0, 2),
+                    "grossAmountEur": round(gross_cents / 100.0, 2),
+                    "gross_amount_eur": round(gross_cents / 100.0, 2),
+                    "feeAmountEur": round(fee_cents / 100.0, 2),
+                    "fee_amount_eur": round(fee_cents / 100.0, 2),
+                    "status": status_str,
+                    "confidenceScore": conf,
+                    "confidence_score": conf,
+                    "solverUsed": solver,
+                    "solver_used": solver,
+                    "matchedCount": matched_cnt,
+                    "matched_count": matched_cnt,
+                    "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2) if journal else 0.0,
+                    "dimensions": dims_dict,
+                    "auditExplanation": explanation or "Modo Efímero RAM (Zero-Storage)",
+                    "audit_explanation": explanation or "Modo Efímero RAM (Zero-Storage)",
+                    "isApproved": False,
+                    "is_approved": False,
+                    "journal": journal_dict,
                 })
 
             return {
@@ -12159,10 +12294,13 @@ async def upload_and_process_batch(
                 "end_month": end_month,
                 "status": "PROCESSED",
                 "total_movements": len(response_txs),
-                "transactions": response_txs,
+                "total_volume_eur": round(sum(t["netAmountEur"] for t in response_txs), 2),
                 "green_count": sum(1 for t in response_txs if t["status"] == "GREEN"),
                 "yellow_count": sum(1 for t in response_txs if t["status"] == "YELLOW"),
                 "red_count": sum(1 for t in response_txs if t["status"] == "RED"),
+                "file_name": file_name,
+                "file_hash_sha256": "EPHEMERAL_RAM_ZERO_STORAGE",
+                "transactions": response_txs,
             }
 
         batch = BatchReconciliationService.process_and_persist_batch(
@@ -18831,6 +18969,103 @@ def test_sample_data_folder_all_files_ingestion(api_client):
             )
             assert res.status_code == 201, f"Error en PDF: {res.text}"
             assert res.json()["total_movements"] > 0
+
+
+def test_ephemeral_ram_zero_storage_mode(api_client):
+    """
+    Verifica que el 'Modo Efímero RAM (Zero-Storage)' procesa y concilia
+    perfectamente en memoria sin persistir en base de datos ni provocar crashes.
+    """
+    import uuid
+    from pathlib import Path
+
+    sa_login = api_client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    assert sa_login.status_code == 200
+    user_info = sa_login.json()["user"]
+    tenant_id = user_info["tenant_id"]
+
+    new_c = api_client.post("/api/v1/clients", json={
+        "tenant_id": tenant_id,
+        "name": f"Ephemeral Test Corp {uuid.uuid4().hex[:6]}",
+        "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+    })
+    assert new_c.status_code == 201
+    client_id = new_c.json()["id"]
+
+    # Contar lotes previos en DB para este cliente (debe ser 0)
+    batches_pre = api_client.get(f"/api/v1/batches?client_id={client_id}").json()
+    assert len(batches_pre) == 0
+
+    data_dir = Path(__file__).resolve().parent.parent / "prueba Data"
+    n43_path = data_dir / "extracto_bancario_norma43.n43"
+    inv_path = data_dir / "cartera_facturas_emitidas_20.csv"
+    stripe_path = data_dir / "extracto_stripe_ventas.csv"
+
+    # 1. Probar Norma 43 + Cartera en Modo Efímero RAM
+    with open(n43_path, "rb") as f_bank, open(inv_path, "rb") as f_inv:
+        res = api_client.post(
+            "/api/v1/batches",
+            data={
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "period_year": 2026,
+                "period_type": "ALL",
+                "start_month": 1,
+                "end_month": 12,
+                "ephemeral_mode": "true",
+            },
+            files={
+                "file": (n43_path.name, f_bank.read()),
+                "invoices_file": (inv_path.name, f_inv.read()),
+            },
+        )
+        assert res.status_code == 201, f"Error en ephemeral N43: {res.text}"
+        data = res.json()
+        assert data.get("ephemeral") is True
+        assert data["id"] == "BATCH-EPHEMERAL-RAM"
+        assert data["total_movements"] > 0
+        assert "transactions" in data
+        assert len(data["transactions"]) == data["total_movements"]
+        # Verificar integridad de campos en cada transacción efímera
+        for tx in data["transactions"]:
+            assert tx["status"] in ["GREEN", "YELLOW", "RED"]
+            assert "netAmountEur" in tx
+            assert "grossAmountEur" in tx
+            assert "dimensions" in tx
+            if tx.get("journal"):
+                assert "lines" in tx["journal"]
+                assert tx["journal"]["isBalanced"] is True
+
+    # 2. Probar Liquidación Stripe en Modo Efímero RAM
+    with open(stripe_path, "rb") as f_stripe, open(inv_path, "rb") as f_inv:
+        res_stripe = api_client.post(
+            "/api/v1/batches",
+            data={
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "period_year": 2026,
+                "period_type": "ALL",
+                "start_month": 1,
+                "end_month": 12,
+                "ephemeral_mode": "true",
+            },
+            files={
+                "file": (stripe_path.name, f_stripe.read()),
+                "invoices_file": (inv_path.name, f_inv.read()),
+            },
+        )
+        assert res_stripe.status_code == 201, f"Error en ephemeral Stripe: {res_stripe.text}"
+        data_stripe = res_stripe.json()
+        assert data_stripe.get("ephemeral") is True
+        assert data_stripe["total_movements"] > 0
+        assert len(data_stripe["transactions"]) > 0
+
+    # 3. Comprobar que CERO lotes fueron guardados en Base de Datos (Zero-Storage estricto)
+    batches_post = api_client.get(f"/api/v1/batches?client_id={client_id}").json()
+    assert len(batches_post) == 0, f"Se persistieron {len(batches_post)} lotes cuando debió ser Zero-Storage."
 
 
 
