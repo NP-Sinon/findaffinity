@@ -1,0 +1,21 @@
+﻿Nº Factura;Cliente / Razón Social;CIF / NIF;Fecha Emisión;Fecha Vencimiento;Base Imponible (€);% IVA;Cuota IVA (€);Total Factura (€);Subcuenta 430;Estado de Cobro;Concepto Principal
+FRA-2026-001;Logística Exprés Ibérica S.L.;B-87654321;2026-10-02;2026-10-02;1033,06;21%;216,94;1250,00;430000001;Cobrada por Stripe;Servicios de transporte y distribución paletizada Q3
+FRA-2026-002;Telefónica Soluciones Digitales S.A.;A-28001234;2026-10-03;2026-10-03;735,95;21%;154,55;890,50;430000002;Cobrada por Stripe;Licencia software cloud computing y soporte 24/7
+FRA-2026-003;Almacenes Centrales Madrid S.L.;B-81234567;2026-10-05;2026-10-05;2024,79;21%;425,21;2450,00;430000003;Cobrada por Transferencia B2B;Suministro estanterías industriales modulares tipo rack
+FRA-2026-004;Distribuciones Alimentarias del Sur S.L.;B-41889900;2026-10-05;2026-10-05;574,38;21%;120,62;695,00;430000004;Cobrada por Stripe;Lote embalajes isotérmicos para alimentación fresca
+FRA-2026-005;Consultoría Tecnológica Novatech S.L.;B-91827364;2026-10-06;2026-10-10;2561,98;21%;538,02;3100,00;430000005;Pendiente de cobro;Auditoría de ciberseguridad y test de intrusión web
+FRA-2026-006;Construcciones & Reformas Mediterráneo S.L.;B-54892103;2026-10-07;2026-10-12;1471,28;21%;308,97;1780,25;430000006;Cobrada por Redsys TPV;Materiales aislantes térmicos y placas yeso laminado
+FRA-2026-007;Papelería e Imprenta Gráficas Cantabria S.L.;B-33445566;2026-10-07;2026-10-12;347,11;21%;72,89;420,00;430000007;Cobrada por Redsys TPV;Impresión de catálogos corporativos y flyers A5
+FRA-2026-008;CONSTRUCCIONES HNOS. MARTINEZ S.L.;B-41982737;2026-10-08;2026-10-10;1198,35;21%;251,65;1450,00;430000008;Cobrada por Transferencia B2B;Instalación cuadros eléctricos trifásicos y canalización
+FRA-2026-009;AMAZON SERVICES EUROPE S.A.R.L.;W0185698H;2026-10-08;2026-10-15;2410,00;0%;0,00;2410,00;430000009;Cobrada por Transferencia B2B;Servicios de logística e intermediación comercial europea (ISP)
+FRA-2026-010;Asesoría Fiscal & Laboral Castelar S.L.P.;B-86543219;2026-10-09;2026-10-20;785,12;21%;164,88;950,00;430000010;Pendiente de cobro;Honorarios consultoría fiscal cierre 3T e IS anticipado
+FRA-2026-011;Maquinaria Industrial Aragón S.L.;B-50987654;2026-10-09;2026-10-25;3983,47;21%;836,53;4820,00;430000011;Pendiente de cobro;Mantenimiento preventivo y sustitución bombas hidráulicas
+FRA-2026-012;Farmacéutica & Cosmética Cataluña S.A.;A-08123987;2026-10-10;2026-10-10;1351,65;21%;283,85;1635,50;430000012;Cobrada por Stripe;Envases estériles de vidrio grado farmacopea (100ml)
+FRA-2026-013;Hotelería & Alojamientos Turísticos Levante S.L.;B-98765432;2026-10-10;2026-10-12;644,63;21%;135,37;780,00;430000013;Cobrada por Redsys TPV;Dotación lencería de cama y baño 100% algodón egipcio
+FRA-2026-014;Cítricos & Frutas del Turia S.L.;B-46123456;2026-10-11;2026-10-25;1776,86;21%;373,14;2150,00;430000014;Pendiente de cobro;Cajas de madera tratada para exportación agrícola
+FRA-2026-015;Frigoríficos & Pesca del Atlántico S.L.;B-36987123;2026-10-11;2026-10-15;2809,92;21%;590,08;3400,00;430000015;Cobrada por Transferencia B2B;Reparación compresores de congelación rápida túnel B
+FRA-2026-016;Textil y Confección Galicia S.L.;B-15432987;2026-10-12;2026-10-12;926,24;21%;194,51;1120,75;430000016;Cobrada por Stripe;Tejido técnico transpirable impermeable rollo 50m
+FRA-2026-017;Metalúrgica del Besaya S.L.;B-39876541;2026-10-12;2026-10-30;4628,10;21%;971,90;5600,00;430000017;Pendiente de cobro;Perfilería de acero inoxidable grado marino AISI 316
+FRA-2026-018;Bodegas y Viñedos de La Rioja S.L.;B-26543210;2026-10-13;2026-10-20;735,54;21%;154,46;890,00;430000018;Cobrada por Transferencia B2B;Barricas de roble francés 225L para crianza enológica
+FRA-2026-019;Embutidos & Jamones de Burgos S.L.;B-09876543;2026-10-13;2026-10-13;1107,44;21%;232,56;1340,00;430000019;Cobrada por Stripe;Bolsas de envasado al vacío retráctil alta barrera
+FRA-2026-020;Software & Soluciones Cloud Valladolid S.L.;B-47123985;2026-10-14;2026-10-31;2355,37;21%;494,63;2850,00;430000020;Pendiente de cobro;Desarrollo API microservicios y despliegue contenedor Docker

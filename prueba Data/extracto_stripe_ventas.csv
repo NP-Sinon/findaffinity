@@ -1,0 +1,7 @@
+id,Description,Created (UTC),Amount,Fee,Net,Customer Name,Customer Email,Invoice / Order
+py_1PqA01,Pago pedido tienda online,2026-10-02 10:15,1250.00,17.75,1232.25,Logística Exprés Ibérica S.L.,admin@logisticaexpres.es,FRA-2026-001
+py_1PqA02,Suscripción Cloud Mensual,2026-10-03 11:30,890.50,12.65,877.85,Telefónica Soluciones Digitales S.A.,facturacion@telefonica.es,FRA-2026-002
+py_1PqA04,Embalajes isotérmicos lote,2026-10-05 09:20,695.00,9.87,685.13,Distribuciones Alimentarias del Sur S.L.,compras@distsur.es,FRA-2026-004
+py_1PqA12,Envases vidrio laboratorio,2026-10-10 16:40,1635.50,23.22,1612.28,Farmacéutica & Cosmética Cataluña S.A.,admin@farmacosmetica.cat,FRA-2026-012
+py_1PqA16,Rollos tejido transpirable,2026-10-12 14:10,1120.75,15.91,1104.84,Textil y Confección Galicia S.L.,pedidos@textilgalicia.com,FRA-2026-016
+py_1PqA19,Bolsas envasado al vacío,2026-10-13 18:05,1340.00,19.02,1320.98,Embutidos & Jamones de Burgos S.L.,jamones@embutidosburgos.es,FRA-2026-019
