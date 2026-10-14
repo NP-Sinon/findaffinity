@@ -1,49 +1,51 @@
 """
-Módulo de Conexión a Base de Datos Relacional (SQLAlchemy 2.0)
-Soporta SQLite thread-safe por defecto y PostgreSQL para despliegue productivo.
+Motor de Conexión SQLAlchemy Híbrido (SQLite WAL Local / PostgreSQL Cloud en Supabase o Neon)
 """
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Directorio de datos predeterminado
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "findaffinity.db"
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
-# Normalizar prefijo postgres:// para compatibilidad con SQLAlchemy 2.0
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+RAW_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'findaffinity.db'}")
 
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        echo=False,
-        future=True,
-    )
+# Compatibilidad automática con URLs de Render, Railway, Supabase y Neon
+if RAW_DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = RAW_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 else:
-    # Configuración de producción para PostgreSQL
-    engine = create_engine(
-        DATABASE_URL,
-        pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
-        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
-        pool_pre_ping=True,
-        pool_recycle=300,
-        echo=False,
-        future=True,
-    )
+    DATABASE_URL = RAW_DATABASE_URL
+
+is_sqlite = DATABASE_URL.startswith("sqlite")
+
+engine_kwargs = {"pool_pre_ping": True}
+if is_sqlite:
+    engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
+else:
+    engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
+    engine_kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
+
+if is_sqlite:
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.execute("PRAGMA foreign_keys=ON;")
+        finally:
+            cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 
 def get_db():
-    """Generador de sesiones de base de datos para inyección de dependencias."""
     db = SessionLocal()
     try:
         yield db

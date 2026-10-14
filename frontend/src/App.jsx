@@ -9,6 +9,8 @@ import { ClientModal } from './components/ClientModal';
 import AuthModal from './components/AuthModal';
 import { AuthScreen } from './components/AuthScreen';
 import { AdminPanel } from './components/AdminPanel';
+import { PaywallModal } from './components/PaywallModal';
+import { StripeSyncModal } from './components/StripeSyncModal';
 import { MOCK_COMPANIES, INITIAL_TRANSACTIONS } from './data/mockAuditData';
 import { 
   checkBackendHealth, 
@@ -25,7 +27,9 @@ import {
   bulkApproveYellowsApi,
   getStoredAuthSession,
   clearAuthSession,
-  getCurrentUserApi
+  fetchTenantSubscription,
+  upgradeTenantPlanApi,
+  syncStripePayoutsApi,
 } from './services/api';
 import { Check } from 'lucide-react';
 
@@ -50,6 +54,11 @@ export default function App() {
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [clientModalMode, setClientModalMode] = useState('add');
   const [clientModalTarget, setClientModalTarget] = useState(null);
+
+  // Modal de Paywall y Stripe Sync
+  const [showPaywallModal, setShowPaywallModal] = useState(false);
+  const [showStripeSyncModal, setShowStripeSyncModal] = useState(false);
+  const [subscriptionInfo, setSubscriptionInfo] = useState(null);
 
   // Estados de Autenticación & Usuario
   const [currentUser, setCurrentUser] = useState(() => {
@@ -120,7 +129,18 @@ export default function App() {
       setCompanies([]);
       setSelectedCompany(null);
       setTransactions([]);
+      setSubscriptionInfo(null);
       return;
+    }
+
+    const tenantIdToQuery = user.tenant_id;
+    if (tenantIdToQuery) {
+      try {
+        const sub = await fetchTenantSubscription(tenantIdToQuery);
+        if (sub) setSubscriptionInfo(sub);
+      } catch (err) {
+        console.warn('Error consultando suscripción:', err);
+      }
     }
 
     if (user.tenant_id) {
@@ -133,7 +153,6 @@ export default function App() {
           setSelectedErp(firstComp.defaultErp || 'A3');
           await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
         } else {
-          // El usuario NO tiene clientes aún: dejar lista vacía (cero empresas 'por la cara')
           setCompanies([]);
           setSelectedCompany(null);
           setTransactions([]);
@@ -148,6 +167,8 @@ export default function App() {
           setTenants(tList);
           const firstTenant = tList[0];
           setCurrentTenant(firstTenant);
+          const sub = await fetchTenantSubscription(firstTenant.id);
+          if (sub) setSubscriptionInfo(sub);
           const cList = await fetchClients(firstTenant.id);
           if (cList && cList.length > 0) {
             setCompanies(cList);
@@ -353,7 +374,14 @@ export default function App() {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
         setIsProcessing(false);
         triggerToast(`Lote procesado y persistido con éxito (${res.data.total_movements} movimientos).`);
+        const sub = await fetchTenantSubscription(tenantIdToUse);
+        if (sub) setSubscriptionInfo(sub);
         return res.data;
+      } else if (res && res.paywallTriggered) {
+        setIsProcessing(false);
+        setShowPaywallModal(true);
+        triggerToast('Límite del Plan Gratuito alcanzado (25 facturas). Elige un plan para continuar.');
+        return null;
       } else {
         setIsProcessing(false);
         triggerToast(`Error: ${res?.error || 'No se pudo procesar el archivo'}`);
@@ -372,7 +400,59 @@ export default function App() {
     });
   }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
 
-  // Cargar Lote Demo de Auditoría (SOLO bajo petición explícita)
+  // Sincronización directa con Stripe API
+  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
+    if (!selectedCompany) {
+      triggerToast('Añade o selecciona una Empresa Cliente antes de conectar Stripe.');
+      handleOpenAddClientModal();
+      return;
+    }
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    if (!tenantIdToUse) {
+      triggerToast('No se ha detectado el identificador de su despacho.');
+      return;
+    }
+
+    setIsProcessing(true);
+    const res = await syncStripePayoutsApi({
+      tenantId: tenantIdToUse,
+      clientId: selectedCompany.id,
+      stripeRestrictedKey,
+      year: selectedYear,
+      startMonth,
+      endMonth,
+      ephemeralMode,
+    });
+    setIsProcessing(false);
+
+    if (res.success && res.data) {
+      setTransactions(res.data.transactions || []);
+      triggerToast(`Stripe API: ${res.data.total_movements} transferencias sincronizadas y cuadradas.`);
+      const sub = await fetchTenantSubscription(tenantIdToUse);
+      if (sub) setSubscriptionInfo(sub);
+    } else if (res.paywallTriggered) {
+      setShowPaywallModal(true);
+      triggerToast('Límite del Plan Gratuito alcanzado (25 facturas). Elige un plan para continuar.');
+    } else {
+      triggerToast(`Error Stripe: ${res.error || 'Fallo de conexión'}`);
+    }
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, triggerToast, handleOpenAddClientModal]);
+
+  // Actualización de plan desde el PaywallModal
+  const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    if (!tenantIdToUse) return;
+    const res = await upgradeTenantPlanApi(tenantIdToUse, newPlan, extraBlocks);
+    if (res.success) {
+      triggerToast(`Plan ${res.data?.new_plan || newPlan} activado con éxito. Exportación ilimitada desbloqueada.`);
+      const sub = await fetchTenantSubscription(tenantIdToUse);
+      if (sub) setSubscriptionInfo(sub);
+    } else {
+      triggerToast(`Error al actualizar suscripción: ${res.error}`);
+    }
+  }, [currentUser, currentTenant, triggerToast]);
+
+  // Cargar Lote Demo de Auditoría
   const handleLoadDemoBatch = useCallback(() => {
     setIsProcessing(true);
     setTimeout(() => {
@@ -422,6 +502,7 @@ export default function App() {
     setTransactions([]);
     setBatches([]);
     setCurrentBatchId(null);
+    setSubscriptionInfo(null);
     triggerToast('Sesión finalizada');
   }, [triggerToast]);
 
@@ -446,7 +527,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
-      {/* 1. Barra superior limpia (cero métricas invasivas, aislamiento estricto en vista Admin) */}
+      {/* 1. Barra superior limpia */}
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -461,7 +542,7 @@ export default function App() {
         onOpenDeleteClientModal={handleOpenDeleteClientModal}
       />
 
-      {/* Contenedor Principal: Conmutador entre Panel ADMIN (Exclusivo SUPERADMIN) y Radar Contable */}
+      {/* Contenedor Principal: Conmutador entre Panel ADMIN y Radar Contable */}
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <AdminPanel 
@@ -476,6 +557,7 @@ export default function App() {
             onLoadDemoBatch={handleLoadDemoBatch}
             isProcessing={isProcessing}
             onFileProcessed={handleFileUploaded}
+            onOpenStripeSync={() => setShowStripeSyncModal(true)}
           />
 
           {/* 3. El Radar de Conciliación y Desambiguación con vaciado y eliminación de partidas */}
@@ -506,6 +588,8 @@ export default function App() {
             onSelectErp={setSelectedErp}
             selectedCompany={selectedCompany}
             batchId={currentBatchId}
+            paywallLocked={Boolean(subscriptionInfo?.paywall_triggered)}
+            onOpenPaywall={() => setShowPaywallModal(true)}
           />
         </main>
       )}
@@ -550,12 +634,33 @@ export default function App() {
         />
       )}
 
-      {/* Modal de Autenticación (Login / Register / Forgot Password) */}
+      {/* Modal de Autenticación */}
       <AuthModal
         isOpen={showAuthModal}
         initialView={authModalView}
         onClose={() => setShowAuthModal(false)}
         onAuthSuccess={handleAuthSuccess}
+      />
+
+      {/* Modal de Paywall Freemium (PLG) */}
+      <PaywallModal
+        isOpen={showPaywallModal}
+        onClose={() => setShowPaywallModal(false)}
+        usedTransactions={subscriptionInfo?.current_month_transactions || 25}
+        freeLimit={subscriptionInfo?.max_monthly_transactions || 25}
+        currentPlan={subscriptionInfo?.plan || 'FREE'}
+        onSelectPlanUpgrade={handleSelectPlanUpgrade}
+      />
+
+      {/* Modal de Conexión Directa con Stripe API */}
+      <StripeSyncModal
+        isOpen={showStripeSyncModal}
+        onClose={() => setShowStripeSyncModal(false)}
+        onSyncStripe={handleSyncStripe}
+        selectedCompany={selectedCompany}
+        selectedYear={selectedYear}
+        startMonth={startMonth}
+        endMonth={endMonth}
       />
 
       {/* Toast Notification */}

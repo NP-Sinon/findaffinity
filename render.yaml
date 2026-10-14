@@ -1,0 +1,25 @@
+# ==============================================================================
+# FICHERO: render.yaml
+# Despliegue Cloud Coste 0 € (Web Service Docker + PostgreSQL Free Tier)
+# ==============================================================================
+services:
+  - type: web
+    name: findaffinity-saas
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: findaffinity-db
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: DEFAULT_TENANT_PLAN
+        value: FREE
+
+databases:
+  - name: findaffinity-db
+    plan: free
+    databaseName: findaffinity
+    user: findaffinity_admin

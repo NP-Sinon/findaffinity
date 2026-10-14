@@ -11,6 +11,23 @@ from decimal import Decimal
 from typing import List, Optional
 
 
+def normalize_pgc_subaccount(code: str, length: int = 9) -> str:
+    """
+    Normaliza cualquier subcuenta contable (ej. '572.1', '43001') al ancho exacto
+    exigido por el ERP (8, 9, 10 o 12 dígitos), rellenando con ceros tras el grupo (3 dígitos).
+    """
+    if not code:
+        return ""
+    clean = "".join(ch for ch in str(code).strip() if ch.isalnum())
+    if not clean:
+        return ""
+    if len(clean) < length:
+        prefix = clean[:3]
+        suffix = clean[3:]
+        return prefix + suffix.rjust(length - 3, "0")
+    return clean[:length]
+
+
 @dataclass
 class JournalEntryLine:
     account_code: str          # Subcuenta a 9-12 dígitos (p.ej. 572000001, 430000145)
@@ -65,34 +82,37 @@ class AccountingEntryBuilder:
         matched_invoices: List[dict],  # dicts con: account_code, invoice_number, gross_cents, fee_cents, customer_name
         refunds: Optional[List[dict]] = None,
         gateway_name: str = "Stripe",
+        account_length: int = 9,
     ) -> DoubleEntryJournal:
         """
         Construye el asiento compuesto de cuadre de liquidación agrupada.
-        DEBE:
-          572xxx (Bancos) = payout_net_cents
-          626xxx (Comisiones) = sum(fee_cents)
-        HABER:
-          430xxx (Clientes por factura) = gross_cents cada una
+        Garantiza cuadre a 0 céntimos absorbiendo desviaciones de redondeo (<= 2 céntimos).
         """
+        bank_acct = normalize_pgc_subaccount(bank_account_code or "572000001", account_length)
+        fee_acct = normalize_pgc_subaccount(fee_account_code or "626000001", account_length)
+
         journal = DoubleEntryJournal(
             entry_number=entry_number,
             entry_date=entry_date,
             description=f"Liquidación {gateway_name} {entry_date.strftime('%d/%m/%Y')}",
         )
 
-        total_fees_cents = sum(inv.get("fee_cents", 0) for inv in matched_invoices)
-        total_gross_cents = sum(inv.get("gross_cents", 0) for inv in matched_invoices)
+        total_fees_cents = sum(int(inv.get("fee_cents", 0)) for inv in matched_invoices)
+        first_customer_acct = normalize_pgc_subaccount(
+            matched_invoices[0].get("account_code", "430000001") if matched_invoices else "430000001",
+            account_length,
+        )
 
         # 1. Línea Banco (572) -> DEBE por el neto abonado
         journal.lines.append(
             JournalEntryLine(
-                account_code=bank_account_code,
+                account_code=bank_acct,
                 account_name="Bancos c/c",
                 concept=f"Liq. {gateway_name} {entry_date.strftime('%d/%m')}"[:30],
                 document_number=f"LIQ-{entry_date.strftime('%Y%m%d')}",
-                debit_cents=payout_net_cents,
+                debit_cents=int(payout_net_cents),
                 credit_cents=0,
-                contrapartida=fee_account_code,
+                contrapartida=first_customer_acct,
             )
         )
 
@@ -100,21 +120,22 @@ class AccountingEntryBuilder:
         if total_fees_cents > 0:
             journal.lines.append(
                 JournalEntryLine(
-                    account_code=fee_account_code,
+                    account_code=fee_acct,
                     account_name="Servicios bancarios y comisiones",
                     concept=f"Comisiones {gateway_name}"[:30],
                     document_number=f"FEE-{entry_date.strftime('%Y%m%d')}",
                     debit_cents=total_fees_cents,
                     credit_cents=0,
-                    contrapartida=bank_account_code,
+                    contrapartida=bank_acct,
                 )
             )
 
         # 3. Líneas de Facturas Clientes (430) -> HABER por el importe bruto
-        for inv in matched_invoices:
-            cust_acct = inv.get("account_code") or "430000001"
-            inv_num = inv.get("invoice_number", "")
-            cust_name = inv.get("customer_name", "Cliente")
+        for idx, inv in enumerate(matched_invoices, start=1):
+            raw_cust_acct = inv.get("account_code") or f"430{idx:06d}"
+            cust_acct = normalize_pgc_subaccount(raw_cust_acct, account_length)
+            inv_num = str(inv.get("invoice_number", f"FRA-{idx}")).strip()
+            cust_name = str(inv.get("customer_name", "Cliente")).strip()
             concept_str = f"Cobro Fra. {inv_num} {cust_name}"[:30]
 
             journal.lines.append(
@@ -122,40 +143,81 @@ class AccountingEntryBuilder:
                     account_code=cust_acct,
                     account_name=f"Cliente: {cust_name}"[:40],
                     concept=concept_str,
-                    document_number=inv_num,
+                    document_number=inv_num[:15],
                     debit_cents=0,
-                    credit_cents=inv["gross_cents"],
-                    contrapartida=bank_account_code,
+                    credit_cents=int(inv["gross_cents"]),
+                    contrapartida=bank_acct,
                 )
             )
 
-        # Manejar devoluciones si las hay
+        # 4. Manejar devoluciones concurrentes (Refunds)
         if refunds:
             for ref in refunds:
-                ref_acct = ref.get("account_code") or "708000001"  # Devoluciones de ventas
-                ref_gross = ref.get("gross_cents", 0)
-                journal.lines.append(
-                    JournalEntryLine(
-                        account_code=ref_acct,
-                        account_name="Devoluciones de ventas",
-                        concept=f"Devolución {ref.get('refund_id', '')}"[:30],
-                        document_number=ref.get("refund_id", ""),
-                        debit_cents=ref_gross,
-                        credit_cents=0,
-                        contrapartida=bank_account_code,
+                ref_acct = normalize_pgc_subaccount(ref.get("account_code") or "708000001", account_length)
+                ref_gross = abs(int(ref.get("gross_cents", 0)))
+                ref_fee = int(ref.get("fee_cents", 0))
+                if ref_gross > 0:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=ref_acct,
+                            account_name="Devoluciones de ventas",
+                            concept=f"Devolución {ref.get('refund_id', '')}"[:30],
+                            document_number=str(ref.get("refund_id", "DEV"))[:15],
+                            debit_cents=ref_gross,
+                            credit_cents=0,
+                            contrapartida=bank_acct,
+                        )
                     )
-                )
+                if ref_fee > 0:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=fee_acct,
+                            account_name="Comisión devolución pasarela",
+                            concept=f"Gasto dev. {gateway_name}"[:30],
+                            document_number=str(ref.get("refund_id", "FEE-DEV"))[:15],
+                            debit_cents=ref_fee,
+                            credit_cents=0,
+                            contrapartida=bank_acct,
+                        )
+                    )
 
-        # Ajuste de redondeo de 1 céntimo si fuera necesario por tolerancias
+        # 5. Ajuste automático de redondeo (hasta 2 céntimos)
         journal.check_balance()
         if not journal.is_balanced and abs(journal.imbalance_cents) <= 2:
-            # Si hay descuadre de 1 o 2 céntimos imputable al redondeo de pasarela,
-            # se absorbe en la cuenta 626/669 de gastos financieros
-            diff = journal.imbalance_cents
-            for l in journal.lines:
-                if l.account_code == fee_account_code:
-                    l.debit_cents -= diff
-                    break
+            diff = journal.imbalance_cents  # total_debit - total_credit
+            fee_line = next((l for l in journal.lines if l.account_code == fee_acct), None)
+            if fee_line:
+                if fee_line.debit_cents - diff >= 0:
+                    fee_line.debit_cents -= diff
+                else:
+                    fee_line.credit_cents += (diff - fee_line.debit_cents)
+                    fee_line.debit_cents = 0
+            else:
+                # Si no había línea de comisión previa, creamos línea de ajuste por redondeo (669/626)
+                if diff < 0:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=fee_acct,
+                            account_name="Ajuste redondeo pasarela",
+                            concept=f"Redondeo {gateway_name}"[:30],
+                            document_number=f"ADJ-{entry_date.strftime('%Y%m%d')}",
+                            debit_cents=abs(diff),
+                            credit_cents=0,
+                            contrapartida=bank_acct,
+                        )
+                    )
+                else:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=fee_acct,
+                            account_name="Ajuste redondeo pasarela",
+                            concept=f"Redondeo {gateway_name}"[:30],
+                            document_number=f"ADJ-{entry_date.strftime('%Y%m%d')}",
+                            debit_cents=0,
+                            credit_cents=diff,
+                            contrapartida=bank_acct,
+                        )
+                    )
             journal.check_balance()
 
         return journal

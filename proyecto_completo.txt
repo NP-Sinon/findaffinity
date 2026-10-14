@@ -804,6 +804,8 @@ import { ClientModal } from './components/ClientModal';
 import AuthModal from './components/AuthModal';
 import { AuthScreen } from './components/AuthScreen';
 import { AdminPanel } from './components/AdminPanel';
+import { PaywallModal } from './components/PaywallModal';
+import { StripeSyncModal } from './components/StripeSyncModal';
 import { MOCK_COMPANIES, INITIAL_TRANSACTIONS } from './data/mockAuditData';
 import { 
   checkBackendHealth, 
@@ -820,7 +822,9 @@ import {
   bulkApproveYellowsApi,
   getStoredAuthSession,
   clearAuthSession,
-  getCurrentUserApi
+  fetchTenantSubscription,
+  upgradeTenantPlanApi,
+  syncStripePayoutsApi,
 } from './services/api';
 import { Check } from 'lucide-react';
 
@@ -845,6 +849,11 @@ export default function App() {
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [clientModalMode, setClientModalMode] = useState('add');
   const [clientModalTarget, setClientModalTarget] = useState(null);
+
+  // Modal de Paywall y Stripe Sync
+  const [showPaywallModal, setShowPaywallModal] = useState(false);
+  const [showStripeSyncModal, setShowStripeSyncModal] = useState(false);
+  const [subscriptionInfo, setSubscriptionInfo] = useState(null);
 
   // Estados de Autenticación & Usuario
   const [currentUser, setCurrentUser] = useState(() => {
@@ -915,7 +924,18 @@ export default function App() {
       setCompanies([]);
       setSelectedCompany(null);
       setTransactions([]);
+      setSubscriptionInfo(null);
       return;
+    }
+
+    const tenantIdToQuery = user.tenant_id;
+    if (tenantIdToQuery) {
+      try {
+        const sub = await fetchTenantSubscription(tenantIdToQuery);
+        if (sub) setSubscriptionInfo(sub);
+      } catch (err) {
+        console.warn('Error consultando suscripción:', err);
+      }
     }
 
     if (user.tenant_id) {
@@ -928,7 +948,6 @@ export default function App() {
           setSelectedErp(firstComp.defaultErp || 'A3');
           await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
         } else {
-          // El usuario NO tiene clientes aún: dejar lista vacía (cero empresas 'por la cara')
           setCompanies([]);
           setSelectedCompany(null);
           setTransactions([]);
@@ -943,6 +962,8 @@ export default function App() {
           setTenants(tList);
           const firstTenant = tList[0];
           setCurrentTenant(firstTenant);
+          const sub = await fetchTenantSubscription(firstTenant.id);
+          if (sub) setSubscriptionInfo(sub);
           const cList = await fetchClients(firstTenant.id);
           if (cList && cList.length > 0) {
             setCompanies(cList);
@@ -1148,7 +1169,14 @@ export default function App() {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
         setIsProcessing(false);
         triggerToast(`Lote procesado y persistido con éxito (${res.data.total_movements} movimientos).`);
+        const sub = await fetchTenantSubscription(tenantIdToUse);
+        if (sub) setSubscriptionInfo(sub);
         return res.data;
+      } else if (res && res.paywallTriggered) {
+        setIsProcessing(false);
+        setShowPaywallModal(true);
+        triggerToast('Límite del Plan Gratuito alcanzado (25 facturas). Elige un plan para continuar.');
+        return null;
       } else {
         setIsProcessing(false);
         triggerToast(`Error: ${res?.error || 'No se pudo procesar el archivo'}`);
@@ -1167,7 +1195,59 @@ export default function App() {
     });
   }, [backendStatus.online, currentUser, currentTenant, selectedCompany, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
 
-  // Cargar Lote Demo de Auditoría (SOLO bajo petición explícita)
+  // Sincronización directa con Stripe API
+  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
+    if (!selectedCompany) {
+      triggerToast('Añade o selecciona una Empresa Cliente antes de conectar Stripe.');
+      handleOpenAddClientModal();
+      return;
+    }
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    if (!tenantIdToUse) {
+      triggerToast('No se ha detectado el identificador de su despacho.');
+      return;
+    }
+
+    setIsProcessing(true);
+    const res = await syncStripePayoutsApi({
+      tenantId: tenantIdToUse,
+      clientId: selectedCompany.id,
+      stripeRestrictedKey,
+      year: selectedYear,
+      startMonth,
+      endMonth,
+      ephemeralMode,
+    });
+    setIsProcessing(false);
+
+    if (res.success && res.data) {
+      setTransactions(res.data.transactions || []);
+      triggerToast(`Stripe API: ${res.data.total_movements} transferencias sincronizadas y cuadradas.`);
+      const sub = await fetchTenantSubscription(tenantIdToUse);
+      if (sub) setSubscriptionInfo(sub);
+    } else if (res.paywallTriggered) {
+      setShowPaywallModal(true);
+      triggerToast('Límite del Plan Gratuito alcanzado (25 facturas). Elige un plan para continuar.');
+    } else {
+      triggerToast(`Error Stripe: ${res.error || 'Fallo de conexión'}`);
+    }
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, triggerToast, handleOpenAddClientModal]);
+
+  // Actualización de plan desde el PaywallModal
+  const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    if (!tenantIdToUse) return;
+    const res = await upgradeTenantPlanApi(tenantIdToUse, newPlan, extraBlocks);
+    if (res.success) {
+      triggerToast(`Plan ${res.data?.new_plan || newPlan} activado con éxito. Exportación ilimitada desbloqueada.`);
+      const sub = await fetchTenantSubscription(tenantIdToUse);
+      if (sub) setSubscriptionInfo(sub);
+    } else {
+      triggerToast(`Error al actualizar suscripción: ${res.error}`);
+    }
+  }, [currentUser, currentTenant, triggerToast]);
+
+  // Cargar Lote Demo de Auditoría
   const handleLoadDemoBatch = useCallback(() => {
     setIsProcessing(true);
     setTimeout(() => {
@@ -1217,6 +1297,7 @@ export default function App() {
     setTransactions([]);
     setBatches([]);
     setCurrentBatchId(null);
+    setSubscriptionInfo(null);
     triggerToast('Sesión finalizada');
   }, [triggerToast]);
 
@@ -1241,7 +1322,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
-      {/* 1. Barra superior limpia (cero métricas invasivas, aislamiento estricto en vista Admin) */}
+      {/* 1. Barra superior limpia */}
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -1256,7 +1337,7 @@ export default function App() {
         onOpenDeleteClientModal={handleOpenDeleteClientModal}
       />
 
-      {/* Contenedor Principal: Conmutador entre Panel ADMIN (Exclusivo SUPERADMIN) y Radar Contable */}
+      {/* Contenedor Principal: Conmutador entre Panel ADMIN y Radar Contable */}
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <AdminPanel 
@@ -1271,6 +1352,7 @@ export default function App() {
             onLoadDemoBatch={handleLoadDemoBatch}
             isProcessing={isProcessing}
             onFileProcessed={handleFileUploaded}
+            onOpenStripeSync={() => setShowStripeSyncModal(true)}
           />
 
           {/* 3. El Radar de Conciliación y Desambiguación con vaciado y eliminación de partidas */}
@@ -1301,6 +1383,8 @@ export default function App() {
             onSelectErp={setSelectedErp}
             selectedCompany={selectedCompany}
             batchId={currentBatchId}
+            paywallLocked={Boolean(subscriptionInfo?.paywall_triggered)}
+            onOpenPaywall={() => setShowPaywallModal(true)}
           />
         </main>
       )}
@@ -1345,12 +1429,33 @@ export default function App() {
         />
       )}
 
-      {/* Modal de Autenticación (Login / Register / Forgot Password) */}
+      {/* Modal de Autenticación */}
       <AuthModal
         isOpen={showAuthModal}
         initialView={authModalView}
         onClose={() => setShowAuthModal(false)}
         onAuthSuccess={handleAuthSuccess}
+      />
+
+      {/* Modal de Paywall Freemium (PLG) */}
+      <PaywallModal
+        isOpen={showPaywallModal}
+        onClose={() => setShowPaywallModal(false)}
+        usedTransactions={subscriptionInfo?.current_month_transactions || 25}
+        freeLimit={subscriptionInfo?.max_monthly_transactions || 25}
+        currentPlan={subscriptionInfo?.plan || 'FREE'}
+        onSelectPlanUpgrade={handleSelectPlanUpgrade}
+      />
+
+      {/* Modal de Conexión Directa con Stripe API */}
+      <StripeSyncModal
+        isOpen={showStripeSyncModal}
+        onClose={() => setShowStripeSyncModal(false)}
+        onSyncStripe={handleSyncStripe}
+        selectedCompany={selectedCompany}
+        selectedYear={selectedYear}
+        startMonth={startMonth}
+        endMonth={endMonth}
       />
 
       {/* Toast Notification */}
@@ -3582,26 +3687,30 @@ export function DoubleEntryViewer({ journal, transactionId }) {
 FICHERO: frontend\src\components\ExportPanel.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/components/ExportPanel.jsx
+ */
 import React, { useState, useMemo } from 'react';
-import { 
-  Download, 
-  Copy, 
-  Check, 
-  FileCode, 
-  FileSpreadsheet, 
-  Database, 
-  ShieldCheck, 
+import {
+  Download,
+  Copy,
+  Check,
+  FileSpreadsheet,
+  Database,
+  ShieldCheck,
   Eye,
-  FileCheck2
+  FileCheck2,
+  Lock,
 } from 'lucide-react';
-import { 
-  generateA3Suenlace, 
-  generateSageXdiario, 
+import {
+  generateA3Suenlace,
+  generateSageXdiario,
   generateContasolXlsx,
-  downloadTextFile, 
-  downloadBinaryFile 
+  downloadTextFile,
+  downloadBinaryFile,
 } from '../utils/exporters';
-import { formatEuro } from '../utils/formatters';
+import { downloadBackendExportBlob } from '../services/api';
+import { formatEuro, formatAccountCode } from '../utils/formatters';
 
 export function ExportPanel({
   transactions,
@@ -3609,25 +3718,25 @@ export function ExportPanel({
   onSelectErp,
   selectedCompany,
   batchId,
+  paywallLocked = false,
+  onOpenPaywall,
 }) {
   const [copied, setCopied] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
 
-  // Filtrar partidas conciliables (Verdes o aprobadas)
   const validJournals = useMemo(() => {
     return transactions
-      .filter(tx => (tx.status === 'GREEN' || tx.isApproved) && tx.journal)
-      .map(tx => tx.journal);
+      .filter((tx) => (tx.status === 'GREEN' || tx.isApproved) && tx.journal)
+      .map((tx) => tx.journal);
   }, [transactions]);
 
-  // Totales contables
   const auditMetrics = useMemo(() => {
     let totalLines = 0;
     let totalDebit = 0;
     let totalCredit = 0;
 
-    validJournals.forEach(j => {
-      j.lines.forEach(l => {
+    validJournals.forEach((j) => {
+      (j.lines || []).forEach((l) => {
         totalLines += 1;
         totalDebit += Number(l.debitEur) || 0;
         totalCredit += Number(l.creditEur) || 0;
@@ -3643,7 +3752,6 @@ export function ExportPanel({
     };
   }, [validJournals]);
 
-  // Previsualización de texto según ERP
   const previewText = useMemo(() => {
     if (validJournals.length === 0) {
       return '// Esperando asientos conciliados para exportar.';
@@ -3656,66 +3764,71 @@ export function ExportPanel({
     if (selectedErp === 'SAGE') {
       return generateSageXdiario(validJournals, accLen);
     }
-    // Para Contasol se muestra la estructura CSV correspondiente
-    const header = 'Diario;Fecha;Subcuenta;Concepto;Documento;Debe;Haber';
+    const header = 'Diario;Fecha;Asiento;Subcuenta;Concepto;Documento;Debe;Haber;Contrapartida';
     const lines = [header];
-    validJournals.forEach(j => {
-      const [y, m, d] = j.date.split('-');
+    validJournals.forEach((j, idx) => {
+      const [y, m, d] = (j.date || '2026-01-01').split('-');
       const dateFormatted = `${d}/${m}/${y}`;
-      j.lines.forEach(l => {
-        lines.push(`${j.entryNumber || 1};${dateFormatted};${l.accountCode};${l.concept};${l.documentNumber};${Number(l.debitEur).toFixed(2)};${Number(l.creditEur).toFixed(2)}`);
+      const entryNum = j.entryNumber || idx + 1;
+      (j.lines || []).forEach((l) => {
+        const acct = formatAccountCode(l.accountCode, accLen);
+        const contra = l.contrapartida ? formatAccountCode(l.contrapartida, accLen) : '';
+        lines.push(
+          `1;${dateFormatted};${entryNum};${acct};${l.concept};${l.documentNumber};${Number(l.debitEur).toFixed(2)};${Number(l.creditEur).toFixed(2)};${contra}`
+        );
       });
     });
     return lines.join('\r\n');
   }, [validJournals, selectedErp, selectedCompany]);
 
-  // Manejador de descarga de archivo oficial (prioriza backend si hay lote activo)
   const handleDownload = async () => {
     if (validJournals.length === 0) return;
 
+    // Si el Paywall está activo (>25 facturas en plan FREE), abrir modal de precios
+    if (paywallLocked && onOpenPaywall) {
+      onOpenPaywall();
+      return;
+    }
+
+    const clientCode = (selectedCompany?.fiscalId || 'CLIENT').replace(/[^a-zA-Z0-9]/g, '');
+
     if (batchId) {
       try {
-        const url = `http://127.0.0.1:8000/api/v1/batches/${batchId}/export/${selectedErp}?actor=auditor@gestoria.es`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const blob = await res.blob();
-          const disposition = res.headers.get('content-disposition');
-          let fname = `EXPORT_${((selectedCompany?.fiscalId || 'CLIENT')).replace(/[^a-zA-Z0-9]/g, '')}_${selectedErp}`;
-          if (disposition && disposition.includes('filename=')) {
-            fname = disposition.split('filename=')[1].replace(/"/g, '').trim();
-          } else {
-            fname += selectedErp === 'CONTASOL' ? '.xlsx' : selectedErp === 'SAGE' ? '.csv' : '.txt';
-          }
-          const blobUrl = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = fname;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(blobUrl);
-          setDownloadSuccess(true);
-          setTimeout(() => setDownloadSuccess(false), 2500);
-          return;
+        const { blob, disposition } = await downloadBackendExportBlob(batchId, selectedErp);
+        let fname = `EXPORT_${clientCode}_${selectedErp}`;
+        if (disposition && disposition.includes('filename=')) {
+          fname = disposition.split('filename=')[1].replace(/"/g, '').trim();
+        } else {
+          fname += selectedErp === 'CONTASOL' ? '.xlsx' : selectedErp === 'SAGE' ? '.csv' : '.txt';
         }
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(blobUrl);
+        setDownloadSuccess(true);
+        setTimeout(() => setDownloadSuccess(false), 2500);
+        return;
       } catch (err) {
-        console.warn('Descargando mediante generador autónomo en cliente:', err);
+        console.warn('Descargando mediante generador en memoria del navegador:', err);
       }
     }
 
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const clientCode = ((selectedCompany?.fiscalId || 'CLIENT')).replace(/[^a-zA-Z0-9]/g, '');
-
     if (selectedErp === 'A3') {
-      const filename = `SUENLACE_${clientCode}_${dateStr}.txt`;
-      downloadTextFile(previewText, filename, 'text/plain;charset=windows-1252');
+      downloadTextFile(previewText, `SUENLACE_${clientCode}_${dateStr}.txt`, 'text/plain;charset=windows-1252');
     } else if (selectedErp === 'SAGE') {
-      const filename = `XDIARIO_${clientCode}_${dateStr}.csv`;
-      downloadTextFile(previewText, filename, 'text/csv;charset=windows-1252');
+      downloadTextFile(previewText, `XDIARIO_${clientCode}_${dateStr}.csv`, 'text/csv;charset=windows-1252');
     } else if (selectedErp === 'CONTASOL') {
-      const filename = `CONTASOL_DIARIO_${clientCode}_${dateStr}.xlsx`;
       const binaryData = generateContasolXlsx(validJournals, selectedCompany?.accountLength || 9);
-      downloadBinaryFile(binaryData, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      downloadBinaryFile(
+        binaryData,
+        `CONTASOL_DIARIO_${clientCode}_${dateStr}.xlsx`,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
     }
 
     setDownloadSuccess(true);
@@ -3723,6 +3836,10 @@ export function ExportPanel({
   };
 
   const handleCopy = () => {
+    if (paywallLocked && onOpenPaywall) {
+      onOpenPaywall();
+      return;
+    }
     navigator.clipboard.writeText(previewText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -3730,7 +3847,6 @@ export function ExportPanel({
 
   return (
     <div className="bg-[#101013] border border-zinc-800/80 rounded-lg p-4 sm:p-5">
-      {/* Panel Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 mb-4 border-b border-zinc-800/50">
         <div>
           <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
@@ -3742,15 +3858,12 @@ export function ExportPanel({
           </p>
         </div>
 
-        {/* ERP Switcher Tabs */}
         <div className="inline-flex rounded-md p-1 bg-zinc-900 border border-zinc-800 self-start md:self-auto">
           <button
             type="button"
             onClick={() => onSelectErp('A3')}
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'A3'
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
+              selectedErp === 'A3' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
             Wolters Kluwer A3 (Suenlace)
@@ -3759,9 +3872,7 @@ export function ExportPanel({
             type="button"
             onClick={() => onSelectErp('SAGE')}
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'SAGE'
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
+              selectedErp === 'SAGE' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
             Sage 50 (XDIARIO)
@@ -3770,9 +3881,7 @@ export function ExportPanel({
             type="button"
             onClick={() => onSelectErp('CONTASOL')}
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'CONTASOL'
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200'
+              selectedErp === 'CONTASOL' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
             DELSOL Contasol (.xlsx)
@@ -3780,19 +3889,14 @@ export function ExportPanel({
         </div>
       </div>
 
-      {/* Audit Stats Banner */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
           <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Asientos a Emitir</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">
-            {auditMetrics.entriesCount}
-          </div>
+          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">{auditMetrics.entriesCount}</div>
         </div>
         <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
           <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Total Líneas Diario</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">
-            {auditMetrics.linesCount}
-          </div>
+          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">{auditMetrics.linesCount}</div>
         </div>
         <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
           <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Volumen Contabilizado</div>
@@ -3802,24 +3906,27 @@ export function ExportPanel({
         </div>
         <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
           <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Estado de Cuadre PGC</div>
-          <div className={`font-mono text-sm font-semibold mt-0.5 flex items-center gap-1 ${
-            auditMetrics.imbalance < 0.005 ? 'text-emerald-400' : 'text-rose-400'
-          }`}>
+          <div
+            className={`font-mono text-sm font-semibold mt-0.5 flex items-center gap-1 ${
+              auditMetrics.imbalance < 0.005 ? 'text-emerald-400' : 'text-rose-400'
+            }`}
+          >
             <ShieldCheck className="h-3.5 w-3.5" />
             {auditMetrics.imbalance < 0.005 ? 'Cuadre 0,00 €' : `Descuadre ${formatEuro(auditMetrics.imbalance)}`}
           </div>
         </div>
       </div>
 
-      {/* Code / Content Live Preview */}
       <div className="border border-zinc-800 rounded-md overflow-hidden bg-[#0c0c0e]">
         <div className="flex items-center justify-between px-3.5 py-2 border-b border-zinc-800/80 bg-zinc-950/70 text-xs">
           <div className="flex items-center gap-2 text-zinc-400">
             <Eye className="h-3.5 w-3.5" />
             <span className="font-mono text-[11px] text-zinc-300">
-              {selectedErp === 'A3' ? 'SUENLACE_A3.txt (Ancho Fijo / Delimitado)' :
-               selectedErp === 'SAGE' ? 'XDIARIO.csv (Estructura Sage 50)' :
-               'CONTASOL_DIARIO.xlsx (Vista Previa Estructurada)'}
+              {selectedErp === 'A3'
+                ? 'SUENLACE_A3.txt (Protocolo Enlace Contable A3)'
+                : selectedErp === 'SAGE'
+                ? 'XDIARIO.csv (9 Columnas Oficiales Sage 50)'
+                : 'CONTASOL_DIARIO.xlsx (Diario 1 + Asiento Correlativo)'}
             </span>
           </div>
 
@@ -3829,7 +3936,13 @@ export function ExportPanel({
               onClick={handleCopy}
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/60 text-[11px] text-zinc-300 font-medium transition-colors"
             >
-              {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              {paywallLocked ? (
+                <Lock className="h-3 w-3 text-amber-400" />
+              ) : copied ? (
+                <Check className="h-3 w-3 text-emerald-400" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
               <span>{copied ? 'Copiado' : 'Copiar'}</span>
             </button>
 
@@ -3837,21 +3950,32 @@ export function ExportPanel({
               type="button"
               onClick={handleDownload}
               disabled={validJournals.length === 0}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-zinc-100 hover:bg-white text-zinc-900 text-[11px] font-semibold transition-colors disabled:opacity-40"
+              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+                paywallLocked
+                  ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950'
+                  : 'bg-zinc-100 hover:bg-white text-zinc-900'
+              }`}
             >
-              {downloadSuccess ? (
+              {paywallLocked ? (
+                <Lock className="h-3.5 w-3.5" />
+              ) : downloadSuccess ? (
                 <FileCheck2 className="h-3.5 w-3.5 text-emerald-600" />
               ) : selectedErp === 'CONTASOL' ? (
                 <FileSpreadsheet className="h-3.5 w-3.5" />
               ) : (
                 <Download className="h-3.5 w-3.5" />
               )}
-              <span>{downloadSuccess ? 'Descargado' : 'Descargar 1-Clic'}</span>
+              <span>
+                {paywallLocked
+                  ? 'Desbloquear Descarga (Paywall)'
+                  : downloadSuccess
+                  ? 'Descargado'
+                  : 'Descargar 1-Clic'}
+              </span>
             </button>
           </div>
         </div>
 
-        {/* Live Monospace Text Box */}
         <div className="p-3 max-h-56 overflow-y-auto font-mono text-[11px] text-zinc-300 leading-relaxed whitespace-pre select-all bg-[#08080a]">
           {previewText}
         </div>
@@ -4093,13 +4217,14 @@ import {
   Check, 
   AlertCircle, 
   RefreshCw,
-  Layers
+  Layers,
+  Zap
 } from 'lucide-react';
-import { uploadNorma43File } from '../services/api';
 
 export function IngestionZone({
   onLoadDemoBatch,
   onFileProcessed,
+  onOpenStripeSync,
   isProcessing,
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -4176,20 +4301,33 @@ export function IngestionZone({
             Importar Extractos y Ventas
           </h2>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Sube extractos bancarios o reportes de cobros para conciliarlos automáticamente.
+            Sube extractos bancarios, reportes de cobros o conecta directamente pasarelas en vivo.
           </p>
         </div>
 
-        {/* Botón de datos de prueba */}
-        <button
-          type="button"
-          onClick={onLoadDemoBatch}
-          disabled={isProcessing || localProcessing}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700/80 active:bg-zinc-800 border border-zinc-700/60 text-xs font-medium text-zinc-100 transition-colors shadow-sm disabled:opacity-50 self-start sm:self-auto"
-        >
-          <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-          Cargar Lote de Prueba
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {onOpenStripeSync && (
+            <button
+              type="button"
+              onClick={onOpenStripeSync}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-semibold text-indigo-300 transition-colors shadow-sm"
+            >
+              <Zap className="h-3.5 w-3.5 text-indigo-400" />
+              <span>Conectar Stripe API</span>
+            </button>
+          )}
+
+          {/* Botón de datos de prueba */}
+          <button
+            type="button"
+            onClick={onLoadDemoBatch}
+            disabled={isProcessing || localProcessing}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700/80 active:bg-zinc-800 border border-zinc-700/60 text-xs font-medium text-zinc-100 transition-colors shadow-sm disabled:opacity-50"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            Cargar Lote de Prueba
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -4209,7 +4347,7 @@ export function IngestionZone({
             ref={fileInputRef}
             type="file"
             onChange={handleFileChange}
-            accept=".n43,.txt,.csv,.xlsx"
+            accept=".n43,.txt,.csv,.xlsx,.json"
             className="hidden"
           />
 
@@ -4225,7 +4363,7 @@ export function IngestionZone({
             Arrastra aquí tus archivos o haz clic para seleccionarlos
           </p>
           <p className="text-[11px] text-zinc-500 mt-1">
-            Formatos soportados: .n43, .csv, .xlsx, .txt
+            Formatos soportados: Norma 43 (.n43), Stripe / Redsys (.csv), Cartera Facturas (.xlsx, .json)
           </p>
         </div>
 
@@ -4253,7 +4391,7 @@ export function IngestionZone({
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-400">Movimientos:</span>
                   <span className="text-zinc-200 font-mono text-[11px] font-medium text-emerald-400">
-                    {ingestionTelemetry.movements} detectados
+                    {ingestionTelemetry.movements}
                   </span>
                 </div>
 
@@ -4264,21 +4402,253 @@ export function IngestionZone({
                       <span>Archivo verificado correctamente</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5 text-[11px] text-amber-400">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      <span>{ingestionTelemetry.errors[0] || 'Aviso en la lectura'}</span>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1 text-[11px] text-rose-400">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        <span>Incidencia en la ingesta</span>
+                      </div>
+                      {ingestionTelemetry.errors.map((err, i) => (
+                        <p key={i} className="text-[10px] text-zinc-500 leading-tight">
+                          {err}
+                        </p>
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="py-6 text-center text-zinc-400 text-xs">
-                <p>Ningún archivo seleccionado.</p>
-                <p className="text-[11px] mt-1 text-zinc-400">
-                  Puedes cargar el lote de prueba para ver el funcionamiento.
-                </p>
+              <div className="py-4 text-center text-zinc-500 text-xs">
+                <Layers className="h-6 w-6 mx-auto mb-1 opacity-40" />
+                Ningún archivo seleccionado aún.
               </div>
             )}
+          </div>
+
+          <div className="text-[10px] text-zinc-500 pt-2 border-t border-zinc-800/60">
+            Los datos se procesan con validación algorítmica y sellado legal SHA-256.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+FICHERO: frontend\src\components\PaywallModal.jsx
+================================================================================
+
+/**
+ * FICHERO: frontend/src/components/PaywallModal.jsx
+ * Modal de Paywall Freemium (Límite de 25 facturas/transacciones gratis alcanzado)
+ */
+import React, { useState } from 'react';
+import { ShieldCheck, Check, Sparkles, Lock, X, CreditCard, Building2, Zap } from 'lucide-react';
+
+const PLANS = [
+  {
+    code: 'PYME_DIRECTO',
+    name: 'Pyme Directo',
+    price: 39,
+    subtitle: 'Ideal para tiendas online y comercios individuales',
+    maxClients: '1 empresa',
+    maxTx: '2.000 facturas / mes',
+    badge: null,
+    features: [
+      'Hasta 2.000 transacciones conciliadas/mes',
+      'Sincronización directa con API de Stripe',
+      'Exportación oficial a A3, Sage 50 y Contasol',
+      'Modo Efímero RAM (Cero retención de archivos)',
+    ],
+  },
+  {
+    code: 'STARTER',
+    name: 'Gestoría Starter',
+    price: 49,
+    subtitle: 'Para despachos pequeños con clientes e-commerce y TPV',
+    maxClients: 'Hasta 10 empresas',
+    maxTx: '2.500 facturas / mes',
+    badge: 'POPULAR DESPACHOS',
+    features: [
+      'Hasta 10 empresas cliente activas',
+      'Hasta 2.500 transacciones agregadas/mes',
+      'Descomposición algorítmica de Stripe y Redsys',
+      'Exportación 1-Clic (Suenlace, XDIARIO, Contasol)',
+    ],
+  },
+  {
+    code: 'PROFESSIONAL',
+    name: 'Gestoría Professional',
+    price: 119,
+    subtitle: 'Para asesorías con alto volumen transaccional y auditoría',
+    maxClients: 'Hasta 30 empresas',
+    maxTx: '12.000 facturas / mes',
+    badge: 'MÁXIMO RETORNO (ROI 30x)',
+    features: [
+      'Hasta 30 empresas cliente activas',
+      'Hasta 12.000 transacciones agregadas/mes',
+      'Certificado Legal de Auditoría SHA-256 para AEAT',
+      'Sincronización API Stripe multi-empresa',
+    ],
+  },
+];
+
+export function PaywallModal({
+  isOpen,
+  onClose,
+  usedTransactions = 25,
+  freeLimit = 25,
+  currentPlan = 'FREE',
+  onSelectPlanUpgrade,
+}) {
+  const [selectedPlan, setSelectedPlan] = useState('STARTER');
+  const [extraBlocks, setExtraBlocks] = useState(0);
+  const [processing, setProcessing] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleConfirmUpgrade = async () => {
+    setProcessing(true);
+    try {
+      if (onSelectPlanUpgrade) {
+        await onSelectPlanUpgrade(selectedPlan, extraBlocks);
+      }
+      onClose();
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in">
+      <div className="bg-[#101013] border border-zinc-800 rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl">
+        {/* Cabecera */}
+        <div className="px-6 py-5 border-b border-zinc-800 bg-gradient-to-r from-emerald-950/40 via-zinc-950 to-blue-950/40 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <Lock className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white">
+                  Desbloquea la Exportación Ilimitada a tu ERP
+                </h3>
+                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/60 text-amber-300">
+                  {usedTransactions} / {freeLimit} Facturas Gratis Usadas
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Con solo 24 transacciones complejas al mes ya recuperas más de 1,5 horas de punteo manual. Elige una tarifa plana predecible sin cobros variables sorpresa.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Tarjetas de Planes */}
+        <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {PLANS.map((plan) => {
+            const isSelected = selectedPlan === plan.code;
+            return (
+              <div
+                key={plan.code}
+                onClick={() => setSelectedPlan(plan.code)}
+                className={`relative rounded-xl p-5 border cursor-pointer transition-all flex flex-col justify-between ${
+                  isSelected
+                    ? 'bg-zinc-900/90 border-emerald-500 ring-1 ring-emerald-500/50 shadow-lg'
+                    : 'bg-[#0c0c0e] border-zinc-800 hover:border-zinc-700'
+                }`}
+              >
+                {plan.badge && (
+                  <span className="absolute -top-2.5 right-4 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-600 text-white shadow">
+                    {plan.badge}
+                  </span>
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-bold text-zinc-100">{plan.name}</h4>
+                    {currentPlan === plan.code && (
+                      <span className="text-[10px] font-mono text-emerald-400">Plan Actual</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mt-1 min-h-[32px]">{plan.subtitle}</p>
+
+                  <div className="my-4 flex items-baseline gap-1">
+                    <span className="text-3xl font-mono font-bold text-white">{plan.price} €</span>
+                    <span className="text-xs text-zinc-400">/ mes (IVA no incl.)</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-zinc-950 border border-zinc-800/80 mb-4 text-[11px]">
+                    <div>
+                      <span className="text-zinc-500 block text-[10px]">Capacidad</span>
+                      <strong className="text-zinc-200 font-mono">{plan.maxClients}</strong>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block text-[10px]">Volumen</span>
+                      <strong className="text-emerald-400 font-mono">{plan.maxTx}</strong>
+                    </div>
+                  </div>
+
+                  <ul className="space-y-2 text-xs text-zinc-300">
+                    {plan.features.map((feat, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                        <span>{feat}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="mt-5 pt-3 border-t border-zinc-800/80">
+                  <div
+                    className={`w-full py-2 rounded-lg text-xs font-semibold text-center transition-colors ${
+                      isSelected
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                    }`}
+                  >
+                    {isSelected ? 'Plan Seleccionado' : 'Seleccionar Plan'}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer de Checkout */}
+        <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-950/90 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-xs text-zinc-400">
+            <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
+            <span>
+              Pago seguro vía <strong>Stripe Checkout</strong> &bull; Cancela o cambia de tramo en cualquier momento sin permanencia.
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300"
+            >
+              Seguir en modo vista previa
+            </button>
+            <button
+              type="button"
+              disabled={processing}
+              onClick={handleConfirmUpgrade}
+              className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg disabled:opacity-50"
+            >
+              <CreditCard className="h-4 w-4" />
+              <span>{processing ? 'Activando licencia...' : 'Activar Plan y Desbloquear Exportación'}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -5034,6 +5404,164 @@ export function StagingRadar({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+
+================================================================================
+FICHERO: frontend\src\components\StripeSyncModal.jsx
+================================================================================
+
+/**
+ * FICHERO: frontend/src/components/StripeSyncModal.jsx
+ * Modal para sincronizar liquidaciones agrupadas (Payouts) directamente desde la API de Stripe
+ */
+import React, { useState } from 'react';
+import { Zap, Lock, ShieldCheck, CheckCircle2, AlertCircle, X, KeyRound, ArrowRight } from 'lucide-react';
+
+export function StripeSyncModal({
+  isOpen,
+  onClose,
+  onSyncStripe,
+  selectedCompany,
+  selectedYear,
+  startMonth,
+  endMonth,
+}) {
+  const [restrictedKey, setRestrictedKey] = useState('');
+  const [ephemeralMode, setEphemeralMode] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    const cleanKey = restrictedKey.trim();
+    if (!cleanKey.startsWith('rk_') && !cleanKey.startsWith('sk_')) {
+      setError('Introduce una clave restringida válida de Stripe (empieza por rk_live_ o rk_test_).');
+      return;
+    }
+    setLoading(true);
+    try {
+      await onSyncStripe({
+        stripeRestrictedKey: cleanKey,
+        ephemeralMode,
+      });
+      setRestrictedKey('');
+      onClose();
+    } catch (err) {
+      setError(err.message || 'No se pudo sincronizar con la API de Stripe');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+      <div className="bg-[#121215] border border-zinc-800 rounded-xl max-w-lg w-full p-6 shadow-2xl relative">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        <div className="flex items-center gap-3 mb-4">
+          <div className="h-9 w-9 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+            <Zap className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-white">
+              Conectar API de Stripe (100% Determinista)
+            </h3>
+            <p className="text-[11px] text-zinc-400">
+              Extrae transferencias bancarias (<code className="text-indigo-300">/v1/payouts</code>), ventas y comisiones exactas al céntimo
+            </p>
+          </div>
+        </div>
+
+        {/* Tutorial de 3 pasos para crear Restricted Key de Solo Lectura */}
+        <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3.5 mb-4 text-xs space-y-1.5">
+          <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
+            <ShieldCheck className="h-4 w-4 text-emerald-400" />
+            <span>Cómo obtener una Clave de Solo Lectura Segura (30 seg):</span>
+          </div>
+          <ol className="list-decimal list-inside text-[11px] text-zinc-400 space-y-1 pl-1">
+            <li>Entra en tu panel de Stripe: <strong>Desarrolladores &rarr; Claves API</strong>.</li>
+            <li>Pulsa en <strong>"Crear clave restringida"</strong> y activa permiso <strong>Read (Lectura)</strong> solo en <em>Balance</em>, <em>Payouts</em> y <em>Charges</em>.</li>
+            <li>Pega la clave <code className="text-emerald-300">rk_live_...</code> abajo. Con ella es imposible realizar cargos ni mover fondos.</li>
+          </ol>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
+              Clave Restringida de Solo Lectura (Stripe API)
+            </label>
+            <div className="relative">
+              <KeyRound className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="password"
+                required
+                value={restrictedKey}
+                onChange={(e) => setRestrictedKey(e.target.value)}
+                placeholder="rk_live_51Ox98aK2..."
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-1">
+              La clave se usa únicamente en memoria durante esta petición y jamás se guarda en base de datos.
+            </p>
+          </div>
+
+          <label className="flex items-start gap-2.5 p-3 rounded-lg bg-emerald-950/20 border border-emerald-900/40 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={ephemeralMode}
+              onChange={(e) => setEphemeralMode(e.target.checked)}
+              className="mt-0.5 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-0"
+            />
+            <div className="text-xs">
+              <span className="font-semibold text-emerald-300 block">
+                Modo Efímero en RAM (Privacidad Zero-Storage)
+              </span>
+              <span className="text-[11px] text-zinc-400">
+                Procesa los cobros en la memoria volátil y destruye los datos al descargar tu fichero contable para {selectedCompany?.name || 'el cliente'}.
+              </span>
+            </div>
+          </label>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              <span>{loading ? 'Sincronizando Payouts...' : 'Importar y Conciliar desde Stripe'}</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -5842,21 +6370,26 @@ FICHERO: frontend\src\services\api.js
 ================================================================================
 
 /**
+ * FICHERO: frontend/src/services/api.js
  * Cliente de Conectividad con la API REST de Reconciliación Contable (FastAPI v1)
- * Soporta operaciones Multi-Tenancy completas, persistencia de lotes en SQLite/PostgreSQL,
- * aprobaciones certificadas y exportaciones nativas para A3, Sage y Contasol.
+ * Preparado para Producción Cloud (Cloudflare Pages / Vercel + Render / Railway)
  */
-import { INITIAL_TRANSACTIONS, MOCK_COMPANIES } from '../data/mockAuditData';
 
 const getBaseUrl = () => {
-  if (typeof window !== 'undefined' && window.location.port === '8000') {
-    return window.location.origin;
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, port } = window.location;
+    if (port === '5173' || port === '3000') {
+      return 'http://127.0.0.1:8000';
+    }
+    return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
   }
   return 'http://127.0.0.1:8000';
 };
 
-const BASE_URL = getBaseUrl();
-
+export const BASE_URL = getBaseUrl();
 const AUTH_STORAGE_KEY = 'findaffinity_auth_session';
 
 export function getStoredAuthSession() {
@@ -5884,20 +6417,23 @@ export function clearAuthSession() {
   }
 }
 
-export function getAuthHeaders() {
+export function getAuthHeaders(includeJsonContentType = true) {
   const session = getStoredAuthSession();
-  if (session && session.token) {
-    return {
-      'Authorization': `Bearer ${session.token}`,
-      'Content-Type': 'application/json',
-    };
+  const headers = {};
+  if (includeJsonContentType) {
+    headers['Content-Type'] = 'application/json';
   }
-  return { 'Content-Type': 'application/json' };
+  if (session && session.token) {
+    headers['Authorization'] = `Bearer ${session.token}`;
+  }
+  return headers;
 }
 
-/**
- * Helper para fetch seguro que nunca lanza excepción por JSON inválido
- */
+export function getCurrentActorEmail() {
+  const session = getStoredAuthSession();
+  return session?.user?.email || 'auditor@despacho.es';
+}
+
 async function safeJsonFetch(url, options = {}) {
   try {
     const res = await fetch(url, options);
@@ -5919,9 +6455,6 @@ async function safeJsonFetch(url, options = {}) {
   }
 }
 
-/**
- * Iniciar sesión con email y contraseña en FastAPI
- */
 export async function loginApi(email, password) {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
     method: 'POST',
@@ -5936,10 +6469,7 @@ export async function loginApi(email, password) {
   return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
 
-/**
- * Registro de nuevo usuario o despacho contable
- */
-export async function registerApi({ email, password, fullName, companyName, fiscalId, role = 'AUDITOR' }) {
+export async function registerApi({ email, password, fullName, companyName, fiscalId, role = 'ADMIN' }) {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5954,15 +6484,11 @@ export async function registerApi({ email, password, fullName, companyName, fisc
   });
 
   if (ok) {
-    // Iniciar sesión automáticamente tras el registro
     return await loginApi(email, password);
   }
   return { success: false, error: data?.detail || 'Error en el registro' };
 }
 
-/**
- * Solicitar recuperación de contraseña
- */
 export async function forgotPasswordApi(email) {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/forgot-password`, {
     method: 'POST',
@@ -5976,9 +6502,6 @@ export async function forgotPasswordApi(email) {
   return { success: false, error: data?.detail || 'Error en la solicitud' };
 }
 
-/**
- * Restablecer contraseña con token
- */
 export async function resetPasswordApi(token, newPassword) {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/reset-password`, {
     method: 'POST',
@@ -5992,221 +6515,134 @@ export async function resetPasswordApi(token, newPassword) {
   return { success: false, error: data?.detail || 'Token inválido o expirado' };
 }
 
-/**
- * Obtener lista de compañías registradas y sus licencias (Solo ADMIN / SUPERADMIN)
- */
+export async function fetchTenantSubscription(tenantId) {
+  if (!tenantId) return null;
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/tenants/${tenantId}/subscription`, {
+    headers: getAuthHeaders(),
+  });
+  return ok ? data : null;
+}
+
+export async function upgradeTenantPlanApi(tenantId, plan, extraBlocks = 0) {
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/tenants/${tenantId}/upgrade`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ plan, extra_blocks: extraBlocks }),
+  });
+  return { success: ok, data, error: ok ? null : (data?.detail || 'Error al actualizar el plan') };
+}
+
+export async function syncStripePayoutsApi({
+  tenantId,
+  clientId,
+  stripeRestrictedKey,
+  year = 2026,
+  startMonth = 1,
+  endMonth = 12,
+  ephemeralMode = false,
+}) {
+  const { ok, status, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/stripe-sync`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      client_id: clientId,
+      stripe_restricted_key: stripeRestrictedKey,
+      period_year: year,
+      start_month: startMonth,
+      end_month: endMonth,
+      ephemeral_mode: ephemeralMode,
+    }),
+  });
+
+  if (ok) {
+    return { success: true, data };
+  }
+  return {
+    success: false,
+    paywallTriggered: status === 402,
+    error: typeof data?.detail === 'object' ? data.detail.message : (data?.detail || 'Error al sincronizar con Stripe'),
+    quota: typeof data?.detail === 'object' ? data.detail.quota : null,
+  };
+}
+
 export async function fetchAdminCompanies() {
-  const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies`, {
-    headers,
+    headers: getAuthHeaders(),
   });
-  if (ok && Array.isArray(data)) {
-    return data;
-  }
-  return [];
+  return ok && Array.isArray(data) ? data : [];
 }
 
-/**
- * Obtener estadísticas globales de la plataforma (Solo ADMIN / SUPERADMIN)
- */
 export async function fetchPlatformStats() {
-  const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/stats`, {
-    headers,
+    headers: getAuthHeaders(),
   });
-  if (ok && data) {
-    return data;
-  }
-  return null;
+  return ok ? data : null;
 }
 
-/**
- * Modificar plan / licencia de una compañía desde el panel de control
- */
 export async function updateCompanyPlanApi(tenantId, plan, extraBlocks = 0) {
-  const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies/${tenantId}/plan`, {
     method: 'PUT',
-    headers,
+    headers: getAuthHeaders(),
     body: JSON.stringify({ plan, extra_blocks: extraBlocks }),
   });
   return { success: ok, data, error: ok ? null : (data?.detail || 'Error al actualizar plan') };
 }
 
-/**
- * Eliminar definitivamente una compañía desde el panel de SuperAdmin
- */
 export async function deleteCompanyApi(tenantId) {
-  const headers = getAuthHeaders();
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/admin/companies/${tenantId}`, {
     method: 'DELETE',
-    headers,
+    headers: getAuthHeaders(),
   });
   return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar compañía') };
 }
 
-/**
- * Obtener perfil del usuario autenticado
- */
-export async function getCurrentUserApi() {
-  const session = getStoredAuthSession();
-  if (!session || !session.token) return null;
-
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/auth/me`, {
-      headers: { 'Authorization': `Bearer ${session.token}` },
-    });
-    if (res.ok) {
-      const user = await res.json();
-      saveAuthSession(session.token, user);
-      return user;
-    }
-  } catch (err) {
-    console.warn('Error validando token con backend:', err);
-  }
-  return session.user;
-}
-
-/**
- * Comprueba el estado del backend FastAPI
- */
 export async function checkBackendHealth() {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
     const res = await fetch(`${BASE_URL}/health`, {
       signal: controller.signal,
-      headers: { 'Accept': 'application/json' },
+      headers: { Accept: 'application/json' },
     });
     clearTimeout(timeoutId);
-
     if (res.ok) {
       const data = await res.json();
       return { online: true, ...data };
     }
     return { online: false, reason: `HTTP ${res.status}` };
   } catch (err) {
-    return { online: false, reason: err.message || 'Sin conexión a 127.0.0.1:8000' };
+    return { online: false, reason: err.message || 'Modo Autónomo' };
   }
 }
 
-/**
- * Ingesta e inspección rápida de fichero Norma 43
- */
-export async function uploadNorma43File(file) {
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const res = await fetch(`${BASE_URL}/api/v1/ingest/norma43`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      return { success: true, fromBackend: true, data };
-    }
-  } catch (err) {
-    console.warn('Backend no disponible, ejecutando validación autónoma de Norma 43:', err);
-  }
-
-  // Fallback autónomo en navegador
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target.result;
-      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-      let recordsCount = lines.length;
-      let movementsCount = lines.filter(l => l.startsWith('22')).length;
-      let hasHeader = lines.some(l => l.startsWith('11'));
-      let hasFooter = lines.some(l => l.startsWith('33') || l.startsWith('88'));
-
-      resolve({
-        success: true,
-        fromBackend: false,
-        data: {
-          is_valid: hasHeader && recordsCount > 0,
-          detected_encoding: 'ISO-8859-15 (Autodetectado)',
-          total_records: recordsCount,
-          movements_count: movementsCount || Math.max(1, Math.floor(recordsCount / 3)),
-          validation_errors: hasFooter ? [] : ['Aviso: Registro 33 con holgura menor'],
-        },
-      });
-    };
-    reader.onerror = () => {
-      resolve({
-        success: false,
-        fromBackend: false,
-        data: {
-          is_valid: false,
-          detected_encoding: 'Desconocida',
-          total_records: 0,
-          movements_count: 0,
-          validation_errors: ['Error al leer fichero en memoria.'],
-        },
-      });
-    };
-    reader.readAsText(file);
-  });
-}
-
-
-/**
- * Obtiene la lista de despachos (Tenants)
- */
 export async function fetchTenants() {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/tenants`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    console.warn('Usando despacho local por defecto:', err);
-  }
-  return [
-    {
-      id: 'tenant-demo',
-      name: 'KÖNIG & ASOCIADOS AUDITORES SLP',
-      fiscal_id: 'B-99881122',
-      email: 'auditoria@konigpartners.es',
-      plan: 'PROFESSIONAL',
-    },
-  ];
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/tenants`, {
+    headers: getAuthHeaders(),
+  });
+  if (ok && Array.isArray(data)) return data;
+  return [];
 }
 
-/**
- * Obtiene las empresas clientes de un despacho
- */
 export async function fetchClients(tenantId) {
   if (!tenantId) return [];
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/clients?tenant_id=${tenantId}`);
-    if (res.ok) {
-      const clients = await res.json();
-      if (Array.isArray(clients)) {
-        return clients.map(c => ({
-          id: c.id,
-          name: c.name,
-          fiscalId: c.fiscal_id,
-          defaultErp: c.default_erp,
-          accountLength: c.account_length,
-          bankAccountCode: c.bank_account_code,
-          feeAccountCode: c.fee_account_code,
-        }));
-      }
-      return [];
-    }
-  } catch (err) {
-    console.warn('Error al consultar clientes del tenant:', err);
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients?tenant_id=${tenantId}`, {
+    headers: getAuthHeaders(),
+  });
+  if (ok && Array.isArray(data)) {
+    return data.map((c) => ({
+      id: c.id,
+      name: c.name,
+      fiscalId: c.fiscal_id,
+      defaultErp: c.default_erp,
+      accountLength: c.account_length,
+      bankAccountCode: c.bank_account_code,
+      feeAccountCode: c.fee_account_code,
+    }));
   }
   return [];
 }
 
-/**
- * Crea una nueva empresa cliente para el despacho contable
- */
 export async function createClientApi({
   tenantId,
   name,
@@ -6218,7 +6654,7 @@ export async function createClientApi({
 }) {
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
     body: JSON.stringify({
       tenant_id: tenantId,
       name,
@@ -6247,124 +6683,89 @@ export async function createClientApi({
   return { success: false, error: data?.detail || 'Error al crear empresa cliente' };
 }
 
-/**
- * Eliminar una empresa cliente
- */
 export async function deleteClientApi(clientId) {
-  if (!clientId) {
-    return { success: false, error: 'Identificador de empresa cliente no especificado.' };
-  }
-  const headers = getAuthHeaders();
+  if (!clientId) return { success: false, error: 'ID no especificado' };
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/clients/${clientId}`, {
     method: 'DELETE',
-    headers,
+    headers: getAuthHeaders(),
   });
   return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar empresa cliente') };
 }
 
-/**
- * Eliminar un lote completo
- */
 export async function deleteBatchApi(batchId) {
-  if (!batchId) {
-    return { success: false, error: 'Identificador de lote no especificado.' };
-  }
-  const headers = getAuthHeaders();
+  if (!batchId) return { success: false, error: 'ID de lote no especificado' };
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
     method: 'DELETE',
-    headers,
+    headers: getAuthHeaders(),
   });
   return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar lote') };
 }
 
-/**
- * Eliminar una partida individual de un lote
- */
 export async function deleteTransactionApi(batchId, transactionId) {
-  if (!batchId || !transactionId) {
-    return { success: false, error: 'Identificadores no especificados.' };
-  }
-  const headers = getAuthHeaders();
+  if (!batchId || !transactionId) return { success: false, error: 'IDs no especificados' };
   const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/transactions/${transactionId}`, {
     method: 'DELETE',
-    headers,
+    headers: getAuthHeaders(),
   });
   return { success: ok, error: ok ? null : (data?.detail || 'Error al eliminar partida') };
 }
 
-/**
- * Obtiene los lotes registrados de un cliente
- */
 export async function fetchBatches(clientId, year, startMonth, endMonth) {
-  try {
-    let url = `${BASE_URL}/api/v1/batches?client_id=${clientId}`;
-    if (year) url += `&year=${year}`;
-    if (startMonth) url += `&start_month=${startMonth}`;
-    if (endMonth) url += `&end_month=${endMonth}`;
+  let url = `${BASE_URL}/api/v1/batches?client_id=${clientId}`;
+  if (year) url += `&year=${year}`;
+  if (startMonth) url += `&start_month=${startMonth}`;
+  if (endMonth) url += `&end_month=${endMonth}`;
 
-    const res = await fetch(url);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    console.warn('No se pudieron obtener lotes del backend:', err);
-  }
-  return [];
+  const { ok, data } = await safeJsonFetch(url, { headers: getAuthHeaders() });
+  return ok && Array.isArray(data) ? data : [];
 }
 
-/**
- * Obtiene el detalle de un lote con sus transacciones y asientos
- */
 export async function fetchBatchDetails(batchId) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/batches/${batchId}`);
-    if (res.ok) {
-      const data = await res.json();
-      return {
-        ...data,
-        transactions: (data.transactions || []).map(tx => ({
-          id: tx.id,
-          externalId: tx.external_id,
-          source: tx.source,
-          date: tx.date,
-          valueDate: tx.value_date,
-          concept: tx.concept,
-          netAmountEur: tx.net_amount_eur,
-          grossAmountEur: tx.gross_amount_eur,
-          feeAmountEur: tx.fee_amount_eur,
-          status: tx.status,
-          confidenceScore: tx.confidence_score,
-          dimensions: tx.dimensions,
-          solverUsed: tx.solver_used,
-          auditExplanation: tx.audit_explanation,
-          isApproved: tx.is_approved,
-          journal: tx.journal ? {
-            entryNumber: tx.journal.entry_number,
-            date: tx.journal.date,
-            isBalanced: tx.journal.is_balanced,
-            entryHashSha256: tx.journal.entry_hash_sha256,
-            lines: (tx.journal.lines || []).map(l => ({
-              accountCode: l.account_code,
-              accountName: l.account_name,
-              concept: l.concept,
-              documentNumber: l.document_number,
-              debitEur: l.debit_cents / 100.0,
-              creditEur: l.credit_cents / 100.0,
-              contrapartida: l.contrapartida,
-            })),
-          } : null,
-        })),
-      };
-    }
-  } catch (err) {
-    console.warn('Fallo al obtener detalle del lote:', err);
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}`, {
+    headers: getAuthHeaders(),
+  });
+  if (ok && data) {
+    return {
+      ...data,
+      transactions: (data.transactions || []).map((tx) => ({
+        id: tx.id,
+        externalId: tx.external_id,
+        source: tx.source,
+        date: tx.date,
+        valueDate: tx.value_date,
+        concept: tx.concept,
+        netAmountEur: tx.net_amount_eur,
+        grossAmountEur: tx.gross_amount_eur,
+        feeAmountEur: tx.fee_amount_eur,
+        status: tx.status,
+        confidenceScore: tx.confidence_score,
+        dimensions: tx.dimensions,
+        solverUsed: tx.solver_used,
+        auditExplanation: tx.audit_explanation,
+        isApproved: tx.is_approved,
+        journal: tx.journal
+          ? {
+              entryNumber: tx.journal.entry_number,
+              date: tx.journal.date,
+              isBalanced: tx.journal.is_balanced,
+              entryHashSha256: tx.journal.entry_hash_sha256,
+              lines: (tx.journal.lines || []).map((l) => ({
+                accountCode: l.account_code,
+                accountName: l.account_name,
+                concept: l.concept,
+                documentNumber: l.document_number,
+                debitEur: l.debit_cents / 100.0,
+                creditEur: l.credit_cents / 100.0,
+                contrapartida: l.contrapartida,
+              })),
+            }
+          : null,
+      })),
+    };
   }
   return null;
 }
 
-/**
- * Sube y procesa un fichero en el backend
- */
 export async function uploadBatchFile({
   tenantId,
   clientId,
@@ -6373,7 +6774,9 @@ export async function uploadBatchFile({
   startMonth = 1,
   endMonth = 12,
   file,
+  invoicesFile = null,
   gatewayName = 'Stripe',
+  ephemeralMode = false,
 }) {
   try {
     const formData = new FormData();
@@ -6384,10 +6787,13 @@ export async function uploadBatchFile({
     formData.append('start_month', startMonth);
     formData.append('end_month', endMonth);
     formData.append('file', file);
+    if (invoicesFile) formData.append('invoices_file', invoicesFile);
     if (gatewayName) formData.append('gateway_name', gatewayName);
+    formData.append('ephemeral_mode', ephemeralMode ? 'true' : 'false');
 
     const res = await fetch(`${BASE_URL}/api/v1/batches`, {
       method: 'POST',
+      headers: getAuthHeaders(false),
       body: formData,
     });
 
@@ -6395,81 +6801,59 @@ export async function uploadBatchFile({
       const data = await res.json();
       return { success: true, fromBackend: true, data };
     } else {
+      const isPaywall = res.status === 402;
       let errDetail = 'Error al procesar lote contable';
       try {
         const errJson = await res.json();
-        errDetail = errJson.detail || errDetail;
+        errDetail = typeof errJson.detail === 'object' ? errJson.detail.message : (errJson.detail || errDetail);
       } catch {
-        const text = await res.text();
-        if (text) errDetail = text;
+        // ignore
       }
-      return { success: false, fromBackend: true, error: errDetail };
+      return { success: false, fromBackend: true, paywallTriggered: isPaywall, error: errDetail };
     }
   } catch (err) {
-    console.warn('Fallo en subida al backend:', err);
+    return { success: false, fromBackend: false, error: err.message || 'Sin conexión con el servidor backend' };
   }
-
-  return { success: false, fromBackend: false, error: 'Sin conexión con el servidor backend' };
 }
 
-/**
- * Aprueba una partida individual en la base de datos
- */
 export async function approveTransactionApi(batchId, transactionId, note = 'Aprobado por el Auditor') {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/batches/${batchId}/approve/${transactionId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved_by: 'auditor@gestoria.es', note }),
-    });
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    console.warn('Fallo al aprobar en backend:', err);
-  }
-  return { status: 'fallback', is_approved: true };
+  const actor = getCurrentActorEmail();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/approve/${transactionId}`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ approved_by: actor, note }),
+  });
+  return ok ? data : { status: 'fallback', is_approved: true };
 }
 
-/**
- * Aprueba todas las partidas amarillas en lote en la base de datos
- */
 export async function bulkApproveYellowsApi(batchId) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/batches/${batchId}/approve-all-yellows`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved_by: 'auditor@gestoria.es', note: 'Aprobación masiva certificada' }),
-    });
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    console.warn('Fallo al aprobar en lote en backend:', err);
-  }
-  return { status: 'fallback' };
+  const actor = getCurrentActorEmail();
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/approve-all-yellows`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ approved_by: actor, note: 'Aprobación masiva certificada' }),
+  });
+  return ok ? data : { status: 'fallback' };
 }
 
-/**
- * Consulta la cadena de auditoría SHA-256 de un lote
- */
 export async function fetchAuditTrailApi(batchId) {
-  try {
-    const res = await fetch(`${BASE_URL}/api/v1/batches/${batchId}/audit-trail`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    console.warn('Fallo al consultar auditoría en backend:', err);
-  }
-  return null;
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/${batchId}/audit-trail`, {
+    headers: getAuthHeaders(),
+  });
+  return ok ? data : null;
 }
 
-/**
- * Descarga el fichero exportado oficial generado por el backend
- */
-export function getBackendExportUrl(batchId, erp) {
-  return `${BASE_URL}/api/v1/batches/${batchId}/export/${erp}?actor=auditor@gestoria.es`;
+export async function downloadBackendExportBlob(batchId, erp) {
+  const actor = encodeURIComponent(getCurrentActorEmail());
+  const url = `${BASE_URL}/api/v1/batches/${batchId}/export/${erp}?actor=${actor}`;
+  const res = await fetch(url, { headers: getAuthHeaders(false) });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(errText || `Error HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get('content-disposition');
+  return { blob, disposition };
 }
 
 
@@ -6478,6 +6862,7 @@ FICHERO: frontend\src\utils\exporters.js
 ================================================================================
 
 /**
+ * FICHERO: frontend/src/utils/exporters.js
  * Generadores oficiales de ficheros de intercambio contable para ERPs españoles
  * - Wolters Kluwer A3 (Suenlace / a3conv)
  * - Sage 50 / Sage Despachos (XDIARIO.csv)
@@ -6493,75 +6878,87 @@ import { formatAccountCode } from './formatters';
 export function generateA3Suenlace(journals, accountLength = 9) {
   const lines = [];
 
-  journals.forEach((journal) => {
-    // Formato de fecha A3: DDMMAAAA
-    const [year, month, day] = journal.date.split('-');
+  journals.forEach((journal, idx) => {
+    const [year, month, day] = (journal.date || '2026-01-01').split('-');
     const dateFormatted = `${day}${month}${year}`;
-    const entryFormatted = String(journal.entryNumber || 1).padStart(6, '0');
+    const entryFormatted = String(journal.entryNumber || idx + 1).padStart(6, '0');
 
-    journal.lines.forEach((line) => {
+    (journal.lines || []).forEach((line) => {
       const acct = formatAccountCode(line.accountCode, accountLength);
-      const concept = (line.concept || '').trim().slice(0, 30);
-      const doc = (line.documentNumber || '').trim().slice(0, 10);
-      const contra = formatAccountCode(line.contrapartida || '', accountLength);
+      const concept = (line.concept || '').replace(/;/g, ' ').trim().slice(0, 30);
+      const doc = (line.documentNumber || '').replace(/;/g, ' ').trim().slice(0, 10);
+      const contra = line.contrapartida
+        ? formatAccountCode(line.contrapartida, accountLength)
+        : '';
 
       const isDebit = Number(line.debitEur) > 0;
       const sign = isDebit ? 'D' : 'H';
       const amountVal = isDebit ? Number(line.debitEur) : Number(line.creditEur);
       const amountFormatted = amountVal.toFixed(2);
 
-      // Asiento;Fecha;Cuenta;Signo;Importe;Concepto;Documento;Contrapartida
-      lines.push(`${entryFormatted};${dateFormatted};${acct};${sign};${amountFormatted};${concept};${doc};${contra}`);
+      lines.push(
+        `${entryFormatted};${dateFormatted};${acct};${sign};${amountFormatted};${concept};${doc};${contra}`
+      );
     });
   });
 
-  return lines.join('\r\n');
+  return lines.join('\r\n') + (lines.length > 0 ? '\r\n' : '');
 }
 
 /**
  * Genera fichero XDIARIO.csv para Sage 50 y Sage Despachos.
- * Cabecera estándar: Cuenta;Fecha;Concepto;Documento;Debe;Haber;Factura;Contrapartida
+ * Cabecera oficial de 9 columnas: Asiento;Fecha;Cuenta;Concepto;Documento;Debe;Haber;Factura;Contrapartida
  */
 export function generateSageXdiario(journals, accountLength = 9) {
-  const lines = ['Cuenta;Fecha;Concepto;Documento;Debe;Haber;Factura;Contrapartida'];
+  const lines = ['Asiento;Fecha;Cuenta;Concepto;Documento;Debe;Haber;Factura;Contrapartida'];
 
-  journals.forEach((journal) => {
-    const [year, month, day] = journal.date.split('-');
+  journals.forEach((journal, idx) => {
+    const [year, month, day] = (journal.date || '2026-01-01').split('-');
     const dateFormatted = `${day}/${month}/${year}`;
+    const entryNum = journal.entryNumber || idx + 1;
 
-    journal.lines.forEach((line) => {
+    (journal.lines || []).forEach((line) => {
       const acct = formatAccountCode(line.accountCode, accountLength);
-      const concept = (line.concept || '').trim().slice(0, 40);
-      const doc = (line.documentNumber || '').trim().slice(0, 20);
-      const debitFormatted = Number(line.debitEur).toFixed(2);
-      const creditFormatted = Number(line.creditEur).toFixed(2);
-      const contra = formatAccountCode(line.contrapartida || '', accountLength);
+      const concept = (line.concept || '').replace(/;/g, ' ').trim().slice(0, 40);
+      const doc = (line.documentNumber || '').replace(/;/g, ' ').trim().slice(0, 15);
+      const debitFormatted = Number(line.debitEur || 0).toFixed(2);
+      const creditFormatted = Number(line.creditEur || 0).toFixed(2);
+      const contra = line.contrapartida
+        ? formatAccountCode(line.contrapartida, accountLength)
+        : '';
 
-      lines.push(`${acct};${dateFormatted};${concept};${doc};${debitFormatted};${creditFormatted};${doc};${contra}`);
+      lines.push(
+        `${entryNum};${dateFormatted};${acct};${concept};${doc};${debitFormatted};${creditFormatted};${doc};${contra}`
+      );
     });
   });
 
-  return lines.join('\r\n');
+  return lines.join('\r\n') + '\r\n';
 }
 
 /**
- * Genera filas de diario para DELSOL Contasol
+ * Genera filas de diario para DELSOL Contasol con las 9 columnas oficiales
  */
 export function getContasolRows(journals, accountLength = 9) {
   const rows = [];
-  journals.forEach((journal) => {
-    const [year, month, day] = journal.date.split('-');
+  journals.forEach((journal, idx) => {
+    const [year, month, day] = (journal.date || '2026-01-01').split('-');
     const dateFormatted = `${day}/${month}/${year}`;
+    const entryNum = journal.entryNumber || idx + 1;
 
-    journal.lines.forEach((line) => {
+    (journal.lines || []).forEach((line) => {
       rows.push({
-        Diario: journal.entryNumber || 1,
+        Diario: 1, // Diario 1 General en Contasol
         Fecha: dateFormatted,
+        Asiento: entryNum,
         Subcuenta: formatAccountCode(line.accountCode, accountLength),
         Concepto: (line.concept || '').trim().slice(0, 50),
         Documento: (line.documentNumber || '').trim().slice(0, 15),
-        Debe: Number(line.debitEur),
-        Haber: Number(line.creditEur),
+        Debe: Number(Number(line.debitEur || 0).toFixed(2)),
+        Haber: Number(Number(line.creditEur || 0).toFixed(2)),
+        Contrapartida: line.contrapartida
+          ? formatAccountCode(line.contrapartida, accountLength)
+          : '',
       });
     });
   });
@@ -6575,25 +6972,23 @@ export function generateContasolXlsx(journals, accountLength = 9) {
   const rows = getContasolRows(journals, accountLength);
   const worksheet = XLSX.utils.json_to_sheet(rows);
 
-  // Autoajuste de anchos de columna
   worksheet['!cols'] = [
     { wch: 8 },  // Diario
     { wch: 12 }, // Fecha
+    { wch: 10 }, // Asiento
     { wch: 14 }, // Subcuenta
     { wch: 40 }, // Concepto
     { wch: 16 }, // Documento
     { wch: 14 }, // Debe
     { wch: 14 }, // Haber
+    { wch: 14 }, // Contrapartida
   ];
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Diario_Contasol');
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Asientos Contables');
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
 }
 
-/**
- * Utilidad de descarga de archivos en el navegador
- */
 export function downloadTextFile(content, filename, mimeType = 'text/plain;charset=utf-8') {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -6730,32 +7125,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "88a59d72-bc5e-43c0-8f23-afd0f7d1a522",
+  "tenant_id": "df3d4fb2-0274-47bb-a5a5-d60e7744057b",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
-  "issued_at": "2026-10-13",
+  "issued_at": "2026-10-14",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "5fa28796ea0ef1de2aab57701afc30df32359639e6c9df5ef0c70087099a3853",
+  "head_hash_sha256": "583431635ca559e282df9d1cd0a54fe34e53220b48f1b603424f0697ca27c9b0",
   "audit_events": [
     {
-      "event_id": "a89de8f2-34e5-4a79-84c5-056698633d7c",
+      "event_id": "f3848959-ab0f-41e6-8a55-32b60540c3d9",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T19:29:04.563007",
-      "sha256_hash": "ee98c20e257ae6b6c9cb49ac5d8d159402cfd20a286837a33613320deae1c279",
+      "timestamp": "2026-10-14T17:09:01.571977",
+      "sha256_hash": "380de206e4c51e2dd420e9f8dbfca6551e9afc9b13d7ad2e96c0850fb117299e",
       "details": {
-        "batch_id": "db19173f-612a-4da1-a927-fe63a5c9df14",
+        "batch_id": "30830fb1-ba48-4d49-b554-8addefa04710",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "bf041f1a-2376-4a38-b8d5-48a2ee4ef309",
+      "event_id": "d8592041-4297-4131-95e2-ce6d27285121",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T19:29:04.574567",
-      "sha256_hash": "8d0219bffebc708d739344d18cecddea77224adcaaf1394880623ede8dc7e110",
+      "timestamp": "2026-10-14T17:09:01.584494",
+      "sha256_hash": "373f9f47a457d12084929efc059a6a7086ac3f696cf9a6e383998c82667d55b3",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -6763,23 +7158,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "acc369a8-de01-46ec-b608-c79a9189ab21",
+      "event_id": "86a1169a-2600-4e12-a580-e9a68ad94daa",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T19:29:04.581068",
-      "sha256_hash": "904f8473d4fffaaa35879a003b1466b8e79a7f7655858a8e51d0aafaf0627dc5",
+      "timestamp": "2026-10-14T17:09:01.592201",
+      "sha256_hash": "5ffda821b7aba1929d4e5ff77488af1d55c5575fda4a0ef0ce555806313e288f",
       "details": {
-        "batch_id": "d7b350bf-f3db-4ec4-a92b-4fd6bb663e9b",
+        "batch_id": "61199dbf-4e74-43f6-8992-195d64039cb9",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "dc1cb503-d4b4-4411-808d-49263a0ecd29",
+      "event_id": "72b3ed2e-7c90-4323-ad56-18d42c9fad3f",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T19:29:04.587293",
-      "sha256_hash": "c4e81ea04a812c8a092b742901432987a4360b32d3117f9f193e3b6fa7c11646",
+      "timestamp": "2026-10-14T17:09:01.600443",
+      "sha256_hash": "6be9fa31a1b8300b37ea6ef87f2c5199cd11613c2a15437ba6a6549ece542418",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -6787,23 +7182,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "a7f4ea40-57ac-487a-a70a-2d7a5845c55d",
+      "event_id": "35399add-c522-4f66-8377-3c6e7b3ab91a",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-13T19:29:04.591495",
-      "sha256_hash": "cf2eedfbb9be4e2eeca7b597f49b6805bb7c751dc1635e40a187dcb039a0f79f",
+      "timestamp": "2026-10-14T17:09:01.607675",
+      "sha256_hash": "cf1b40abc6217b2235cb9a234eb69deb8415a48ec41ac2ac6208dad2e201c729",
       "details": {
-        "batch_id": "3e099174-03e4-4866-ad88-87b044675c38",
+        "batch_id": "93837333-04e7-4f6d-81fd-a9f122311526",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "cae7c9d3-a725-489f-8374-d91307880742",
+      "event_id": "040d6182-792a-4639-b84c-a5e08d3b1136",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-13T19:29:04.609317",
-      "sha256_hash": "5fa28796ea0ef1de2aab57701afc30df32359639e6c9df5ef0c70087099a3853",
+      "timestamp": "2026-10-14T17:09:01.626542",
+      "sha256_hash": "583431635ca559e282df9d1cd0a54fe34e53220b48f1b603424f0697ca27c9b0",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -6817,7 +7212,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xa2 in position 10: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0x99 in position 11: invalid start byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -6879,11 +7274,11 @@ FICHERO: output_pilot\XDIARIO_SAGE_CLIENTE2.csv
 ================================================================================
 
 Asiento;Fecha;Cuenta;Concepto;Documento;Debe;Haber;Factura;Contrapartida
-1;13/10/2026;5720000001;Liq. Redsys tpv 13/10;LIQ-20261013;1701.08;0.00;LIQ-20261013;6260000001
-1;13/10/2026;6260000001;Comisiones Redsys tpv;FEE-20261013;18.92;0.00;FEE-20261013;5720000001
-1;13/10/2026;4300000001;Cobro Fra. TPV-2026-8801 Comer;TPV-2026-8801;0.00;750.00;TPV-2026-8801;5720000001
-1;13/10/2026;4300000001;Cobro Fra. TPV-2026-8802 Resta;TPV-2026-8802;0.00;550.00;TPV-2026-8802;5720000001
-1;13/10/2026;4300000001;Cobro Fra. TPV-2026-8803 Event;TPV-2026-8803;0.00;420.00;TPV-2026-8803;5720000001
+1;13/10/2026;5720000000;Liq. Redsys tpv 13/10;LIQ-20261013;1701.08;0.00;LIQ-20261013;4300000001
+1;13/10/2026;6260000000;Comisiones Redsys tpv;FEE-20261013;18.92;0.00;FEE-20261013;5720000000
+1;13/10/2026;4300000001;Cobro Fra. TPV-2026-8801 Comer;TPV-2026-8801;0.00;750.00;TPV-2026-8801;5720000000
+1;13/10/2026;4300000001;Cobro Fra. TPV-2026-8802 Resta;TPV-2026-8802;0.00;550.00;TPV-2026-8802;5720000000
+1;13/10/2026;4300000001;Cobro Fra. TPV-2026-8803 Event;TPV-2026-8803;0.00;420.00;TPV-2026-8803;5720000000
 
 
 ================================================================================
@@ -8096,6 +8491,23 @@ from decimal import Decimal
 from typing import List, Optional
 
 
+def normalize_pgc_subaccount(code: str, length: int = 9) -> str:
+    """
+    Normaliza cualquier subcuenta contable (ej. '572.1', '43001') al ancho exacto
+    exigido por el ERP (8, 9, 10 o 12 dígitos), rellenando con ceros tras el grupo (3 dígitos).
+    """
+    if not code:
+        return ""
+    clean = "".join(ch for ch in str(code).strip() if ch.isalnum())
+    if not clean:
+        return ""
+    if len(clean) < length:
+        prefix = clean[:3]
+        suffix = clean[3:]
+        return prefix + suffix.rjust(length - 3, "0")
+    return clean[:length]
+
+
 @dataclass
 class JournalEntryLine:
     account_code: str          # Subcuenta a 9-12 dígitos (p.ej. 572000001, 430000145)
@@ -8150,34 +8562,37 @@ class AccountingEntryBuilder:
         matched_invoices: List[dict],  # dicts con: account_code, invoice_number, gross_cents, fee_cents, customer_name
         refunds: Optional[List[dict]] = None,
         gateway_name: str = "Stripe",
+        account_length: int = 9,
     ) -> DoubleEntryJournal:
         """
         Construye el asiento compuesto de cuadre de liquidación agrupada.
-        DEBE:
-          572xxx (Bancos) = payout_net_cents
-          626xxx (Comisiones) = sum(fee_cents)
-        HABER:
-          430xxx (Clientes por factura) = gross_cents cada una
+        Garantiza cuadre a 0 céntimos absorbiendo desviaciones de redondeo (<= 2 céntimos).
         """
+        bank_acct = normalize_pgc_subaccount(bank_account_code or "572000001", account_length)
+        fee_acct = normalize_pgc_subaccount(fee_account_code or "626000001", account_length)
+
         journal = DoubleEntryJournal(
             entry_number=entry_number,
             entry_date=entry_date,
             description=f"Liquidación {gateway_name} {entry_date.strftime('%d/%m/%Y')}",
         )
 
-        total_fees_cents = sum(inv.get("fee_cents", 0) for inv in matched_invoices)
-        total_gross_cents = sum(inv.get("gross_cents", 0) for inv in matched_invoices)
+        total_fees_cents = sum(int(inv.get("fee_cents", 0)) for inv in matched_invoices)
+        first_customer_acct = normalize_pgc_subaccount(
+            matched_invoices[0].get("account_code", "430000001") if matched_invoices else "430000001",
+            account_length,
+        )
 
         # 1. Línea Banco (572) -> DEBE por el neto abonado
         journal.lines.append(
             JournalEntryLine(
-                account_code=bank_account_code,
+                account_code=bank_acct,
                 account_name="Bancos c/c",
                 concept=f"Liq. {gateway_name} {entry_date.strftime('%d/%m')}"[:30],
                 document_number=f"LIQ-{entry_date.strftime('%Y%m%d')}",
-                debit_cents=payout_net_cents,
+                debit_cents=int(payout_net_cents),
                 credit_cents=0,
-                contrapartida=fee_account_code,
+                contrapartida=first_customer_acct,
             )
         )
 
@@ -8185,21 +8600,22 @@ class AccountingEntryBuilder:
         if total_fees_cents > 0:
             journal.lines.append(
                 JournalEntryLine(
-                    account_code=fee_account_code,
+                    account_code=fee_acct,
                     account_name="Servicios bancarios y comisiones",
                     concept=f"Comisiones {gateway_name}"[:30],
                     document_number=f"FEE-{entry_date.strftime('%Y%m%d')}",
                     debit_cents=total_fees_cents,
                     credit_cents=0,
-                    contrapartida=bank_account_code,
+                    contrapartida=bank_acct,
                 )
             )
 
         # 3. Líneas de Facturas Clientes (430) -> HABER por el importe bruto
-        for inv in matched_invoices:
-            cust_acct = inv.get("account_code") or "430000001"
-            inv_num = inv.get("invoice_number", "")
-            cust_name = inv.get("customer_name", "Cliente")
+        for idx, inv in enumerate(matched_invoices, start=1):
+            raw_cust_acct = inv.get("account_code") or f"430{idx:06d}"
+            cust_acct = normalize_pgc_subaccount(raw_cust_acct, account_length)
+            inv_num = str(inv.get("invoice_number", f"FRA-{idx}")).strip()
+            cust_name = str(inv.get("customer_name", "Cliente")).strip()
             concept_str = f"Cobro Fra. {inv_num} {cust_name}"[:30]
 
             journal.lines.append(
@@ -8207,40 +8623,81 @@ class AccountingEntryBuilder:
                     account_code=cust_acct,
                     account_name=f"Cliente: {cust_name}"[:40],
                     concept=concept_str,
-                    document_number=inv_num,
+                    document_number=inv_num[:15],
                     debit_cents=0,
-                    credit_cents=inv["gross_cents"],
-                    contrapartida=bank_account_code,
+                    credit_cents=int(inv["gross_cents"]),
+                    contrapartida=bank_acct,
                 )
             )
 
-        # Manejar devoluciones si las hay
+        # 4. Manejar devoluciones concurrentes (Refunds)
         if refunds:
             for ref in refunds:
-                ref_acct = ref.get("account_code") or "708000001"  # Devoluciones de ventas
-                ref_gross = ref.get("gross_cents", 0)
-                journal.lines.append(
-                    JournalEntryLine(
-                        account_code=ref_acct,
-                        account_name="Devoluciones de ventas",
-                        concept=f"Devolución {ref.get('refund_id', '')}"[:30],
-                        document_number=ref.get("refund_id", ""),
-                        debit_cents=ref_gross,
-                        credit_cents=0,
-                        contrapartida=bank_account_code,
+                ref_acct = normalize_pgc_subaccount(ref.get("account_code") or "708000001", account_length)
+                ref_gross = abs(int(ref.get("gross_cents", 0)))
+                ref_fee = int(ref.get("fee_cents", 0))
+                if ref_gross > 0:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=ref_acct,
+                            account_name="Devoluciones de ventas",
+                            concept=f"Devolución {ref.get('refund_id', '')}"[:30],
+                            document_number=str(ref.get("refund_id", "DEV"))[:15],
+                            debit_cents=ref_gross,
+                            credit_cents=0,
+                            contrapartida=bank_acct,
+                        )
                     )
-                )
+                if ref_fee > 0:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=fee_acct,
+                            account_name="Comisión devolución pasarela",
+                            concept=f"Gasto dev. {gateway_name}"[:30],
+                            document_number=str(ref.get("refund_id", "FEE-DEV"))[:15],
+                            debit_cents=ref_fee,
+                            credit_cents=0,
+                            contrapartida=bank_acct,
+                        )
+                    )
 
-        # Ajuste de redondeo de 1 céntimo si fuera necesario por tolerancias
+        # 5. Ajuste automático de redondeo (hasta 2 céntimos)
         journal.check_balance()
         if not journal.is_balanced and abs(journal.imbalance_cents) <= 2:
-            # Si hay descuadre de 1 o 2 céntimos imputable al redondeo de pasarela,
-            # se absorbe en la cuenta 626/669 de gastos financieros
-            diff = journal.imbalance_cents
-            for l in journal.lines:
-                if l.account_code == fee_account_code:
-                    l.debit_cents -= diff
-                    break
+            diff = journal.imbalance_cents  # total_debit - total_credit
+            fee_line = next((l for l in journal.lines if l.account_code == fee_acct), None)
+            if fee_line:
+                if fee_line.debit_cents - diff >= 0:
+                    fee_line.debit_cents -= diff
+                else:
+                    fee_line.credit_cents += (diff - fee_line.debit_cents)
+                    fee_line.debit_cents = 0
+            else:
+                # Si no había línea de comisión previa, creamos línea de ajuste por redondeo (669/626)
+                if diff < 0:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=fee_acct,
+                            account_name="Ajuste redondeo pasarela",
+                            concept=f"Redondeo {gateway_name}"[:30],
+                            document_number=f"ADJ-{entry_date.strftime('%Y%m%d')}",
+                            debit_cents=abs(diff),
+                            credit_cents=0,
+                            contrapartida=bank_acct,
+                        )
+                    )
+                else:
+                    journal.lines.append(
+                        JournalEntryLine(
+                            account_code=fee_acct,
+                            account_name="Ajuste redondeo pasarela",
+                            concept=f"Redondeo {gateway_name}"[:30],
+                            document_number=f"ADJ-{entry_date.strftime('%Y%m%d')}",
+                            debit_cents=0,
+                            credit_cents=diff,
+                            contrapartida=bank_acct,
+                        )
+                    )
             journal.check_balance()
 
         return journal
@@ -8262,16 +8719,12 @@ Exige:
 - Cuadre nulo obligatorio del asiento
 """
 from typing import List
-from src.accounting.double_entry import DoubleEntryJournal
+from src.accounting.double_entry import DoubleEntryJournal, normalize_pgc_subaccount
 
 
 class A3SuenlaceExporter:
     @staticmethod
     def export_journal_entries(journals: List[DoubleEntryJournal], account_length: int = 9) -> str:
-        """
-        Genera el fichero de texto plano conforme al protocolo Suenlace de Wolters Kluwer.
-        Cada apunte representa una línea del asiento contable.
-        """
         lines = []
 
         for journal in journals:
@@ -8287,18 +8740,10 @@ class A3SuenlaceExporter:
             entry_str = f"{journal.entry_number:06d}"
 
             for line in journal.lines:
-                # Normalizar subcuenta a longitud fija (9 dígitos estándar)
-                acct = line.account_code.replace(".", "").strip()
-                if len(acct) < account_length:
-                    # Rellenar con ceros después de los 3 primeros dígitos (ej. 572 -> 572000001)
-                    prefix = acct[:3]
-                    suffix = acct[3:]
-                    acct = prefix + suffix.rjust(account_length - 3, "0")
-                else:
-                    acct = acct[:account_length]
-
-                concept_str = line.concept.strip()[:30]
-                doc_str = line.document_number.strip()[:10]
+                acct = normalize_pgc_subaccount(line.account_code, account_length)
+                contra = normalize_pgc_subaccount(line.contrapartida or "", account_length)
+                concept_str = (line.concept or "").replace(";", " ").strip()[:30]
+                doc_str = (line.document_number or "").replace(";", " ").strip()[:10]
 
                 if line.debit_cents > 0:
                     sign = "D"
@@ -8307,13 +8752,10 @@ class A3SuenlaceExporter:
                     sign = "H"
                     amount_val = line.credit_cents / 100.0
 
-                contra = (line.contrapartida or "")[:account_length]
-
-                # Formato delimitado estándar Suenlace A3 (Asiento;Fecha;Cuenta;Signo;Importe;Concepto;Documento;Contrapartida)
                 record_line = f"{entry_str};{date_str};{acct};{sign};{amount_val:.2f};{concept_str};{doc_str};{contra}"
                 lines.append(record_line)
 
-        return "\r\n".join(lines) + "\r\n"
+        return "\r\n".join(lines) + ("\r\n" if lines else "")
 
 
 ================================================================================
@@ -8332,7 +8774,7 @@ from typing import List, Union
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
-from src.accounting.double_entry import DoubleEntryJournal
+from src.accounting.double_entry import DoubleEntryJournal, normalize_pgc_subaccount
 
 
 class ContasolXlsxExporter:
@@ -8382,25 +8824,18 @@ class ContasolXlsxExporter:
             entry_num = journal.entry_number
 
             for line in journal.lines:
-                acct = line.account_code.replace(".", "").strip()
-                if len(acct) < account_length:
-                    prefix = acct[:3]
-                    suffix = acct[3:]
-                    acct = prefix + suffix.rjust(account_length - 3, "0")
-                else:
-                    acct = acct[:account_length]
-
+                acct = normalize_pgc_subaccount(line.account_code, account_length)
+                contra = normalize_pgc_subaccount(line.contrapartida or "", account_length)
                 debit_val = round(line.debit_cents / 100.0, 2)
                 credit_val = round(line.credit_cents / 100.0, 2)
-                contra = (line.contrapartida or "")[:account_length]
 
                 row_data = [
                     1,                 # Diario 1 (General)
                     date_str,          # Fecha
                     entry_num,         # Asiento
                     acct,              # Subcuenta
-                    line.concept[:50], # Concepto
-                    line.document_number[:15], # Documento
+                    (line.concept or "")[:50], # Concepto
+                    (line.document_number or "")[:15], # Documento
                     debit_val,         # Debe
                     credit_val,        # Haber
                     contra,            # Contrapartida
@@ -8434,7 +8869,7 @@ Asiento,Fecha,Cuenta,Concepto,Documento,Debe,Haber,Factura,Contrapartida
 import io
 import csv
 from typing import List
-from src.accounting.double_entry import DoubleEntryJournal
+from src.accounting.double_entry import DoubleEntryJournal, normalize_pgc_subaccount
 
 
 class SageXdiarioExporter:
@@ -8473,19 +8908,12 @@ class SageXdiarioExporter:
             entry_num = journal.entry_number
 
             for line in journal.lines:
-                acct = line.account_code.replace(".", "").strip()
-                if len(acct) < account_length:
-                    prefix = acct[:3]
-                    suffix = acct[3:]
-                    acct = prefix + suffix.rjust(account_length - 3, "0")
-                else:
-                    acct = acct[:account_length]
-
+                acct = normalize_pgc_subaccount(line.account_code, account_length)
+                contra = normalize_pgc_subaccount(line.contrapartida or "", account_length)
                 debit_val = f"{line.debit_cents / 100.0:.2f}" if line.debit_cents > 0 else "0.00"
                 credit_val = f"{line.credit_cents / 100.0:.2f}" if line.credit_cents > 0 else "0.00"
-                concept = line.concept[:50]
-                doc = line.document_number[:15]
-                contra = (line.contrapartida or "")[:account_length]
+                concept = (line.concept or "").replace(delimiter, " ").strip()[:40]
+                doc = (line.document_number or "").replace(delimiter, " ").strip()[:15]
 
                 writer.writerow([
                     entry_num,
@@ -9153,13 +9581,14 @@ FICHERO: src\api\v1\subscription_api.py
 """
 Endpoints REST de Facturación, Cuotas y Suscripción (Billing & Subscriptions API)
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
-from src.billing.pricing_plans import PLAN_CONFIGS, PlanTier
+from src.database.models import Tenant, ClientCompany, ReconciliationBatch
+from src.billing.pricing_plans import PLAN_CONFIGS, PlanTier, QuotaManager
 from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
 from src.billing.stripe_service import StripeBillingService
 
@@ -9167,7 +9596,8 @@ router = APIRouter(prefix="/v1", tags=["Facturación & Suscripción"])
 
 
 class UpgradeSubscriptionDTO(BaseModel):
-    new_plan: str = Field(..., json_schema_extra={"example": "PROFESSIONAL"})
+    new_plan: Optional[str] = Field(None, json_schema_extra={"example": "PROFESSIONAL"})
+    plan: Optional[str] = Field(None, json_schema_extra={"example": "PROFESSIONAL"})
     extra_blocks: int = Field(0, json_schema_extra={"example": 1})
 
 
@@ -9193,28 +9623,62 @@ def get_stripe_public_config():
 @router.get("/tenants/{tenant_id}/subscription")
 def get_tenant_subscription(tenant_id: str, db: Session = Depends(get_db)):
     """Consulta el estado de facturación, cuotas y límites del despacho."""
-    try:
-        return BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Despacho o empresa no encontrado.")
+
+    clients_count = db.query(ClientCompany).filter(ClientCompany.tenant_id == tenant_id).count()
+    batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant_id).all()
+    tx_count = sum(b.total_movements or 0 for b in batches)
+
+    quota = QuotaManager.evaluate_tenant_quota(
+        plan_code=tenant.plan or "FREE",
+        extra_blocks=tenant.extra_blocks or 0,
+        current_clients_count=clients_count,
+        current_month_transactions=tx_count,
+    )
+    legacy_status = BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
+
+    return {
+        **legacy_status,
+        "tenant_id": tenant.id,
+        "tenant_name": tenant.name,
+        **quota,
+        "available_plans": list(PLAN_CONFIGS.values()),
+    }
 
 
+@router.post("/tenants/{tenant_id}/upgrade")
 @router.post("/tenants/{tenant_id}/subscription/upgrade")
 def upgrade_tenant_subscription(
     tenant_id: str,
     payload: UpgradeSubscriptionDTO,
     db: Session = Depends(get_db),
 ):
-    """Actualiza el plan o añade paquetes suplementarios de 25€."""
-    try:
-        return BillingQuotaManager.update_tenant_plan(
-            db=db,
-            tenant_id=tenant_id,
-            new_plan=payload.new_plan,
-            extra_blocks=payload.extra_blocks,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    """Actualiza el plan del despacho tras completar el flujo de Stripe Checkout / Paywall."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Despacho no encontrado.")
+
+    raw_plan = payload.new_plan or payload.plan or "PROFESSIONAL"
+    clean_plan = raw_plan.upper().strip()
+    if clean_plan not in PLAN_CONFIGS:
+        raise HTTPException(status_code=400, detail=f"Plan inválido: {clean_plan}")
+
+    tenant.plan = clean_plan
+    tenant.extra_blocks = max(0, payload.extra_blocks)
+    db.commit()
+    db.refresh(tenant)
+
+    legacy_status = BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
+
+    return {
+        **legacy_status,
+        "success": True,
+        "tenant_id": tenant.id,
+        "new_plan": tenant.plan,
+        "plan_details": PLAN_CONFIGS.get(clean_plan),
+    }
 
 
 @router.post("/tenants/{tenant_id}/subscription/checkout-session")
@@ -9256,13 +9720,14 @@ FICHERO: src\api\v1\tenant_batch_api.py
 """
 Endpoints REST de FastAPI para Multi-Tenancy, Persistencia de Lotes y Trazabilidad Legal
 """
+from datetime import date
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, File, UploadFile, Form
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
-from src.database.models import ClientCompany, ReconciliationBatch, BatchTransaction
+from src.database.models import Tenant, ClientCompany, ReconciliationBatch, BatchTransaction
 from src.database.repository import ReconciliationRepository
 from src.services.batch_service import BatchReconciliationService
 
@@ -9470,6 +9935,147 @@ def list_batches(
     ]
 
 
+class StripeSyncRequestDTO(BaseModel):
+    tenant_id: str
+    client_id: str
+    stripe_restricted_key: str
+    period_year: int = 2026
+    start_month: int = 1
+    end_month: int = 12
+    ephemeral_mode: bool = False
+
+
+@router.post("/batches/stripe-sync")
+def sync_stripe_payouts_endpoint(
+    payload: StripeSyncRequestDTO,
+    db: Session = Depends(get_db),
+):
+    """
+    Conecta directamente con la API de Stripe usando una clave restringida (rk_live_ / rk_test_),
+    descarga las liquidaciones bancarias (payouts) y construye los asientos PGC cuadrados a 0,00 €.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == payload.tenant_id).first()
+    client = db.query(ClientCompany).filter(ClientCompany.id == payload.client_id).first()
+    if not tenant or not client:
+        raise HTTPException(status_code=404, detail="Despacho o Empresa Cliente no encontrados.")
+
+    start_dt = date(payload.period_year, payload.start_month, 1)
+    end_day = 28 if payload.end_month == 2 else (30 if payload.end_month in (4, 6, 9, 11) else 31)
+    end_dt = date(payload.period_year, payload.end_month, end_day)
+
+    from src.parsers.gateways.stripe_api_sync import StripeDirectSyncService
+    from src.accounting.double_entry import AccountingEntryBuilder
+    from src.billing.pricing_plans import QuotaManager
+
+    try:
+        synced_payouts = StripeDirectSyncService.fetch_reconciled_payouts(
+            stripe_api_key=payload.stripe_restricted_key,
+            start_date=start_dt,
+            end_date=end_dt,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Error al conectar con Stripe API: {str(exc)}")
+
+    # Verificar cuota del Paywall antes de procesar
+    existing_batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant.id).all()
+    current_tx = sum(b.total_movements or 0 for b in existing_batches)
+    quota = QuotaManager.evaluate_tenant_quota(
+        plan_code=tenant.plan or "FREE",
+        extra_blocks=tenant.extra_blocks or 0,
+        current_clients_count=1,
+        current_month_transactions=current_tx,
+        incoming_transactions=len(synced_payouts),
+    )
+    if quota["paywall_triggered"]:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "PAYWALL_LIMIT_REACHED",
+                "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
+                "quota": quota,
+            },
+        )
+
+    # Construir transacciones y asientos de partida doble en memoria
+    response_transactions = []
+    for idx, po in enumerate(synced_payouts, start=1):
+        matched_invs = [
+            {
+                "account_code": f"430{i:06d}",
+                "invoice_number": item.invoice_reference or f"ST-{i}",
+                "gross_cents": item.gross_cents,
+                "fee_cents": item.fee_cents,
+                "customer_name": item.customer_name or "Cliente Stripe",
+            }
+            for i, item in enumerate(po.items, start=1)
+            if item.item_type in ("charge", "payment")
+        ]
+        refund_items = [
+            {
+                "account_code": "708000001",
+                "refund_id": item.invoice_reference or item.transaction_id,
+                "gross_cents": abs(item.gross_cents),
+                "fee_cents": item.fee_cents,
+            }
+            for item in po.items
+            if item.item_type in ("refund", "payment_refund")
+        ]
+
+        journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+            entry_number=idx,
+            entry_date=po.arrival_date,
+            bank_account_code=client.bank_account_code or "572000001",
+            fee_account_code=client.fee_account_code or "626000001",
+            payout_net_cents=po.net_payout_cents,
+            matched_invoices=matched_invs,
+            refunds=refund_items,
+            gateway_name="Stripe API",
+            account_length=client.account_length or 9,
+        )
+
+        response_transactions.append({
+            "id": f"TX-STRIPE-API-{po.payout_id[-6:].upper()}",
+            "type": "BATCH_PAYOUT",
+            "source": f"Stripe API Payout #{po.payout_id}",
+            "date": po.arrival_date.isoformat(),
+            "valueDate": po.arrival_date.isoformat(),
+            "bankAccountCode": client.bank_account_code or "572000001",
+            "concept": f"Liquidación Directa Stripe #{po.payout_id} ({len(matched_invs)} ventas)",
+            "netAmountEur": round(po.net_payout_cents / 100.0, 2),
+            "grossAmountEur": round(po.gross_total_cents / 100.0, 2),
+            "feeAmountEur": round(po.fee_total_cents / 100.0, 2),
+            "status": "GREEN" if journal.is_balanced else "YELLOW",
+            "confidenceScore": 0.998 if journal.is_balanced else 0.85,
+            "solverUsed": "Stripe API Direct Sync (100% Determinista)",
+            "matchedCount": len(matched_invs),
+            "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2),
+            "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 1.0, "s_fiscal": 1.0},
+            "auditExplanation": "Sincronizado directamente desde Stripe API (/v1/payouts + /v1/balance_transactions) con certeza matemática.",
+            "journal": {
+                "entryNumber": journal.entry_number,
+                "date": journal.entry_date.isoformat(),
+                "isBalanced": journal.is_balanced,
+                "lines": [
+                    {
+                        "accountCode": l.account_code,
+                        "concept": l.concept,
+                        "documentNumber": l.document_number,
+                        "debitEur": round(l.debit_cents / 100.0, 2),
+                        "creditEur": round(l.credit_cents / 100.0, 2),
+                        "contrapartida": l.contrapartida,
+                    }
+                    for l in journal.lines
+                ],
+            },
+        })
+
+    return {
+        "ephemeral": payload.ephemeral_mode,
+        "total_movements": len(response_transactions),
+        "transactions": response_transactions,
+    }
+
+
 @router.post("/batches", status_code=status.HTTP_201_CREATED)
 async def upload_and_process_batch(
     tenant_id: str = Form(...),
@@ -9479,7 +10085,9 @@ async def upload_and_process_batch(
     start_month: int = Form(1),
     end_month: int = Form(12),
     file: UploadFile = File(...),
+    invoices_file: Optional[UploadFile] = File(None),
     gateway_name: Optional[str] = Form(None),
+    ephemeral_mode: Optional[str] = Form("false"),
     db: Session = Depends(get_db),
 ):
     """Sube un fichero bancario o de pasarela, ejecuta el motor de conciliación y persiste el lote."""
@@ -9497,27 +10105,49 @@ async def upload_and_process_batch(
     from src.parsers.bank.norma43 import Norma43Parser
     from src.parsers.gateways.stripe import StripeParser
     from src.parsers.gateways.redsys import RedsysParser
+    from src.parsers.invoices.portfolio_parser import InvoicePortfolioParser
+    from src.billing.pricing_plans import QuotaManager
 
-    base_dir = Path(__file__).resolve().parent.parent.parent.parent
-    inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
     open_invoices = []
-    if inv_path.exists():
-        with open(inv_path, "r", encoding="utf-8") as f:
-            inv_data = json.load(f)
-        for item in inv_data:
-            y, m, d = item["issue_date"].split("-")
-            open_invoices.append(
-                CanonicalInvoice(
-                    invoice_id=item["invoice_id"],
-                    invoice_number=item["invoice_number"],
-                    issue_date=date(int(y), int(m), int(d)),
-                    due_date=date(int(y), int(m), int(d)),
-                    customer_id=item["customer_id"],
-                    customer_name=item["customer_name"],
-                    gross_amount_cents=item["gross_amount_cents"],
-                    customer_fiscal_id=item["customer_fiscal_id"],
+    if invoices_file and hasattr(invoices_file, "read"):
+        inv_bytes = await invoices_file.read()
+        if inv_bytes:
+            parsed_invs = InvoicePortfolioParser.parse_file_bytes(inv_bytes, invoices_file.filename or "invoices.csv")
+            for idx, inv_item in enumerate(parsed_invs, start=1):
+                y, m, d = inv_item["issue_date"].split("-")
+                open_invoices.append(
+                    CanonicalInvoice(
+                        invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                        invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                        issue_date=date(int(y), int(m), int(d)),
+                        due_date=date(int(y), int(m), int(d)),
+                        customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                        customer_name=inv_item.get("customer_name", "Cliente"),
+                        gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                        customer_fiscal_id=inv_item.get("customer_fiscal_id"),
+                    )
                 )
-            )
+
+    if not open_invoices:
+        base_dir = Path(__file__).resolve().parent.parent.parent.parent
+        inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
+        if inv_path.exists():
+            with open(inv_path, "r", encoding="utf-8") as f:
+                inv_data = json.load(f)
+            for item in inv_data:
+                y, m, d = item["issue_date"].split("-")
+                open_invoices.append(
+                    CanonicalInvoice(
+                        invoice_id=item["invoice_id"],
+                        invoice_number=item["invoice_number"],
+                        issue_date=date(int(y), int(m), int(d)),
+                        due_date=date(int(y), int(m), int(d)),
+                        customer_id=item["customer_id"],
+                        customer_name=item["customer_name"],
+                        gross_amount_cents=item["gross_amount_cents"],
+                        customer_fiscal_id=item["customer_fiscal_id"],
+                    )
+                )
 
     fn_lower = file_name.lower()
     bank_txs = []
@@ -9573,11 +10203,112 @@ async def upload_and_process_batch(
         bank_txs = parse_res.canonical_transactions
         resolved_gw = "Norma43"
 
-    from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
-    try:
-        BillingQuotaManager.assert_can_process_transactions(db, tenant_id, len(bank_txs))
-    except QuotaLimitExceeded as qe:
-        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(qe))
+    tenant = ReconciliationRepository.get_tenant(db, tenant_id)
+    if tenant:
+        current_tx = sum(b.total_movements or 0 for b in tenant.batches) if tenant.batches else 0
+        quota = QuotaManager.evaluate_tenant_quota(
+            plan_code=tenant.plan or "FREE",
+            extra_blocks=tenant.extra_blocks or 0,
+            current_clients_count=len(tenant.clients) if tenant.clients else 1,
+            current_month_transactions=current_tx,
+            incoming_transactions=len(bank_txs),
+        )
+        if quota["paywall_triggered"]:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "code": "PAYWALL_LIMIT_REACHED",
+                    "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
+                    "quota": quota,
+                },
+            )
+
+    is_ephemeral = bool(ephemeral_mode and str(ephemeral_mode).lower() in ("true", "1"))
+    if is_ephemeral:
+        from src.reconciliation.engine import BatchPayoutReconciliationEngine
+        from src.accounting.double_entry import AccountingEntryBuilder
+
+        reconciled_groups = BatchPayoutReconciliationEngine.reconcile_payouts(
+            bank_transactions=bank_txs,
+            open_invoices=open_invoices,
+            gateway_transactions=gw_txs,
+        )
+        response_txs = []
+        for idx, grp in enumerate(reconciled_groups, start=1):
+            bank_tx = grp.bank_tx
+            invoices = grp.matched_invoices
+            matched_inv_dicts = [
+                {
+                    "account_code": inv.customer_fiscal_id or f"430{i:06d}",
+                    "invoice_number": inv.invoice_number,
+                    "gross_cents": inv.gross_amount_cents,
+                    "fee_cents": grp.allocated_fee_cents // max(1, len(invoices)),
+                    "customer_name": inv.customer_name,
+                }
+                for i, inv in enumerate(invoices, start=1)
+            ]
+            journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+                entry_number=idx,
+                entry_date=bank_tx.operation_date,
+                bank_account_code=client.bank_account_code or "572000001",
+                fee_account_code=client.fee_account_code or "626000001",
+                payout_net_cents=bank_tx.amount_cents,
+                matched_invoices=matched_inv_dicts,
+                gateway_name=resolved_gw,
+                account_length=client.account_length or 9,
+            )
+            response_txs.append({
+                "id": f"TX-EPHEMERAL-{idx:04d}",
+                "type": "BATCH_PAYOUT",
+                "source": bank_tx.transaction_id,
+                "date": bank_tx.operation_date.isoformat(),
+                "valueDate": bank_tx.value_date.isoformat(),
+                "bankAccountCode": client.bank_account_code or "572000001",
+                "concept": bank_tx.concept,
+                "netAmountEur": round(bank_tx.amount_cents / 100.0, 2),
+                "grossAmountEur": round(grp.total_matched_gross_cents / 100.0, 2),
+                "feeAmountEur": round(grp.allocated_fee_cents / 100.0, 2),
+                "status": grp.status,
+                "confidenceScore": grp.confidence_score,
+                "solverUsed": grp.solver_used,
+                "matchedCount": len(invoices),
+                "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2),
+                "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 1.0, "s_fiscal": 1.0},
+                "auditExplanation": "Procesado en Modo Efímero RAM (Zero-Storage) sin retención en disco.",
+                "journal": {
+                    "entryNumber": journal.entry_number,
+                    "date": journal.entry_date.isoformat(),
+                    "isBalanced": journal.is_balanced,
+                    "lines": [
+                        {
+                            "accountCode": l.account_code,
+                            "concept": l.concept,
+                            "documentNumber": l.document_number,
+                            "debitEur": round(l.debit_cents / 100.0, 2),
+                            "creditEur": round(l.credit_cents / 100.0, 2),
+                            "contrapartida": l.contrapartida,
+                        }
+                        for l in journal.lines
+                    ],
+                },
+            })
+
+        return {
+            "id": "BATCH-EPHEMERAL-RAM",
+            "ephemeral": True,
+            "tenant_id": tenant_id,
+            "client_id": client_id,
+            "period_year": period_year,
+            "period_type": period_type,
+            "start_month": start_month,
+            "end_month": end_month,
+            "status": "PROCESSED",
+            "total_movements": len(response_txs),
+            "transactions": response_txs,
+            "green_count": sum(1 for t in response_txs if t["status"] == "GREEN"),
+            "yellow_count": sum(1 for t in response_txs if t["status"] == "YELLOW"),
+            "red_count": sum(1 for t in response_txs if t["status"] == "RED"),
+        }
 
     batch = BatchReconciliationService.process_and_persist_batch(
         db=db,
@@ -9973,45 +10704,45 @@ FICHERO: src\billing\pricing_plans.py
 ================================================================================
 
 """
-Definición de Planes de Suscripción, Cuotas y Reglas de Monetización SaaS (Sección 4 del PDF)
+Configuración Oficial de Planes de Suscripción y Paywall Freemium (PLG)
+Incluye Plan FREE (hasta 25 facturas/transacciones mensuales) y planes B2B/B2B2B.
 """
 from enum import Enum
 from typing import Dict, Any, List
 
+FREE_TIER_MAX_TRANSACTIONS = 25
 
 class PlanTier(str, Enum):
+    FREE = "FREE"                    # 0 € / mes, 1 cliente, 25 tx/mes
+    PYME_DIRECTO = "PYME_DIRECTO"    # 39 € / mes por entidad, 1 cliente, 2.000 tx/mes
     STARTER = "STARTER"              # 49 € / mes, hasta 10 clientes, 2.500 tx/mes
     PROFESSIONAL = "PROFESSIONAL"    # 119 € / mes, hasta 30 clientes, 12.000 tx/mes
-    PYME_DIRECTO = "PYME_DIRECTO"    # 39 € / mes por entidad, 1 cliente, 2.000 tx/mes
     ENTERPRISE = "ENTERPRISE"        # 249 € / mes, hasta 100 clientes, 50.000 tx/mes
 
 
 PLAN_CONFIGS: Dict[str, Dict[str, Any]] = {
-    PlanTier.STARTER.value: {
-        "name": "Plan Gestoría Starter",
-        "tier": PlanTier.STARTER.value,
-        "price_eur_month": 49.0,
-        "max_clients": 10,
-        "max_monthly_transactions": 2500,
-        "supported_gateways": ["Norma43"],
-        "supported_erps": ["CONTASOL", "A3"],
+    "FREE": {
+        "code": "FREE",
+        "tier": "FREE",
+        "name": "Plan Gratuito (Evaluación)",
+        "price_eur_month": 0.0,
+        "max_clients": 1,
+        "max_monthly_transactions": FREE_TIER_MAX_TRANSACTIONS,
+        "supported_gateways": ["Norma43", "Stripe", "Redsys"],
+        "supported_erps": ["CONTASOL", "A3", "SAGE"],
         "has_sha256_audit": False,
-        "description": "Conciliación bancaria Norma 43, resolución determinista de transferencias y exportación a Contasol y A3.",
+        "description": "Hasta 25 facturas o transacciones conciliadas al mes con vista previa y prueba libre de riesgo.",
+        "features": [
+            "Hasta 25 facturas o transacciones conciliadas al mes",
+            "1 empresa cliente activa",
+            "Conciliación Norma 43, Stripe y Redsys",
+            "Vista previa de asientos PGC en Staging Radar",
+        ],
     },
-    PlanTier.PROFESSIONAL.value: {
-        "name": "Plan Gestoría Professional",
-        "tier": PlanTier.PROFESSIONAL.value,
-        "price_eur_month": 119.0,
-        "max_clients": 30,
-        "max_monthly_transactions": 12000,
-        "supported_gateways": ["Norma43", "Stripe", "Redsys", "PayPal", "SumUp"],
-        "supported_erps": ["A3", "SAGE", "CONTASOL"],
-        "has_sha256_audit": True,
-        "description": "Descomposición algorítmica de Stripe, Redsys y PayPal; auditoría criptográfica SHA-256; exportación completa a los 3 ERPs.",
-    },
-    PlanTier.PYME_DIRECTO.value: {
+    "PYME_DIRECTO": {
+        "code": "PYME_DIRECTO",
+        "tier": "PYME_DIRECTO",
         "name": "Plan Pyme Directo",
-        "tier": PlanTier.PYME_DIRECTO.value,
         "price_eur_month": 39.0,
         "max_clients": 1,
         "max_monthly_transactions": 2000,
@@ -10019,10 +10750,53 @@ PLAN_CONFIGS: Dict[str, Dict[str, Any]] = {
         "supported_erps": ["A3", "SAGE", "CONTASOL"],
         "has_sha256_audit": True,
         "description": "Acceso directo para empresas individuales que gestionan su propia administración antes de remitir datos al gestor.",
+        "features": [
+            "Hasta 2.000 transacciones mensuales",
+            "1 sociedad mercantil",
+            "Sincronización directa con API de Stripe",
+            "Exportación ilimitada a A3, Sage 50 y Contasol",
+        ],
     },
-    PlanTier.ENTERPRISE.value: {
-        "name": "Plan Despacho Enterprise",
-        "tier": PlanTier.ENTERPRISE.value,
+    "STARTER": {
+        "code": "STARTER",
+        "tier": "STARTER",
+        "name": "Plan Gestoría Starter",
+        "price_eur_month": 49.0,
+        "max_clients": 10,
+        "max_monthly_transactions": 2500,
+        "supported_gateways": ["Norma43"],
+        "supported_erps": ["CONTASOL", "A3"],
+        "has_sha256_audit": False,
+        "description": "Conciliación bancaria Norma 43, resolución determinista de transferencias y exportación a Contasol y A3.",
+        "features": [
+            "Hasta 10 empresas cliente activas",
+            "Hasta 2.500 transacciones agregadas al mes",
+            "Exportación nativa a Contasol, Sage 50 y A3",
+            "Mapeo inteligente de carteras de facturas",
+        ],
+    },
+    "PROFESSIONAL": {
+        "code": "PROFESSIONAL",
+        "tier": "PROFESSIONAL",
+        "name": "Plan Gestoría Professional",
+        "price_eur_month": 119.0,
+        "max_clients": 30,
+        "max_monthly_transactions": 12000,
+        "supported_gateways": ["Norma43", "Stripe", "Redsys", "PayPal", "SumUp"],
+        "supported_erps": ["A3", "SAGE", "CONTASOL"],
+        "has_sha256_audit": True,
+        "description": "Descomposición algorítmica de Stripe, Redsys y PayPal; auditoría criptográfica SHA-256; exportación completa a los 3 ERPs.",
+        "features": [
+            "Hasta 30 empresas cliente activas",
+            "Hasta 12.000 transacciones agregadas al mes",
+            "Sincronización API Stripe multi-cliente",
+            "Certificado Legal de Auditoría SHA-256",
+        ],
+    },
+    "ENTERPRISE": {
+        "code": "ENTERPRISE",
+        "tier": "ENTERPRISE",
+        "name": "Plan Despacho Scale / Enterprise",
         "price_eur_month": 249.0,
         "max_clients": 100,
         "max_monthly_transactions": 50000,
@@ -10030,12 +10804,54 @@ PLAN_CONFIGS: Dict[str, Dict[str, Any]] = {
         "supported_erps": ["A3", "SAGE", "CONTASOL"],
         "has_sha256_audit": True,
         "description": "Capacidad ilimitada para grandes firmas de auditoría y despachos de alto volumen transaccional.",
+        "features": [
+            "Hasta 100 empresas cliente activas",
+            "Hasta 50.000 transacciones agregadas al mes",
+            "Auditoría avanzada de recargos y devoluciones",
+            "Soporte prioritario y modo efímero RAM",
+        ],
     },
 }
 
 EXTRA_BLOCK_PRICE_EUR = 25.0
 EXTRA_BLOCK_CLIENTS = 10
 EXTRA_BLOCK_TRANSACTIONS = 5000
+
+
+class QuotaManager:
+    @staticmethod
+    def evaluate_tenant_quota(
+        plan_code: str,
+        extra_blocks: int,
+        current_clients_count: int,
+        current_month_transactions: int,
+        incoming_transactions: int = 0,
+    ) -> Dict[str, Any]:
+        plan_key = (plan_code or "FREE").upper()
+        spec = PLAN_CONFIGS.get(plan_key, PLAN_CONFIGS["FREE"])
+        extra = max(0, int(extra_blocks or 0))
+
+        # Los bloques extra solo aplican a planes de pago
+        max_clients = spec["max_clients"] + (extra * 10 if plan_key != "FREE" else 0)
+        max_tx = spec["max_monthly_transactions"] + (extra * 5000 if plan_key != "FREE" else 0)
+
+        projected_tx = current_month_transactions + incoming_transactions
+        remaining_tx = max(0, max_tx - current_month_transactions)
+        paywall_triggered = projected_tx > max_tx
+
+        return {
+            "plan": plan_key,
+            "plan_name": spec["name"],
+            "price_eur_month": spec["price_eur_month"] + (extra * 25.0 if plan_key != "FREE" else 0.0),
+            "current_clients": current_clients_count,
+            "max_clients": max_clients,
+            "current_month_transactions": current_month_transactions,
+            "max_monthly_transactions": max_tx,
+            "remaining_transactions": remaining_tx,
+            "usage_percent": round(min(100.0, (current_month_transactions / max(1, max_tx)) * 100.0), 1),
+            "paywall_triggered": paywall_triggered,
+            "can_export": not (plan_key == "FREE" and (current_month_transactions >= max_tx or paywall_triggered)),
+        }
 
 
 ================================================================================
@@ -10516,51 +11332,53 @@ FICHERO: src\database\connection.py
 ================================================================================
 
 """
-Módulo de Conexión a Base de Datos Relacional (SQLAlchemy 2.0)
-Soporta SQLite thread-safe por defecto y PostgreSQL para despliegue productivo.
+Motor de Conexión SQLAlchemy Híbrido (SQLite WAL Local / PostgreSQL Cloud en Supabase o Neon)
 """
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Directorio de datos predeterminado
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "findaffinity.db"
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
-# Normalizar prefijo postgres:// para compatibilidad con SQLAlchemy 2.0
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+RAW_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'findaffinity.db'}")
 
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        echo=False,
-        future=True,
-    )
+# Compatibilidad automática con URLs de Render, Railway, Supabase y Neon
+if RAW_DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = RAW_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 else:
-    # Configuración de producción para PostgreSQL
-    engine = create_engine(
-        DATABASE_URL,
-        pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
-        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
-        pool_pre_ping=True,
-        pool_recycle=300,
-        echo=False,
-        future=True,
-    )
+    DATABASE_URL = RAW_DATABASE_URL
+
+is_sqlite = DATABASE_URL.startswith("sqlite")
+
+engine_kwargs = {"pool_pre_ping": True}
+if is_sqlite:
+    engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
+else:
+    engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "5"))
+    engine_kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
+
+if is_sqlite:
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+            cursor.execute("PRAGMA foreign_keys=ON;")
+        finally:
+            cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
 
 def get_db():
-    """Generador de sesiones de base de datos para inyección de dependencias."""
     db = SessionLocal()
     try:
         yield db
@@ -12647,6 +13465,366 @@ class StripeParser:
             except ValueError:
                 continue
         return datetime.now()
+
+
+================================================================================
+FICHERO: src\parsers\gateways\stripe_api_sync.py
+================================================================================
+
+"""
+Conector Directo con la API Oficial de Stripe (Modo Solo Lectura - Zero Liability)
+Extrae liquidaciones agrupadas (/v1/payouts) y su desglose exacto de cargos,
+devoluciones y comisiones (/v1/balance_transactions?payout=po_XXX).
+"""
+from dataclasses import dataclass, field
+from datetime import datetime, date, timezone
+from typing import List, Dict, Any, Optional
+import stripe
+
+
+@dataclass
+class StripePayoutItem:
+    transaction_id: str
+    source_id: str
+    item_type: str              # 'charge' | 'refund' | 'adjustment' | 'stripe_fee'
+    gross_cents: int
+    fee_cents: int
+    net_cents: int
+    currency: str
+    created_date: date
+    description: str
+    invoice_reference: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+
+
+@dataclass
+class StripeSyncedPayout:
+    payout_id: str
+    arrival_date: date
+    created_date: date
+    net_payout_cents: int
+    gross_total_cents: int
+    fee_total_cents: int
+    refund_total_cents: int
+    currency: str
+    status: str
+    statement_descriptor: str
+    items: List[StripePayoutItem] = field(default_factory=list)
+
+
+class StripeDirectSyncService:
+    @staticmethod
+    def validate_readonly_key(api_key: str) -> bool:
+        clean = (api_key or "").strip()
+        return clean.startswith(("rk_live_", "rk_test_", "sk_test_", "sk_live_"))
+
+    @staticmethod
+    def fetch_reconciled_payouts(
+        stripe_api_key: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        max_payouts: int = 15,
+        open_invoices: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[StripeSyncedPayout]:
+        """
+        Consulta a Stripe los payouts liquidados en cuenta bancaria y obtiene
+        exactamente qué facturas/cargos y qué comisiones componen cada transferencia.
+        """
+        if not StripeDirectSyncService.validate_readonly_key(stripe_api_key):
+            raise ValueError(
+                "Clave de Stripe no válida. Utilice una Clave Restringida de solo lectura (rk_live_... o rk_test_...)."
+            )
+
+        arrival_filter: Dict[str, int] = {}
+        if start_date:
+            dt_start = datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0, tzinfo=timezone.utc)
+            arrival_filter["gte"] = int(dt_start.timestamp())
+        if end_date:
+            dt_end = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc)
+            arrival_filter["lte"] = int(dt_end.timestamp())
+
+        payout_params: Dict[str, Any] = {
+            "limit": min(max_payouts, 50),
+            "status": "paid",
+            "api_key": stripe_api_key.strip(),
+        }
+        if arrival_filter:
+            payout_params["arrival_date"] = arrival_filter
+
+        payouts_resp = stripe.Payout.list(**payout_params)
+        synced_payouts: List[StripeSyncedPayout] = []
+
+        # Índice rápido de cartera viva por número de factura o importe bruto
+        invoices_by_number: Dict[str, Dict[str, Any]] = {}
+        if open_invoices:
+            for inv in open_invoices:
+                num = str(inv.get("invoice_number", "")).strip().upper()
+                if num:
+                    invoices_by_number[num] = inv
+
+        for po in payouts_resp.data:
+            po_id = po.id
+            arrival_dt = datetime.fromtimestamp(po.arrival_date, tz=timezone.utc).date()
+            created_dt = datetime.fromtimestamp(po.created, tz=timezone.utc).date()
+            net_payout_cents = int(po.amount)
+
+            # Obtener todas las transacciones incluidas en este Payout bancario
+            bt_resp = stripe.BalanceTransaction.list(
+                payout=po_id,
+                limit=100,
+                expand=["data.source"],
+                api_key=stripe_api_key.strip(),
+            )
+
+            items: List[StripePayoutItem] = []
+            gross_sum = 0
+            fee_sum = 0
+            refund_sum = 0
+
+            for bt in bt_resp.data:
+                if bt.type == "payout":
+                    # Es el apunte resumen de salida al banco; lo omitimos del desglose
+                    continue
+
+                bt_gross = int(bt.amount)
+                bt_fee = int(bt.fee)
+                bt_net = int(bt.net)
+                bt_created = datetime.fromtimestamp(bt.created, tz=timezone.utc).date()
+                desc = bt.description or f"Operación Stripe {bt.id}"
+
+                inv_ref = None
+                cust_name = "Cliente Stripe"
+                cust_email = None
+
+                # Extraer metadatos del objeto source expandido (Charge / Refund)
+                src = bt.source
+                if src and not isinstance(src, str):
+                    metadata = getattr(src, "metadata", {}) or {}
+                    inv_ref = (
+                        metadata.get("invoice_number")
+                        or metadata.get("order_id")
+                        or metadata.get("factura")
+                    )
+                    billing_details = getattr(src, "billing_details", None)
+                    if billing_details:
+                        cust_name = getattr(billing_details, "name", None) or cust_name
+                        cust_email = getattr(billing_details, "email", None)
+
+                # Cruzar con cartera de facturas si hay coincidencia en descripción o metadata
+                if not inv_ref and invoices_by_number:
+                    for cand_num, cand_inv in invoices_by_number.items():
+                        if cand_num in desc.upper():
+                            inv_ref = cand_num
+                            cust_name = cand_inv.get("customer_name", cust_name)
+                            break
+
+                if bt.type in ("charge", "payment"):
+                    gross_sum += bt_gross
+                    fee_sum += bt_fee
+                elif bt.type in ("refund", "payment_refund"):
+                    refund_sum += abs(bt_gross)
+                    fee_sum += bt_fee
+                else:
+                    fee_sum += bt_fee - bt_gross
+
+                items.append(
+                    StripePayoutItem(
+                        transaction_id=bt.id,
+                        source_id=src.id if (src and not isinstance(src, str)) else str(src or ""),
+                        item_type=bt.type,
+                        gross_cents=bt_gross,
+                        fee_cents=bt_fee,
+                        net_cents=bt_net,
+                        currency=(bt.currency or "eur").upper(),
+                        created_date=bt_created,
+                        description=desc,
+                        invoice_reference=inv_ref or f"ST-{bt.id[-6:].upper()}",
+                        customer_name=cust_name,
+                        customer_email=cust_email,
+                    )
+                )
+
+            synced_payouts.append(
+                StripeSyncedPayout(
+                    payout_id=po_id,
+                    arrival_date=arrival_dt,
+                    created_date=created_dt,
+                    net_payout_cents=net_payout_cents,
+                    gross_total_cents=gross_sum,
+                    fee_total_cents=fee_sum,
+                    refund_total_cents=refund_sum,
+                    currency=(po.currency or "eur").upper(),
+                    status=po.status,
+                    statement_descriptor=po.statement_descriptor or f"STRIPE PAYOUT {po_id}",
+                    items=items,
+                )
+            )
+
+        return synced_payouts
+
+
+================================================================================
+FICHERO: src\parsers\invoices\__init__.py
+================================================================================
+
+from src.parsers.invoices.portfolio_parser import InvoicePortfolioParser
+
+__all__ = ["InvoicePortfolioParser"]
+
+
+================================================================================
+FICHERO: src\parsers\invoices\portfolio_parser.py
+================================================================================
+
+"""
+Ingesta Tolerante a Fallos para Carteras de Facturas Emitidas (.csv, .xlsx, .json)
+Autodescubre columnas (Factura, Cliente, NIF/CIF, Importe Bruto, Fecha, Subcuenta 430)
+sin importar el orden o idioma de las cabeceras del Excel/CSV del cliente.
+"""
+import csv
+import io
+import json
+import re
+from datetime import datetime, date
+from typing import List, Dict, Any, Optional
+import openpyxl
+
+
+COLUMN_ALIASES = {
+    "invoice_number": ["factura", "nº factura", "num factura", "numero", "invoice", "invoice_number", "documento", "ref", "pedido", "order id"],
+    "customer_name": ["cliente", "razon social", "razón social", "nombre", "empresa", "customer", "customer_name", "titular"],
+    "customer_fiscal_id": ["nif", "cif", "dni", "nie", "nif/cif", "identificador fiscal", "vat", "tax id", "customer_fiscal_id"],
+    "gross_amount": ["total", "importe", "importe bruto", "total factura", "bruto", "amount", "gross", "gross_amount_cents", "base + iva"],
+    "issue_date": ["fecha", "fecha emision", "fecha emisión", "fecha factura", "date", "issue_date", "created"],
+    "account_code": ["subcuenta", "cuenta", "cuenta cliente", "430", "account", "account_code"],
+}
+
+
+def parse_spanish_amount_to_cents(raw_val: Any) -> int:
+    if raw_val is None:
+        return 0
+    if isinstance(raw_val, (int, float)):
+        # Si ya viene expresado en céntimos en un JSON (>10000 sin decimales y clave cents)
+        return int(round(float(raw_val) * 100))
+    s = str(raw_val).strip()
+    s = re.sub(r"[€$£\sA-Za-z]", "", s)
+    if not s:
+        return 0
+    # Detectar formato europeo 1.250,50 vs anglosajón 1,250.50
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return int(round(float(s) * 100))
+    except ValueError:
+        return 0
+
+
+def parse_flexible_date(raw_val: Any) -> str:
+    if not raw_val:
+        return date.today().isoformat()
+    if isinstance(raw_val, (datetime, date)):
+        return raw_val.strftime("%Y-%m-%d")
+    s = str(raw_val).strip()[:10]
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return date.today().isoformat()
+
+
+class InvoicePortfolioParser:
+    @staticmethod
+    def parse_file_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
+        fname = (filename or "").lower()
+        if fname.endswith(".json"):
+            data = json.loads(file_bytes.decode("utf-8", errors="replace"))
+            if isinstance(data, list):
+                return InvoicePortfolioParser._normalize_records(data, is_cents_json=True)
+            return []
+
+        if fname.endswith(".xlsx"):
+            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                return []
+            headers = [str(h or "").strip() for h in rows[0]]
+            dict_rows = [dict(zip(headers, r)) for r in rows[1:] if any(r)]
+            return InvoicePortfolioParser._normalize_records(dict_rows)
+
+        # Fallback CSV con autodetección de codificación y delimitador (; o ,)
+        text = None
+        for enc in ("utf-8-sig", "iso-8859-15", "windows-1252", "utf-8"):
+            try:
+                text = file_bytes.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = file_bytes.decode("utf-8", errors="replace")
+
+        sample_line = text.splitlines()[0] if text.splitlines() else ""
+        delimiter = ";" if sample_line.count(";") >= sample_line.count(",") else ","
+        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+        return InvoicePortfolioParser._normalize_records(list(reader))
+
+    @staticmethod
+    def _match_column(headers: List[str], field_key: str) -> Optional[str]:
+        aliases = COLUMN_ALIASES.get(field_key, [])
+        for h in headers:
+            h_clean = h.lower().strip()
+            if h_clean in aliases or any(a in h_clean for a in aliases):
+                return h
+        return None
+
+    @staticmethod
+    def _normalize_records(records: List[Dict[str, Any]], is_cents_json: bool = False) -> List[Dict[str, Any]]:
+        if not records:
+            return []
+        headers = list(records[0].keys())
+        col_inv = InvoicePortfolioParser._match_column(headers, "invoice_number")
+        col_cust = InvoicePortfolioParser._match_column(headers, "customer_name")
+        col_nif = InvoicePortfolioParser._match_column(headers, "customer_fiscal_id")
+        col_amt = InvoicePortfolioParser._match_column(headers, "gross_amount")
+        col_date = InvoicePortfolioParser._match_column(headers, "issue_date")
+        col_acct = InvoicePortfolioParser._match_column(headers, "account_code")
+
+        normalized: List[Dict[str, Any]] = []
+        for idx, row in enumerate(records, start=1):
+            raw_amt = row.get(col_amt) if col_amt else 0
+            if is_cents_json and col_amt == "gross_amount_cents":
+                gross_cents = int(raw_amt or 0)
+            else:
+                gross_cents = parse_spanish_amount_to_cents(raw_amt)
+
+            if gross_cents <= 0:
+                continue
+
+            inv_num = str(row.get(col_inv) or f"FRA-{idx:04d}").strip()
+            cust_name = str(row.get(col_cust) or "Cliente Cartera").strip()
+            cust_nif = str(row.get(col_nif) or "").strip().upper()
+            issue_dt = parse_flexible_date(row.get(col_date))
+            acct_code = str(row.get(col_acct) or f"430{idx:06d}").strip()
+
+            normalized.append({
+                "invoice_id": f"INV-{idx:04d}",
+                "invoice_number": inv_num,
+                "customer_name": cust_name,
+                "customer_fiscal_id": cust_nif,
+                "gross_amount_cents": gross_cents,
+                "gross_amount_eur": round(gross_cents / 100.0, 2),
+                "issue_date": issue_dt,
+                "account_code": acct_code,
+            })
+
+        return normalized
 
 
 ================================================================================
@@ -17764,6 +18942,248 @@ def test_throughput_and_memory_benchmark_20_payouts_series():
     assert max_lat_ms < 2000.0, f"Ninguna liquidación puede tardar >= 2.0s: {max_lat_ms:.2f} ms."
     assert peak_mem_mb < 50.0, f"El consumo de memoria ({peak_mem_mb:.2f} MB) excede 50 MB."
     assert total_matched > 0
+
+
+================================================================================
+FICHERO: tests\test_stripe_sync_and_paywall.py
+================================================================================
+
+"""
+Test Suite: Módulo de Sincronización Stripe Directa, Paywall Freemium (25 partidas) y Normalización PGC
+"""
+from datetime import date
+import io
+import json
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
+
+from src.main import app
+from src.database.connection import Base, get_db
+from src.database.repository import ReconciliationRepository
+from src.database.models import Tenant, ClientCompany
+from src.accounting.double_entry import (
+    AccountingEntryBuilder,
+    DoubleEntryJournal,
+    normalize_pgc_subaccount,
+)
+from src.billing.pricing_plans import (
+    PLAN_CONFIGS,
+    PlanTier,
+    QuotaManager,
+    FREE_TIER_MAX_TRANSACTIONS,
+)
+from src.parsers.gateways.stripe_api_sync import StripeDirectSyncService
+from src.parsers.invoices.portfolio_parser import (
+    InvoicePortfolioParser,
+    parse_spanish_amount_to_cents,
+)
+
+TEST_ENGINE = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=TEST_ENGINE)
+
+
+@pytest.fixture
+def db_session():
+    Base.metadata.create_all(bind=TEST_ENGINE)
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=TEST_ENGINE)
+
+
+@pytest.fixture
+def client_api(db_session):
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+def test_normalize_pgc_subaccount_padding():
+    """Verifica el formateo y relleno de ceros de subcuentas a 9, 10 y 12 dígitos."""
+    assert normalize_pgc_subaccount("572.1", 9) == "572000001"
+    assert normalize_pgc_subaccount("43015", 9) == "430000015"
+    assert normalize_pgc_subaccount("626", 9) == "626000000"
+    assert normalize_pgc_subaccount("572000001234", 12) == "572000001234"
+    assert normalize_pgc_subaccount("430000145", 9) == "430000145"
+    assert normalize_pgc_subaccount("", 9) == ""
+
+
+def test_double_entry_rounding_without_initial_fee_line():
+    """
+    Verifica que si hay un descuadre de 1 o 2 céntimos sin comisiones previas,
+    el generador de asientos cree la línea de ajuste por redondeo y garantice cuadre estricto a cero.
+    """
+    # Factura por 100.01 € (10001 cents) pero recibidos 100.00 € (10000 cents) en banco sin comisiones
+    journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+        entry_number=1,
+        entry_date=date(2026, 10, 14),
+        bank_account_code="572000001",
+        fee_account_code="626000001",
+        payout_net_cents=10000,
+        matched_invoices=[
+            {
+                "account_code": "430000001",
+                "invoice_number": "FRA-2026-001",
+                "gross_cents": 10001,
+                "fee_cents": 0,
+                "customer_name": "Cliente Prueba",
+            }
+        ],
+        gateway_name="Stripe",
+        account_length=9,
+    )
+
+    assert journal.is_balanced is True
+    assert journal.imbalance_cents == 0
+    assert journal.total_debit_cents == journal.total_credit_cents == 10001
+    adj_line = next((l for l in journal.lines if "ADJ-" in l.document_number), None)
+    assert adj_line is not None
+    assert adj_line.debit_cents == 1
+
+
+def test_spanish_amount_parsing():
+    """Verifica la detección y parseo de importes españoles e internacionales a céntimos."""
+    assert parse_spanish_amount_to_cents("1.250,50 €") == 125050
+    assert parse_spanish_amount_to_cents("1,250.50") == 125050
+    assert parse_spanish_amount_to_cents("45,00") == 4500
+    assert parse_spanish_amount_to_cents(120.75) == 12075
+    assert parse_spanish_amount_to_cents("0") == 0
+
+
+def test_invoice_portfolio_parser_csv_and_json():
+    """Verifica que el parser inteligente autodescubra columnas heterogéneas."""
+    csv_content = (
+        "Nº Factura;Cliente;NIF/CIF;Total Factura;Fecha Emisión\n"
+        "F-2026-101;Acme Tech S.L.;B-99887766;1.500,25 €;14/10/2026\n"
+        "F-2026-102;Logística Sur;A-11223344;250,00;2026-10-15\n"
+    )
+    records = InvoicePortfolioParser.parse_file_bytes(csv_content.encode("utf-8"), "cartera.csv")
+    assert len(records) == 2
+    assert records[0]["invoice_number"] == "F-2026-101"
+    assert records[0]["gross_amount_cents"] == 150025
+    assert records[0]["customer_fiscal_id"] == "B-99887766"
+
+    json_content = json.dumps([
+        {
+            "invoice_id": "INV-01",
+            "invoice_number": "J-001",
+            "customer_name": "Test Client",
+            "customer_fiscal_id": "B-123",
+            "gross_amount_cents": 50000,
+            "issue_date": "2026-10-01",
+        }
+    ])
+    json_records = InvoicePortfolioParser.parse_file_bytes(json_content.encode("utf-8"), "data.json")
+    assert len(json_records) == 1
+    assert json_records[0]["gross_amount_cents"] == 50000
+
+
+def test_stripe_restricted_key_validation():
+    """Valida que solo se acepten claves restringidas o secretas de Stripe."""
+    assert StripeDirectSyncService.validate_readonly_key("rk_live_1234567890") is True
+    assert StripeDirectSyncService.validate_readonly_key("rk_test_1234567890") is True
+    assert StripeDirectSyncService.validate_readonly_key("sk_test_1234567890") is True
+    assert StripeDirectSyncService.validate_readonly_key("pk_live_1234567890") is False
+    assert StripeDirectSyncService.validate_readonly_key("invalid_key") is False
+
+
+def test_paywall_quota_evaluation():
+    """Verifica la lógica del Paywall Freemium a las 25 transacciones."""
+    quota_under = QuotaManager.evaluate_tenant_quota(
+        plan_code="FREE",
+        extra_blocks=0,
+        current_clients_count=1,
+        current_month_transactions=20,
+        incoming_transactions=4,
+    )
+    assert quota_under["paywall_triggered"] is False
+    assert quota_under["remaining_transactions"] == 5
+
+    quota_over = QuotaManager.evaluate_tenant_quota(
+        plan_code="FREE",
+        extra_blocks=0,
+        current_clients_count=1,
+        current_month_transactions=25,
+        incoming_transactions=1,
+    )
+    assert quota_over["paywall_triggered"] is True
+    assert quota_over["can_export"] is False
+
+
+def test_subscription_and_upgrade_endpoints(client_api, db_session):
+    """Verifica los endpoints REST de suscripción y upgrade de plan."""
+    tenant = ReconciliationRepository.create_tenant(
+        db=db_session,
+        name="Asesoría Digital SLP",
+        fiscal_id="B-99112233",
+        email="info@asesoriadigital.es",
+        plan="FREE",
+    )
+
+    res = client_api.get(f"/api/v1/tenants/{tenant.id}/subscription")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["plan"] == "FREE"
+    assert data["max_monthly_transactions"] == FREE_TIER_MAX_TRANSACTIONS
+    assert "available_plans" in data
+
+    # Upgrade a STARTER
+    up_res = client_api.post(
+        f"/api/v1/tenants/{tenant.id}/upgrade",
+        json={"plan": "STARTER", "extra_blocks": 0},
+    )
+    assert up_res.status_code == 200
+    up_data = up_res.json()
+    assert up_data["success"] is True
+    assert up_data["new_plan"] == "STARTER"
+
+
+def test_stripe_sync_endpoint_validation(client_api, db_session):
+    """Verifica que el endpoint de sincronización directa valide las claves y clientes."""
+    tenant = ReconciliationRepository.create_tenant(
+        db=db_session,
+        name="Pyme Online SL",
+        fiscal_id="B-88223344",
+        email="pyme@online.es",
+        plan="PYME_DIRECTO",
+    )
+    client = ReconciliationRepository.create_client(
+        db=db_session,
+        tenant_id=tenant.id,
+        name="Tienda Virtual",
+        fiscal_id="B-77665544",
+    )
+
+    # Intento con clave inválida debe rechazar con 400
+    res = client_api.post(
+        "/api/v1/batches/stripe-sync",
+        json={
+            "tenant_id": tenant.id,
+            "client_id": client.id,
+            "stripe_restricted_key": "invalid_key",
+            "period_year": 2026,
+            "start_month": 1,
+            "end_month": 12,
+        },
+    )
+    assert res.status_code == 400
+    assert "no válida" in res.json()["detail"]
 
 
 ================================================================================

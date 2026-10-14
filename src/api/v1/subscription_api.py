@@ -1,13 +1,14 @@
 """
 Endpoints REST de Facturación, Cuotas y Suscripción (Billing & Subscriptions API)
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
-from src.billing.pricing_plans import PLAN_CONFIGS, PlanTier
+from src.database.models import Tenant, ClientCompany, ReconciliationBatch
+from src.billing.pricing_plans import PLAN_CONFIGS, PlanTier, QuotaManager
 from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
 from src.billing.stripe_service import StripeBillingService
 
@@ -15,7 +16,8 @@ router = APIRouter(prefix="/v1", tags=["Facturación & Suscripción"])
 
 
 class UpgradeSubscriptionDTO(BaseModel):
-    new_plan: str = Field(..., json_schema_extra={"example": "PROFESSIONAL"})
+    new_plan: Optional[str] = Field(None, json_schema_extra={"example": "PROFESSIONAL"})
+    plan: Optional[str] = Field(None, json_schema_extra={"example": "PROFESSIONAL"})
     extra_blocks: int = Field(0, json_schema_extra={"example": 1})
 
 
@@ -41,28 +43,62 @@ def get_stripe_public_config():
 @router.get("/tenants/{tenant_id}/subscription")
 def get_tenant_subscription(tenant_id: str, db: Session = Depends(get_db)):
     """Consulta el estado de facturación, cuotas y límites del despacho."""
-    try:
-        return BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Despacho o empresa no encontrado.")
+
+    clients_count = db.query(ClientCompany).filter(ClientCompany.tenant_id == tenant_id).count()
+    batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant_id).all()
+    tx_count = sum(b.total_movements or 0 for b in batches)
+
+    quota = QuotaManager.evaluate_tenant_quota(
+        plan_code=tenant.plan or "FREE",
+        extra_blocks=tenant.extra_blocks or 0,
+        current_clients_count=clients_count,
+        current_month_transactions=tx_count,
+    )
+    legacy_status = BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
+
+    return {
+        **legacy_status,
+        "tenant_id": tenant.id,
+        "tenant_name": tenant.name,
+        **quota,
+        "available_plans": list(PLAN_CONFIGS.values()),
+    }
 
 
+@router.post("/tenants/{tenant_id}/upgrade")
 @router.post("/tenants/{tenant_id}/subscription/upgrade")
 def upgrade_tenant_subscription(
     tenant_id: str,
     payload: UpgradeSubscriptionDTO,
     db: Session = Depends(get_db),
 ):
-    """Actualiza el plan o añade paquetes suplementarios de 25€."""
-    try:
-        return BillingQuotaManager.update_tenant_plan(
-            db=db,
-            tenant_id=tenant_id,
-            new_plan=payload.new_plan,
-            extra_blocks=payload.extra_blocks,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    """Actualiza el plan del despacho tras completar el flujo de Stripe Checkout / Paywall."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Despacho no encontrado.")
+
+    raw_plan = payload.new_plan or payload.plan or "PROFESSIONAL"
+    clean_plan = raw_plan.upper().strip()
+    if clean_plan not in PLAN_CONFIGS:
+        raise HTTPException(status_code=400, detail=f"Plan inválido: {clean_plan}")
+
+    tenant.plan = clean_plan
+    tenant.extra_blocks = max(0, payload.extra_blocks)
+    db.commit()
+    db.refresh(tenant)
+
+    legacy_status = BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
+
+    return {
+        **legacy_status,
+        "success": True,
+        "tenant_id": tenant.id,
+        "new_plan": tenant.plan,
+        "plan_details": PLAN_CONFIGS.get(clean_plan),
+    }
 
 
 @router.post("/tenants/{tenant_id}/subscription/checkout-session")

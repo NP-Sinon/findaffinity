@@ -1,13 +1,14 @@
 """
 Endpoints REST de FastAPI para Multi-Tenancy, Persistencia de Lotes y Trazabilidad Legal
 """
+from datetime import date
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, File, UploadFile, Form
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.database.connection import get_db
-from src.database.models import ClientCompany, ReconciliationBatch, BatchTransaction
+from src.database.models import Tenant, ClientCompany, ReconciliationBatch, BatchTransaction
 from src.database.repository import ReconciliationRepository
 from src.services.batch_service import BatchReconciliationService
 
@@ -215,6 +216,147 @@ def list_batches(
     ]
 
 
+class StripeSyncRequestDTO(BaseModel):
+    tenant_id: str
+    client_id: str
+    stripe_restricted_key: str
+    period_year: int = 2026
+    start_month: int = 1
+    end_month: int = 12
+    ephemeral_mode: bool = False
+
+
+@router.post("/batches/stripe-sync")
+def sync_stripe_payouts_endpoint(
+    payload: StripeSyncRequestDTO,
+    db: Session = Depends(get_db),
+):
+    """
+    Conecta directamente con la API de Stripe usando una clave restringida (rk_live_ / rk_test_),
+    descarga las liquidaciones bancarias (payouts) y construye los asientos PGC cuadrados a 0,00 €.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == payload.tenant_id).first()
+    client = db.query(ClientCompany).filter(ClientCompany.id == payload.client_id).first()
+    if not tenant or not client:
+        raise HTTPException(status_code=404, detail="Despacho o Empresa Cliente no encontrados.")
+
+    start_dt = date(payload.period_year, payload.start_month, 1)
+    end_day = 28 if payload.end_month == 2 else (30 if payload.end_month in (4, 6, 9, 11) else 31)
+    end_dt = date(payload.period_year, payload.end_month, end_day)
+
+    from src.parsers.gateways.stripe_api_sync import StripeDirectSyncService
+    from src.accounting.double_entry import AccountingEntryBuilder
+    from src.billing.pricing_plans import QuotaManager
+
+    try:
+        synced_payouts = StripeDirectSyncService.fetch_reconciled_payouts(
+            stripe_api_key=payload.stripe_restricted_key,
+            start_date=start_dt,
+            end_date=end_dt,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Error al conectar con Stripe API: {str(exc)}")
+
+    # Verificar cuota del Paywall antes de procesar
+    existing_batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant.id).all()
+    current_tx = sum(b.total_movements or 0 for b in existing_batches)
+    quota = QuotaManager.evaluate_tenant_quota(
+        plan_code=tenant.plan or "FREE",
+        extra_blocks=tenant.extra_blocks or 0,
+        current_clients_count=1,
+        current_month_transactions=current_tx,
+        incoming_transactions=len(synced_payouts),
+    )
+    if quota["paywall_triggered"]:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "code": "PAYWALL_LIMIT_REACHED",
+                "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
+                "quota": quota,
+            },
+        )
+
+    # Construir transacciones y asientos de partida doble en memoria
+    response_transactions = []
+    for idx, po in enumerate(synced_payouts, start=1):
+        matched_invs = [
+            {
+                "account_code": f"430{i:06d}",
+                "invoice_number": item.invoice_reference or f"ST-{i}",
+                "gross_cents": item.gross_cents,
+                "fee_cents": item.fee_cents,
+                "customer_name": item.customer_name or "Cliente Stripe",
+            }
+            for i, item in enumerate(po.items, start=1)
+            if item.item_type in ("charge", "payment")
+        ]
+        refund_items = [
+            {
+                "account_code": "708000001",
+                "refund_id": item.invoice_reference or item.transaction_id,
+                "gross_cents": abs(item.gross_cents),
+                "fee_cents": item.fee_cents,
+            }
+            for item in po.items
+            if item.item_type in ("refund", "payment_refund")
+        ]
+
+        journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+            entry_number=idx,
+            entry_date=po.arrival_date,
+            bank_account_code=client.bank_account_code or "572000001",
+            fee_account_code=client.fee_account_code or "626000001",
+            payout_net_cents=po.net_payout_cents,
+            matched_invoices=matched_invs,
+            refunds=refund_items,
+            gateway_name="Stripe API",
+            account_length=client.account_length or 9,
+        )
+
+        response_transactions.append({
+            "id": f"TX-STRIPE-API-{po.payout_id[-6:].upper()}",
+            "type": "BATCH_PAYOUT",
+            "source": f"Stripe API Payout #{po.payout_id}",
+            "date": po.arrival_date.isoformat(),
+            "valueDate": po.arrival_date.isoformat(),
+            "bankAccountCode": client.bank_account_code or "572000001",
+            "concept": f"Liquidación Directa Stripe #{po.payout_id} ({len(matched_invs)} ventas)",
+            "netAmountEur": round(po.net_payout_cents / 100.0, 2),
+            "grossAmountEur": round(po.gross_total_cents / 100.0, 2),
+            "feeAmountEur": round(po.fee_total_cents / 100.0, 2),
+            "status": "GREEN" if journal.is_balanced else "YELLOW",
+            "confidenceScore": 0.998 if journal.is_balanced else 0.85,
+            "solverUsed": "Stripe API Direct Sync (100% Determinista)",
+            "matchedCount": len(matched_invs),
+            "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2),
+            "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 1.0, "s_fiscal": 1.0},
+            "auditExplanation": "Sincronizado directamente desde Stripe API (/v1/payouts + /v1/balance_transactions) con certeza matemática.",
+            "journal": {
+                "entryNumber": journal.entry_number,
+                "date": journal.entry_date.isoformat(),
+                "isBalanced": journal.is_balanced,
+                "lines": [
+                    {
+                        "accountCode": l.account_code,
+                        "concept": l.concept,
+                        "documentNumber": l.document_number,
+                        "debitEur": round(l.debit_cents / 100.0, 2),
+                        "creditEur": round(l.credit_cents / 100.0, 2),
+                        "contrapartida": l.contrapartida,
+                    }
+                    for l in journal.lines
+                ],
+            },
+        })
+
+    return {
+        "ephemeral": payload.ephemeral_mode,
+        "total_movements": len(response_transactions),
+        "transactions": response_transactions,
+    }
+
+
 @router.post("/batches", status_code=status.HTTP_201_CREATED)
 async def upload_and_process_batch(
     tenant_id: str = Form(...),
@@ -224,7 +366,9 @@ async def upload_and_process_batch(
     start_month: int = Form(1),
     end_month: int = Form(12),
     file: UploadFile = File(...),
+    invoices_file: Optional[UploadFile] = File(None),
     gateway_name: Optional[str] = Form(None),
+    ephemeral_mode: Optional[str] = Form("false"),
     db: Session = Depends(get_db),
 ):
     """Sube un fichero bancario o de pasarela, ejecuta el motor de conciliación y persiste el lote."""
@@ -242,27 +386,49 @@ async def upload_and_process_batch(
     from src.parsers.bank.norma43 import Norma43Parser
     from src.parsers.gateways.stripe import StripeParser
     from src.parsers.gateways.redsys import RedsysParser
+    from src.parsers.invoices.portfolio_parser import InvoicePortfolioParser
+    from src.billing.pricing_plans import QuotaManager
 
-    base_dir = Path(__file__).resolve().parent.parent.parent.parent
-    inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
     open_invoices = []
-    if inv_path.exists():
-        with open(inv_path, "r", encoding="utf-8") as f:
-            inv_data = json.load(f)
-        for item in inv_data:
-            y, m, d = item["issue_date"].split("-")
-            open_invoices.append(
-                CanonicalInvoice(
-                    invoice_id=item["invoice_id"],
-                    invoice_number=item["invoice_number"],
-                    issue_date=date(int(y), int(m), int(d)),
-                    due_date=date(int(y), int(m), int(d)),
-                    customer_id=item["customer_id"],
-                    customer_name=item["customer_name"],
-                    gross_amount_cents=item["gross_amount_cents"],
-                    customer_fiscal_id=item["customer_fiscal_id"],
+    if invoices_file and hasattr(invoices_file, "read"):
+        inv_bytes = await invoices_file.read()
+        if inv_bytes:
+            parsed_invs = InvoicePortfolioParser.parse_file_bytes(inv_bytes, invoices_file.filename or "invoices.csv")
+            for idx, inv_item in enumerate(parsed_invs, start=1):
+                y, m, d = inv_item["issue_date"].split("-")
+                open_invoices.append(
+                    CanonicalInvoice(
+                        invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                        invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                        issue_date=date(int(y), int(m), int(d)),
+                        due_date=date(int(y), int(m), int(d)),
+                        customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                        customer_name=inv_item.get("customer_name", "Cliente"),
+                        gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                        customer_fiscal_id=inv_item.get("customer_fiscal_id"),
+                    )
                 )
-            )
+
+    if not open_invoices:
+        base_dir = Path(__file__).resolve().parent.parent.parent.parent
+        inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
+        if inv_path.exists():
+            with open(inv_path, "r", encoding="utf-8") as f:
+                inv_data = json.load(f)
+            for item in inv_data:
+                y, m, d = item["issue_date"].split("-")
+                open_invoices.append(
+                    CanonicalInvoice(
+                        invoice_id=item["invoice_id"],
+                        invoice_number=item["invoice_number"],
+                        issue_date=date(int(y), int(m), int(d)),
+                        due_date=date(int(y), int(m), int(d)),
+                        customer_id=item["customer_id"],
+                        customer_name=item["customer_name"],
+                        gross_amount_cents=item["gross_amount_cents"],
+                        customer_fiscal_id=item["customer_fiscal_id"],
+                    )
+                )
 
     fn_lower = file_name.lower()
     bank_txs = []
@@ -318,11 +484,112 @@ async def upload_and_process_batch(
         bank_txs = parse_res.canonical_transactions
         resolved_gw = "Norma43"
 
-    from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
-    try:
-        BillingQuotaManager.assert_can_process_transactions(db, tenant_id, len(bank_txs))
-    except QuotaLimitExceeded as qe:
-        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(qe))
+    tenant = ReconciliationRepository.get_tenant(db, tenant_id)
+    if tenant:
+        current_tx = sum(b.total_movements or 0 for b in tenant.batches) if tenant.batches else 0
+        quota = QuotaManager.evaluate_tenant_quota(
+            plan_code=tenant.plan or "FREE",
+            extra_blocks=tenant.extra_blocks or 0,
+            current_clients_count=len(tenant.clients) if tenant.clients else 1,
+            current_month_transactions=current_tx,
+            incoming_transactions=len(bank_txs),
+        )
+        if quota["paywall_triggered"]:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "code": "PAYWALL_LIMIT_REACHED",
+                    "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
+                    "quota": quota,
+                },
+            )
+
+    is_ephemeral = bool(ephemeral_mode and str(ephemeral_mode).lower() in ("true", "1"))
+    if is_ephemeral:
+        from src.reconciliation.engine import BatchPayoutReconciliationEngine
+        from src.accounting.double_entry import AccountingEntryBuilder
+
+        reconciled_groups = BatchPayoutReconciliationEngine.reconcile_payouts(
+            bank_transactions=bank_txs,
+            open_invoices=open_invoices,
+            gateway_transactions=gw_txs,
+        )
+        response_txs = []
+        for idx, grp in enumerate(reconciled_groups, start=1):
+            bank_tx = grp.bank_tx
+            invoices = grp.matched_invoices
+            matched_inv_dicts = [
+                {
+                    "account_code": inv.customer_fiscal_id or f"430{i:06d}",
+                    "invoice_number": inv.invoice_number,
+                    "gross_cents": inv.gross_amount_cents,
+                    "fee_cents": grp.allocated_fee_cents // max(1, len(invoices)),
+                    "customer_name": inv.customer_name,
+                }
+                for i, inv in enumerate(invoices, start=1)
+            ]
+            journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+                entry_number=idx,
+                entry_date=bank_tx.operation_date,
+                bank_account_code=client.bank_account_code or "572000001",
+                fee_account_code=client.fee_account_code or "626000001",
+                payout_net_cents=bank_tx.amount_cents,
+                matched_invoices=matched_inv_dicts,
+                gateway_name=resolved_gw,
+                account_length=client.account_length or 9,
+            )
+            response_txs.append({
+                "id": f"TX-EPHEMERAL-{idx:04d}",
+                "type": "BATCH_PAYOUT",
+                "source": bank_tx.transaction_id,
+                "date": bank_tx.operation_date.isoformat(),
+                "valueDate": bank_tx.value_date.isoformat(),
+                "bankAccountCode": client.bank_account_code or "572000001",
+                "concept": bank_tx.concept,
+                "netAmountEur": round(bank_tx.amount_cents / 100.0, 2),
+                "grossAmountEur": round(grp.total_matched_gross_cents / 100.0, 2),
+                "feeAmountEur": round(grp.allocated_fee_cents / 100.0, 2),
+                "status": grp.status,
+                "confidenceScore": grp.confidence_score,
+                "solverUsed": grp.solver_used,
+                "matchedCount": len(invoices),
+                "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2),
+                "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 1.0, "s_fiscal": 1.0},
+                "auditExplanation": "Procesado en Modo Efímero RAM (Zero-Storage) sin retención en disco.",
+                "journal": {
+                    "entryNumber": journal.entry_number,
+                    "date": journal.entry_date.isoformat(),
+                    "isBalanced": journal.is_balanced,
+                    "lines": [
+                        {
+                            "accountCode": l.account_code,
+                            "concept": l.concept,
+                            "documentNumber": l.document_number,
+                            "debitEur": round(l.debit_cents / 100.0, 2),
+                            "creditEur": round(l.credit_cents / 100.0, 2),
+                            "contrapartida": l.contrapartida,
+                        }
+                        for l in journal.lines
+                    ],
+                },
+            })
+
+        return {
+            "id": "BATCH-EPHEMERAL-RAM",
+            "ephemeral": True,
+            "tenant_id": tenant_id,
+            "client_id": client_id,
+            "period_year": period_year,
+            "period_type": period_type,
+            "start_month": start_month,
+            "end_month": end_month,
+            "status": "PROCESSED",
+            "total_movements": len(response_txs),
+            "transactions": response_txs,
+            "green_count": sum(1 for t in response_txs if t["status"] == "GREEN"),
+            "yellow_count": sum(1 for t in response_txs if t["status"] == "YELLOW"),
+            "red_count": sum(1 for t in response_txs if t["status"] == "RED"),
+        }
 
     batch = BatchReconciliationService.process_and_persist_batch(
         db=db,

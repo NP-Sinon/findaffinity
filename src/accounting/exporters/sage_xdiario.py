@@ -7,7 +7,7 @@ Asiento,Fecha,Cuenta,Concepto,Documento,Debe,Haber,Factura,Contrapartida
 import io
 import csv
 from typing import List
-from src.accounting.double_entry import DoubleEntryJournal
+from src.accounting.double_entry import DoubleEntryJournal, normalize_pgc_subaccount
 
 
 class SageXdiarioExporter:
@@ -46,19 +46,12 @@ class SageXdiarioExporter:
             entry_num = journal.entry_number
 
             for line in journal.lines:
-                acct = line.account_code.replace(".", "").strip()
-                if len(acct) < account_length:
-                    prefix = acct[:3]
-                    suffix = acct[3:]
-                    acct = prefix + suffix.rjust(account_length - 3, "0")
-                else:
-                    acct = acct[:account_length]
-
+                acct = normalize_pgc_subaccount(line.account_code, account_length)
+                contra = normalize_pgc_subaccount(line.contrapartida or "", account_length)
                 debit_val = f"{line.debit_cents / 100.0:.2f}" if line.debit_cents > 0 else "0.00"
                 credit_val = f"{line.credit_cents / 100.0:.2f}" if line.credit_cents > 0 else "0.00"
-                concept = line.concept[:50]
-                doc = line.document_number[:15]
-                contra = (line.contrapartida or "")[:account_length]
+                concept = (line.concept or "").replace(delimiter, " ").strip()[:40]
+                doc = (line.document_number or "").replace(delimiter, " ").strip()[:15]
 
                 writer.writerow([
                     entry_num,

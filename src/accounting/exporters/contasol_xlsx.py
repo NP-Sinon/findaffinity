@@ -10,7 +10,7 @@ from typing import List, Union
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
-from src.accounting.double_entry import DoubleEntryJournal
+from src.accounting.double_entry import DoubleEntryJournal, normalize_pgc_subaccount
 
 
 class ContasolXlsxExporter:
@@ -60,25 +60,18 @@ class ContasolXlsxExporter:
             entry_num = journal.entry_number
 
             for line in journal.lines:
-                acct = line.account_code.replace(".", "").strip()
-                if len(acct) < account_length:
-                    prefix = acct[:3]
-                    suffix = acct[3:]
-                    acct = prefix + suffix.rjust(account_length - 3, "0")
-                else:
-                    acct = acct[:account_length]
-
+                acct = normalize_pgc_subaccount(line.account_code, account_length)
+                contra = normalize_pgc_subaccount(line.contrapartida or "", account_length)
                 debit_val = round(line.debit_cents / 100.0, 2)
                 credit_val = round(line.credit_cents / 100.0, 2)
-                contra = (line.contrapartida or "")[:account_length]
 
                 row_data = [
                     1,                 # Diario 1 (General)
                     date_str,          # Fecha
                     entry_num,         # Asiento
                     acct,              # Subcuenta
-                    line.concept[:50], # Concepto
-                    line.document_number[:15], # Documento
+                    (line.concept or "")[:50], # Concepto
+                    (line.document_number or "")[:15], # Documento
                     debit_val,         # Debe
                     credit_val,        # Haber
                     contra,            # Contrapartida

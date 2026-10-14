@@ -10,16 +10,12 @@ Exige:
 - Cuadre nulo obligatorio del asiento
 """
 from typing import List
-from src.accounting.double_entry import DoubleEntryJournal
+from src.accounting.double_entry import DoubleEntryJournal, normalize_pgc_subaccount
 
 
 class A3SuenlaceExporter:
     @staticmethod
     def export_journal_entries(journals: List[DoubleEntryJournal], account_length: int = 9) -> str:
-        """
-        Genera el fichero de texto plano conforme al protocolo Suenlace de Wolters Kluwer.
-        Cada apunte representa una línea del asiento contable.
-        """
         lines = []
 
         for journal in journals:
@@ -35,18 +31,10 @@ class A3SuenlaceExporter:
             entry_str = f"{journal.entry_number:06d}"
 
             for line in journal.lines:
-                # Normalizar subcuenta a longitud fija (9 dígitos estándar)
-                acct = line.account_code.replace(".", "").strip()
-                if len(acct) < account_length:
-                    # Rellenar con ceros después de los 3 primeros dígitos (ej. 572 -> 572000001)
-                    prefix = acct[:3]
-                    suffix = acct[3:]
-                    acct = prefix + suffix.rjust(account_length - 3, "0")
-                else:
-                    acct = acct[:account_length]
-
-                concept_str = line.concept.strip()[:30]
-                doc_str = line.document_number.strip()[:10]
+                acct = normalize_pgc_subaccount(line.account_code, account_length)
+                contra = normalize_pgc_subaccount(line.contrapartida or "", account_length)
+                concept_str = (line.concept or "").replace(";", " ").strip()[:30]
+                doc_str = (line.document_number or "").replace(";", " ").strip()[:10]
 
                 if line.debit_cents > 0:
                     sign = "D"
@@ -55,10 +43,7 @@ class A3SuenlaceExporter:
                     sign = "H"
                     amount_val = line.credit_cents / 100.0
 
-                contra = (line.contrapartida or "")[:account_length]
-
-                # Formato delimitado estándar Suenlace A3 (Asiento;Fecha;Cuenta;Signo;Importe;Concepto;Documento;Contrapartida)
                 record_line = f"{entry_str};{date_str};{acct};{sign};{amount_val:.2f};{concept_str};{doc_str};{contra}"
                 lines.append(record_line)
 
-        return "\r\n".join(lines) + "\r\n"
+        return "\r\n".join(lines) + ("\r\n" if lines else "")

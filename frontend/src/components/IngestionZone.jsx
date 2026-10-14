@@ -7,13 +7,14 @@ import {
   Check, 
   AlertCircle, 
   RefreshCw,
-  Layers
+  Layers,
+  Zap
 } from 'lucide-react';
-import { uploadNorma43File } from '../services/api';
 
 export function IngestionZone({
   onLoadDemoBatch,
   onFileProcessed,
+  onOpenStripeSync,
   isProcessing,
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -90,20 +91,33 @@ export function IngestionZone({
             Importar Extractos y Ventas
           </h2>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Sube extractos bancarios o reportes de cobros para conciliarlos automáticamente.
+            Sube extractos bancarios, reportes de cobros o conecta directamente pasarelas en vivo.
           </p>
         </div>
 
-        {/* Botón de datos de prueba */}
-        <button
-          type="button"
-          onClick={onLoadDemoBatch}
-          disabled={isProcessing || localProcessing}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700/80 active:bg-zinc-800 border border-zinc-700/60 text-xs font-medium text-zinc-100 transition-colors shadow-sm disabled:opacity-50 self-start sm:self-auto"
-        >
-          <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-          Cargar Lote de Prueba
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {onOpenStripeSync && (
+            <button
+              type="button"
+              onClick={onOpenStripeSync}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-xs font-semibold text-indigo-300 transition-colors shadow-sm"
+            >
+              <Zap className="h-3.5 w-3.5 text-indigo-400" />
+              <span>Conectar Stripe API</span>
+            </button>
+          )}
+
+          {/* Botón de datos de prueba */}
+          <button
+            type="button"
+            onClick={onLoadDemoBatch}
+            disabled={isProcessing || localProcessing}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700/80 active:bg-zinc-800 border border-zinc-700/60 text-xs font-medium text-zinc-100 transition-colors shadow-sm disabled:opacity-50"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            Cargar Lote de Prueba
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -123,7 +137,7 @@ export function IngestionZone({
             ref={fileInputRef}
             type="file"
             onChange={handleFileChange}
-            accept=".n43,.txt,.csv,.xlsx"
+            accept=".n43,.txt,.csv,.xlsx,.json"
             className="hidden"
           />
 
@@ -139,7 +153,7 @@ export function IngestionZone({
             Arrastra aquí tus archivos o haz clic para seleccionarlos
           </p>
           <p className="text-[11px] text-zinc-500 mt-1">
-            Formatos soportados: .n43, .csv, .xlsx, .txt
+            Formatos soportados: Norma 43 (.n43), Stripe / Redsys (.csv), Cartera Facturas (.xlsx, .json)
           </p>
         </div>
 
@@ -167,7 +181,7 @@ export function IngestionZone({
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-400">Movimientos:</span>
                   <span className="text-zinc-200 font-mono text-[11px] font-medium text-emerald-400">
-                    {ingestionTelemetry.movements} detectados
+                    {ingestionTelemetry.movements}
                   </span>
                 </div>
 
@@ -178,21 +192,30 @@ export function IngestionZone({
                       <span>Archivo verificado correctamente</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5 text-[11px] text-amber-400">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      <span>{ingestionTelemetry.errors[0] || 'Aviso en la lectura'}</span>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1 text-[11px] text-rose-400">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        <span>Incidencia en la ingesta</span>
+                      </div>
+                      {ingestionTelemetry.errors.map((err, i) => (
+                        <p key={i} className="text-[10px] text-zinc-500 leading-tight">
+                          {err}
+                        </p>
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="py-6 text-center text-zinc-400 text-xs">
-                <p>Ningún archivo seleccionado.</p>
-                <p className="text-[11px] mt-1 text-zinc-400">
-                  Puedes cargar el lote de prueba para ver el funcionamiento.
-                </p>
+              <div className="py-4 text-center text-zinc-500 text-xs">
+                <Layers className="h-6 w-6 mx-auto mb-1 opacity-40" />
+                Ningún archivo seleccionado aún.
               </div>
             )}
+          </div>
+
+          <div className="text-[10px] text-zinc-500 pt-2 border-t border-zinc-800/60">
+            Los datos se procesan con validación algorítmica y sellado legal SHA-256.
           </div>
         </div>
       </div>
