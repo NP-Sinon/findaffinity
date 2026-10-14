@@ -537,33 +537,36 @@ def pad(val, length, fill=' ', align='<'):
         return s.rjust(length, fill)
 
 lines_n43 = []
-# Cabecera 11
-lines_n43.append("1100491500000000123456782610012610152000000001500000EUR2FINDAFINITY TEST SL           ")
-# Movimientos (22 y 23)
+# Cabecera 11 (80 caracteres exactos)
+# 11 + 0049 (4) + 1500 (4) + 0012345678 (10) + 261001 (6) + 261015 (6) + 2 (1) + 00000001500000 (14) + 978 (3) + 3 (1) + 26 chars nombre + 3 espacios
+h11 = "110049150000123456782610012610152000000015000009783FINDAFINITY DEMO SL          "
+lines_n43.append(h11)
+
 cobros_n43 = [
-    {"date": "261005", "val": "261005", "cents": 245000, "doc": "0000000001", "c1": "TRF ALMACENES CENTRALES", "c2": "B81234567 FRA-2026-003"},
-    {"date": "261010", "val": "261010", "cents": 145000, "doc": "0000000002", "c1": "TRF CONSTR HNOS MARTINEZ", "c2": "B41982737 FRA-2026-008"},
-    {"date": "261015", "val": "261015", "cents": 241000, "doc": "0000000003", "c1": "TRF AMAZON SERVICES EUROPE", "c2": "W0185698H FRA-2026-009"},
-    {"date": "261015", "val": "261015", "cents": 340000, "doc": "0000000004", "c1": "TRF FRIGORIFICOS ATLANTICO", "c2": "B36987123 FRA-2026-015"},
-    {"date": "261015", "val": "261015", "cents": 89000,  "doc": "0000000005", "c1": "TRF BODEGAS LA RIOJA", "c2": "B26543210 FRA-2026-018"},
+    {"date": "261005", "val": "261005", "cents": 245000, "doc": "0000000001", "ref1": "TRF ALMACENES CENTRALES", "c2": "TRANSF ALMACENES CENTRALES FRA-2026-003 CIF B81234567"},
+    {"date": "261010", "val": "261010", "cents": 145000, "doc": "0000000002", "ref1": "TRF CONSTR HNOS MARTINEZ", "c2": "TRANSF CONSTR HNOS MARTINEZ FRA-2026-008 CIF B41982737"},
+    {"date": "261015", "val": "261015", "cents": 241000, "doc": "0000000003", "ref1": "TRF AMAZON SERVICES EURO", "c2": "TRANSF AMAZON SERVICES EUROPE FRA-2026-009 NIF W0185698H"},
+    {"date": "261015", "val": "261015", "cents": 340000, "doc": "0000000004", "ref1": "TRF FRIGORIFICOS ATLANTI", "c2": "TRANSF FRIGORIFICOS ATLANTICO FRA-2026-015 CIF B36987123"},
+    {"date": "261015", "val": "261015", "cents": 89000,  "doc": "0000000005", "ref1": "TRF BODEGAS LA RIOJA    ", "c2": "TRANSF BODEGAS LA RIOJA FRA-2026-018 CIF B26543210"},
 ]
 tot_abonos = sum(c["cents"] for c in cobros_n43)
 
 for c in cobros_n43:
-    # Registro 22
-    amt_str = f"{c['cents']:014d}"
-    line22 = f"2200491500{c['date']}{c['val']}02001{amt_str}{c['doc']}01000{pad(c['c1'], 38)}"
-    line22 = pad(line22, 80)
-    lines_n43.append(line22)
-    # Registro 23
-    line23 = f"2301{pad(c['c2'], 76)}"
-    line23 = pad(line23, 80)
-    lines_n43.append(line23)
+    # Registro 22 (80 caracteres exactos)
+    l22 = "22" + "0049" + "1500" + c["date"] + c["val"] + "04" + "000" + "2" + f"{c['cents']:014d}" + c["doc"].ljust(10) + c["ref1"][:12].ljust(12) + " "*16
+    lines_n43.append(l22)
+    # Registro 23 (80 caracteres exactos)
+    l23 = "23" + "01" + c["c2"].ljust(76)
+    lines_n43.append(l23)
 
-# Fin de cuenta 33
-lines_n43.append(f"33004915000000001234567800000000000000000005{tot_abonos:014d}2000000002569000EUR")
-# Fin de fichero 88
-lines_n43.append(f"88999999000001{len(lines_n43)+1:06d}")
+# Fin de cuenta 33 (80 caracteres exactos)
+final_bal = 1500000 + tot_abonos
+l33 = "33" + "0049" + "1500" + "0012345678" + "00000" + "00000000000000" + f"{len(cobros_n43):05d}" + f"{tot_abonos:014d}" + "2" + f"{final_bal:014d}" + "978" + "    "
+lines_n43.append(l33)
+
+# Fin de fichero 88 (80 caracteres exactos)
+l88 = "88" + "999999" + "000001" + f"{len(lines_n43)+1:06d}" + " "*60
+lines_n43.append(l88)
 
 with open(n43_path, "w", encoding="windows-1252", newline="\r\n") as f:
     f.write("\r\n".join(lines_n43) + "\r\n")

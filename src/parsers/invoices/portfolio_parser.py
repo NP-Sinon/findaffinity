@@ -62,8 +62,69 @@ def parse_flexible_date(raw_val: Any) -> str:
 
 class InvoicePortfolioParser:
     @staticmethod
+    def parse_pdf_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
+        """Extrae facturas a partir de documentos PDF utilizando pypdf y expresiones regulares contables."""
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(file_bytes))
+            full_text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            if not full_text.strip():
+                return []
+
+            # 1. Número de Factura
+            num_m = re.search(r'(?:N[º°]?\s*Factura|Factura\s*N[º°]?|Invoice\s*N[º°]?)\s*[:]?\s*([A-Za-z0-9\-_/]+)', full_text, re.IGNORECASE)
+            if not num_m:
+                num_m = re.search(r'\b(FRA-\d{4}-\d+|FAC-\d{4}-\d+|INV-\d{4}-\d+)\b', full_text, re.IGNORECASE)
+            inv_number = num_m.group(1).strip() if num_m else Path(filename).stem
+
+            # 2. Fecha de Emisión
+            date_m = re.search(r'(?:Fecha\s*Emisi[óo]n|Fecha\s*Factura|Fecha|Date)\s*[:]?\s*(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})', full_text, re.IGNORECASE)
+            issue_date = parse_flexible_date(date_m.group(1)) if date_m else date.today().isoformat()
+
+            # 3. CIF / NIF
+            cif_m = re.search(r'(?:CIF|NIF|DNI|NIE|VAT|Tax\s*ID)\s*[:]?\s*([A-Za-z0-9\-]{9,12})', full_text, re.IGNORECASE)
+            customer_fiscal_id = cif_m.group(1).strip().upper() if cif_m else ""
+
+            # 4. Razón Social / Cliente
+            client_m = re.search(r'(?:Raz[óo]n\s*Social|Cliente|Customer)\s*[:]?\s*([^\n\r]+)', full_text, re.IGNORECASE)
+            customer_name = client_m.group(1).strip() if client_m else "Cliente Factura PDF"
+
+            # 5. Importe Total
+            total_m = re.search(r'(?:TOTAL\s*FACTURA|Total\s*a\s*Pagar|Total|Importe\s*Total|Gross\s*Amount)\s*[:]?\s*([\d\.,]+)', full_text, re.IGNORECASE)
+            gross_cents = parse_spanish_amount_to_cents(total_m.group(1)) if total_m else 0
+
+            # 6. Subcuenta PGC
+            subc_m = re.search(r'(?:Subcuenta\s*PGC|Subcuenta|Cuenta)\s*[:]?\s*(\d{9,12})', full_text, re.IGNORECASE)
+            account_code = subc_m.group(1).strip() if subc_m else "430000001"
+
+            if gross_cents <= 0:
+                # Intentar buscar cualquier importe precedido o seguido de €
+                euro_m = re.findall(r'([\d\.,]+)\s*€', full_text)
+                if euro_m:
+                    cents_candidates = [parse_spanish_amount_to_cents(e) for e in euro_m]
+                    gross_cents = max(cents_candidates) if cents_candidates else 0
+
+            if gross_cents > 0:
+                return [{
+                    "invoice_id": "INV-PDF-0001",
+                    "invoice_number": inv_number,
+                    "customer_name": customer_name,
+                    "customer_fiscal_id": customer_fiscal_id,
+                    "gross_amount_cents": gross_cents,
+                    "gross_amount_eur": round(gross_cents / 100.0, 2),
+                    "issue_date": issue_date,
+                    "account_code": account_code,
+                }]
+        except Exception:
+            pass
+        return []
+
+    @staticmethod
     def parse_file_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
         fname = (filename or "").lower()
+        if fname.endswith(".pdf") or file_bytes.startswith(b"%PDF"):
+            return InvoicePortfolioParser.parse_pdf_bytes(file_bytes, filename)
+
         if fname.endswith(".json"):
             data = json.loads(file_bytes.decode("utf-8", errors="replace"))
             if isinstance(data, list):

@@ -402,255 +402,330 @@ async def upload_and_process_batch(
     if not client:
         raise HTTPException(status_code=404, detail="Empresa cliente no encontrada.")
 
-    file_bytes = await file.read()
-    file_name = file.filename or "uploaded_file"
+    try:
+        # 0. Sincronización estricta de tenant_id para respetar integridad referencial en PostgreSQL
+        if client.tenant_id and client.tenant_id != tenant_id:
+            tenant_id = client.tenant_id
 
-    import json
-    from pathlib import Path
-    from datetime import date
-    from src.parsers.base import CanonicalInvoice, CanonicalBankTransaction, TransactionType
-    from src.parsers.bank.norma43 import Norma43Parser
-    from src.parsers.gateways.stripe import StripeParser
-    from src.parsers.gateways.redsys import RedsysParser
-    from src.parsers.invoices.portfolio_parser import InvoicePortfolioParser
-    from src.billing.pricing_plans import QuotaManager
+        file_bytes = await file.read()
+        file_name = file.filename or "uploaded_file"
 
-    open_invoices = []
-    if invoices_file and hasattr(invoices_file, "read"):
-        inv_bytes = await invoices_file.read()
-        if inv_bytes:
-            parsed_invs = InvoicePortfolioParser.parse_file_bytes(inv_bytes, invoices_file.filename or "invoices.csv")
-            for idx, inv_item in enumerate(parsed_invs, start=1):
-                y, m, d = inv_item["issue_date"].split("-")
-                open_invoices.append(
-                    CanonicalInvoice(
-                        invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
-                        invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
-                        issue_date=date(int(y), int(m), int(d)),
-                        due_date=date(int(y), int(m), int(d)),
-                        customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
-                        customer_name=inv_item.get("customer_name", "Cliente"),
-                        gross_amount_cents=inv_item.get("gross_amount_cents", 0),
-                        customer_fiscal_id=inv_item.get("customer_fiscal_id"),
+        import json
+        from pathlib import Path
+        from datetime import date
+        from src.parsers.base import CanonicalInvoice, CanonicalBankTransaction, TransactionType
+        from src.parsers.bank.norma43 import Norma43Parser
+        from src.parsers.gateways.stripe import StripeParser
+        from src.parsers.gateways.redsys import RedsysParser
+        from src.parsers.invoices.portfolio_parser import InvoicePortfolioParser
+        from src.billing.pricing_plans import QuotaManager
+
+        open_invoices = []
+        if invoices_file and hasattr(invoices_file, "read"):
+            inv_bytes = await invoices_file.read()
+            if inv_bytes:
+                parsed_invs = InvoicePortfolioParser.parse_file_bytes(inv_bytes, invoices_file.filename or "invoices.csv")
+                for idx, inv_item in enumerate(parsed_invs, start=1):
+                    y, m, d = inv_item["issue_date"].split("-")
+                    open_invoices.append(
+                        CanonicalInvoice(
+                            invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                            invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                            issue_date=date(int(y), int(m), int(d)),
+                            due_date=date(int(y), int(m), int(d)),
+                            customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                            customer_name=inv_item.get("customer_name", "Cliente"),
+                            gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                            customer_fiscal_id=inv_item.get("customer_fiscal_id"),
+                        )
                     )
+
+        if not open_invoices:
+            base_dir = Path(__file__).resolve().parent.parent.parent.parent
+            inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
+            if inv_path.exists():
+                try:
+                    with open(inv_path, "r", encoding="utf-8") as f:
+                        inv_data = json.load(f)
+                    for item in inv_data:
+                        y, m, d = item["issue_date"].split("-")
+                        open_invoices.append(
+                            CanonicalInvoice(
+                                invoice_id=item["invoice_id"],
+                                invoice_number=item["invoice_number"],
+                                issue_date=date(int(y), int(m), int(d)),
+                                due_date=date(int(y), int(m), int(d)),
+                                customer_id=item["customer_id"],
+                                customer_name=item["customer_name"],
+                                gross_amount_cents=item["gross_amount_cents"],
+                                customer_fiscal_id=item["customer_fiscal_id"],
+                            )
+                        )
+                except Exception:
+                    pass
+
+        fn_lower = file_name.lower()
+        bank_txs = []
+        gw_txs = None
+        resolved_gw = gateway_name or "Stripe"
+
+        # 1. Detección Inteligente de Fichero Bancario Norma 43
+        is_n43 = fn_lower.endswith(".n43") or "norma" in fn_lower or (file_bytes.startswith(b"11") and not fn_lower.endswith((".xlsx", ".csv", ".json", ".pdf")))
+        if is_n43:
+            parse_res = Norma43Parser.parse_file(file_bytes)
+            if parse_res.canonical_transactions:
+                bank_txs = parse_res.canonical_transactions
+                resolved_gw = "Norma43"
+            elif parse_res.validation_errors:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Estructura Norma 43 no válida: {'; '.join(parse_res.validation_errors[:2])}"
                 )
 
-    if not open_invoices:
-        base_dir = Path(__file__).resolve().parent.parent.parent.parent
-        inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
-        if inv_path.exists():
-            with open(inv_path, "r", encoding="utf-8") as f:
-                inv_data = json.load(f)
-            for item in inv_data:
-                y, m, d = item["issue_date"].split("-")
-                open_invoices.append(
-                    CanonicalInvoice(
-                        invoice_id=item["invoice_id"],
-                        invoice_number=item["invoice_number"],
-                        issue_date=date(int(y), int(m), int(d)),
-                        due_date=date(int(y), int(m), int(d)),
-                        customer_id=item["customer_id"],
-                        customer_name=item["customer_name"],
-                        gross_amount_cents=item["gross_amount_cents"],
-                        customer_fiscal_id=item["customer_fiscal_id"],
+        # 2. Detección Inteligente de Ficheros de Pasarela Stripe
+        elif "stripe" in fn_lower or b"Balance transaction" in file_bytes or b"Automatic payout" in file_bytes:
+            resolved_gw = "Stripe"
+            stripe_txs = StripeParser.parse_balance_transactions_csv(file_bytes)
+            if stripe_txs:
+                gw_txs = stripe_txs
+                charges = [t for t in stripe_txs if t.type == "charge"]
+                payouts = [t for t in stripe_txs if t.type == "payout"]
+                exp_net = sum(c.gross_cents for c in charges) - sum(c.fee_cents for c in charges) if charges else 0
+                payout_date = payouts[0].created_at.date() if payouts else date(period_year, start_month, 15)
+                bank_txs = [
+                    CanonicalBankTransaction(
+                        transaction_id=f"BANCO-STRIPE-{period_year}{start_month:02d}",
+                        account_iban=client.bank_account_code,
+                        operation_date=payout_date,
+                        value_date=payout_date,
+                        transaction_type=TransactionType.DEPOSIT,
+                        amount_cents=exp_net,
+                        concept=f"LIQUIDACION STRIPE PAYOUT {period_year}-{start_month:02d}",
+                        payer_or_payee="Stripe Payments Europe",
                     )
+                ]
+
+        # 3. Detección Inteligente de Ficheros de Pasarela Redsys TPV
+        elif "redsys" in fn_lower or b"Ds_Merchant" in file_bytes or b"Numero Pedido" in file_bytes:
+            resolved_gw = "Redsys"
+            redsys_ops = RedsysParser.parse_operations_csv(file_bytes)
+            if redsys_ops:
+                gw_txs = redsys_ops
+                total_gross = sum(op.gross_amount_cents for op in redsys_ops)
+                total_fees = sum(op.fee_cents for op in redsys_ops)
+                exp_net = total_gross - total_fees
+                op_date = redsys_ops[0].operation_date if redsys_ops else date(period_year, start_month, 15)
+                bank_txs = [
+                    CanonicalBankTransaction(
+                        transaction_id=f"BANCO-REDSYS-{period_year}{start_month:02d}",
+                        account_iban=client.bank_account_code,
+                        operation_date=op_date,
+                        value_date=op_date,
+                        transaction_type=TransactionType.DEPOSIT,
+                        amount_cents=exp_net,
+                        concept=f"LIQUIDACION DIARIA TPV REDSYS {period_year}-{start_month:02d}",
+                        payer_or_payee="Redsys Servicios de Procesamiento",
+                    )
+                ]
+
+        # 4. Detección de Cartera de Facturas (.xlsx, .csv, .json, .pdf)
+        if not bank_txs:
+            parsed_invoices_from_file = InvoicePortfolioParser.parse_file_bytes(file_bytes, file_name)
+            if parsed_invoices_from_file:
+                # Incorporar a cartera de facturas pendientes
+                for idx, inv_item in enumerate(parsed_invoices_from_file, start=len(open_invoices) + 1):
+                    y, m, d = inv_item["issue_date"].split("-")
+                    open_invoices.append(
+                        CanonicalInvoice(
+                            invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                            invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                            issue_date=date(int(y), int(m), int(d)),
+                            due_date=date(int(y), int(m), int(d)),
+                            customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                            customer_name=inv_item.get("customer_name", "Cliente"),
+                            gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                            customer_fiscal_id=inv_item.get("customer_fiscal_id"),
+                        )
+                    )
+                # Si el usuario subió la cartera de facturas como fichero principal,
+                # generar los apuntes contables correspondientes para procesarlos en el Radar
+                for inv in open_invoices:
+                    bank_txs.append(
+                        CanonicalBankTransaction(
+                            transaction_id=f"COBRO-{inv.invoice_number}",
+                            account_iban=client.bank_account_code,
+                            operation_date=inv.issue_date,
+                            value_date=inv.due_date,
+                            transaction_type=TransactionType.DEPOSIT,
+                            amount_cents=inv.gross_amount_cents,
+                            concept=f"TRANSFERENCIA COBRO {inv.invoice_number} {inv.customer_name}",
+                            payer_or_payee=inv.customer_name,
+                            raw_reference=inv.customer_fiscal_id or inv.invoice_number,
+                        )
+                    )
+                resolved_gw = "Facturas"
+
+        # 5. Fallback final controlado
+        if not bank_txs:
+            parse_res = Norma43Parser.parse_file(file_bytes)
+            if parse_res.canonical_transactions:
+                bank_txs = parse_res.canonical_transactions
+                resolved_gw = "Norma43"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se han detectado movimientos bancarios ni facturas reconocibles en el archivo. Formatos admitidos: Norma 43 (.n43), Stripe/Redsys (.csv), Cartera Facturas (.xlsx, .csv, .json) o Factura individual (.pdf)."
                 )
 
-    fn_lower = file_name.lower()
-    bank_txs = []
-    gw_txs = None
-    resolved_gw = gateway_name or "Stripe"
-
-    if fn_lower.endswith(".n43") or "norma" in fn_lower or file_bytes.startswith(b"11"):
-        parse_res = Norma43Parser.parse_file(file_bytes)
-        bank_txs = parse_res.canonical_transactions
-        resolved_gw = "Norma43"
-    elif "stripe" in fn_lower or b"Stripe" in file_bytes or b"Balance transaction" in file_bytes or b"Automatic payout" in file_bytes:
-        resolved_gw = "Stripe"
-        stripe_txs = StripeParser.parse_balance_transactions_csv(file_bytes)
-        gw_txs = stripe_txs
-        charges = [t for t in stripe_txs if t.type == "charge"]
-        payouts = [t for t in stripe_txs if t.type == "payout"]
-        exp_net = sum(c.gross_cents for c in charges) - sum(c.fee_cents for c in charges) if charges else 0
-        payout_date = payouts[0].created_at.date() if payouts else date(period_year, start_month, 15)
-        bank_txs = [
-            CanonicalBankTransaction(
-                transaction_id=f"BANCO-STRIPE-{period_year}{start_month:02d}",
-                account_iban=client.bank_account_code,
-                operation_date=payout_date,
-                value_date=payout_date,
-                transaction_type=TransactionType.DEPOSIT,
-                amount_cents=exp_net,
-                concept=f"LIQUIDACION STRIPE PAYOUT {period_year}-{start_month:02d}",
-                payer_or_payee="Stripe Payments Europe",
+        tenant = ReconciliationRepository.get_tenant(db, tenant_id)
+        if tenant:
+            current_tx = sum(b.total_movements or 0 for b in tenant.batches) if tenant.batches else 0
+            quota = QuotaManager.evaluate_tenant_quota(
+                plan_code=tenant.plan or "FREE",
+                extra_blocks=tenant.extra_blocks or 0,
+                current_clients_count=len(tenant.clients) if tenant.clients else 1,
+                current_month_transactions=current_tx,
+                incoming_transactions=len(bank_txs),
             )
-        ]
-    elif "redsys" in fn_lower or b"Ds_Merchant" in file_bytes or b"Operacion" in file_bytes or b"Numero Pedido" in file_bytes:
-        resolved_gw = "Redsys"
-        redsys_ops = RedsysParser.parse_operations_csv(file_bytes)
-        gw_txs = redsys_ops
-        total_gross = sum(op.gross_amount_cents for op in redsys_ops)
-        total_fees = sum(op.fee_cents for op in redsys_ops)
-        exp_net = total_gross - total_fees
-        op_date = redsys_ops[0].operation_date if redsys_ops else date(period_year, start_month, 15)
-        bank_txs = [
-            CanonicalBankTransaction(
-                transaction_id=f"BANCO-REDSYS-{period_year}{start_month:02d}",
-                account_iban=client.bank_account_code,
-                operation_date=op_date,
-                value_date=op_date,
-                transaction_type=TransactionType.DEPOSIT,
-                amount_cents=exp_net,
-                concept=f"LIQUIDACION DIARIA TPV REDSYS {period_year}-{start_month:02d}",
-                payer_or_payee="Redsys Servicios de Procesamiento",
+            if quota["paywall_triggered"]:
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail={
+                        "code": "PAYWALL_LIMIT_REACHED",
+                        "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
+                        "quota": quota,
+                    },
+                )
+
+        is_ephemeral = bool(ephemeral_mode and str(ephemeral_mode).lower() in ("true", "1"))
+        if is_ephemeral:
+            from src.reconciliation.engine import BatchPayoutReconciliationEngine
+            from src.accounting.double_entry import AccountingEntryBuilder
+
+            reconciled_groups = BatchPayoutReconciliationEngine.reconcile_payouts(
+                bank_transactions=bank_txs,
+                open_invoices=open_invoices,
+                gateway_transactions=gw_txs,
             )
-        ]
-    else:
-        parse_res = Norma43Parser.parse_file(file_bytes)
-        bank_txs = parse_res.canonical_transactions
-        resolved_gw = "Norma43"
+            response_txs = []
+            for idx, grp in enumerate(reconciled_groups, start=1):
+                bank_tx = grp.bank_tx
+                invoices = grp.matched_invoices
+                matched_inv_dicts = [
+                    {
+                        "account_code": inv.customer_fiscal_id or f"430{i:06d}",
+                        "invoice_number": inv.invoice_number,
+                        "gross_cents": inv.gross_amount_cents,
+                        "fee_cents": grp.allocated_fee_cents // max(1, len(invoices)),
+                        "customer_name": inv.customer_name,
+                    }
+                    for i, inv in enumerate(invoices, start=1)
+                ]
+                journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+                    entry_number=idx,
+                    entry_date=bank_tx.operation_date,
+                    bank_account_code=client.bank_account_code or "572000001",
+                    fee_account_code=client.fee_account_code or "626000001",
+                    payout_net_cents=bank_tx.amount_cents,
+                    matched_invoices=matched_inv_dicts,
+                    gateway_name=resolved_gw,
+                    account_length=client.account_length or 9,
+                )
+                response_txs.append({
+                    "id": f"TX-EPHEMERAL-{idx:04d}",
+                    "type": "BATCH_PAYOUT",
+                    "source": bank_tx.transaction_id,
+                    "date": bank_tx.operation_date.isoformat(),
+                    "valueDate": bank_tx.value_date.isoformat(),
+                    "bankAccountCode": client.bank_account_code or "572000001",
+                    "concept": bank_tx.concept,
+                    "netAmountEur": round(bank_tx.amount_cents / 100.0, 2),
+                    "grossAmountEur": round(grp.total_matched_gross_cents / 100.0, 2),
+                    "feeAmountEur": round(grp.allocated_fee_cents / 100.0, 2),
+                    "status": grp.status,
+                    "confidenceScore": grp.confidence_score,
+                    "solverUsed": grp.solver_used,
+                    "matchedCount": len(invoices),
+                    "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2),
+                    "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 1.0, "s_fiscal": 1.0},
+                    "auditExplanation": "Procesado en Modo Efímero RAM (Zero-Storage) sin retención en disco.",
+                    "journal": {
+                        "entryNumber": journal.entry_number,
+                        "date": journal.entry_date.isoformat(),
+                        "isBalanced": journal.is_balanced,
+                        "lines": [
+                            {
+                                "accountCode": l.account_code,
+                                "concept": l.concept,
+                                "documentNumber": l.document_number,
+                                "debitEur": round(l.debit_cents / 100.0, 2),
+                                "creditEur": round(l.credit_cents / 100.0, 2),
+                                "contrapartida": l.contrapartida,
+                            }
+                            for l in journal.lines
+                        ],
+                    },
+                })
 
-    tenant = ReconciliationRepository.get_tenant(db, tenant_id)
-    if tenant:
-        current_tx = sum(b.total_movements or 0 for b in tenant.batches) if tenant.batches else 0
-        quota = QuotaManager.evaluate_tenant_quota(
-            plan_code=tenant.plan or "FREE",
-            extra_blocks=tenant.extra_blocks or 0,
-            current_clients_count=len(tenant.clients) if tenant.clients else 1,
-            current_month_transactions=current_tx,
-            incoming_transactions=len(bank_txs),
-        )
-        if quota["paywall_triggered"]:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail={
-                    "code": "PAYWALL_LIMIT_REACHED",
-                    "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
-                    "quota": quota,
-                },
-            )
+            return {
+                "id": "BATCH-EPHEMERAL-RAM",
+                "ephemeral": True,
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "period_year": period_year,
+                "period_type": period_type,
+                "start_month": start_month,
+                "end_month": end_month,
+                "status": "PROCESSED",
+                "total_movements": len(response_txs),
+                "transactions": response_txs,
+                "green_count": sum(1 for t in response_txs if t["status"] == "GREEN"),
+                "yellow_count": sum(1 for t in response_txs if t["status"] == "YELLOW"),
+                "red_count": sum(1 for t in response_txs if t["status"] == "RED"),
+            }
 
-    is_ephemeral = bool(ephemeral_mode and str(ephemeral_mode).lower() in ("true", "1"))
-    if is_ephemeral:
-        from src.reconciliation.engine import BatchPayoutReconciliationEngine
-        from src.accounting.double_entry import AccountingEntryBuilder
-
-        reconciled_groups = BatchPayoutReconciliationEngine.reconcile_payouts(
+        batch = BatchReconciliationService.process_and_persist_batch(
+            db=db,
+            tenant_id=tenant_id,
+            client_id=client_id,
+            period_year=period_year,
+            period_type=period_type,
+            start_month=start_month,
+            end_month=end_month,
             bank_transactions=bank_txs,
             open_invoices=open_invoices,
+            file_name=file_name,
+            file_bytes=file_bytes,
+            gateway_name=resolved_gw,
             gateway_transactions=gw_txs,
         )
-        response_txs = []
-        for idx, grp in enumerate(reconciled_groups, start=1):
-            bank_tx = grp.bank_tx
-            invoices = grp.matched_invoices
-            matched_inv_dicts = [
-                {
-                    "account_code": inv.customer_fiscal_id or f"430{i:06d}",
-                    "invoice_number": inv.invoice_number,
-                    "gross_cents": inv.gross_amount_cents,
-                    "fee_cents": grp.allocated_fee_cents // max(1, len(invoices)),
-                    "customer_name": inv.customer_name,
-                }
-                for i, inv in enumerate(invoices, start=1)
-            ]
-            journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
-                entry_number=idx,
-                entry_date=bank_tx.operation_date,
-                bank_account_code=client.bank_account_code or "572000001",
-                fee_account_code=client.fee_account_code or "626000001",
-                payout_net_cents=bank_tx.amount_cents,
-                matched_invoices=matched_inv_dicts,
-                gateway_name=resolved_gw,
-                account_length=client.account_length or 9,
-            )
-            response_txs.append({
-                "id": f"TX-EPHEMERAL-{idx:04d}",
-                "type": "BATCH_PAYOUT",
-                "source": bank_tx.transaction_id,
-                "date": bank_tx.operation_date.isoformat(),
-                "valueDate": bank_tx.value_date.isoformat(),
-                "bankAccountCode": client.bank_account_code or "572000001",
-                "concept": bank_tx.concept,
-                "netAmountEur": round(bank_tx.amount_cents / 100.0, 2),
-                "grossAmountEur": round(grp.total_matched_gross_cents / 100.0, 2),
-                "feeAmountEur": round(grp.allocated_fee_cents / 100.0, 2),
-                "status": grp.status,
-                "confidenceScore": grp.confidence_score,
-                "solverUsed": grp.solver_used,
-                "matchedCount": len(invoices),
-                "imbalanceEur": round(abs(journal.imbalance_cents) / 100.0, 2),
-                "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 1.0, "s_fiscal": 1.0},
-                "auditExplanation": "Procesado en Modo Efímero RAM (Zero-Storage) sin retención en disco.",
-                "journal": {
-                    "entryNumber": journal.entry_number,
-                    "date": journal.entry_date.isoformat(),
-                    "isBalanced": journal.is_balanced,
-                    "lines": [
-                        {
-                            "accountCode": l.account_code,
-                            "concept": l.concept,
-                            "documentNumber": l.document_number,
-                            "debitEur": round(l.debit_cents / 100.0, 2),
-                            "creditEur": round(l.credit_cents / 100.0, 2),
-                            "contrapartida": l.contrapartida,
-                        }
-                        for l in journal.lines
-                    ],
-                },
-            })
 
         return {
-            "id": "BATCH-EPHEMERAL-RAM",
-            "ephemeral": True,
-            "tenant_id": tenant_id,
-            "client_id": client_id,
-            "period_year": period_year,
-            "period_type": period_type,
-            "start_month": start_month,
-            "end_month": end_month,
-            "status": "PROCESSED",
-            "total_movements": len(response_txs),
-            "transactions": response_txs,
-            "green_count": sum(1 for t in response_txs if t["status"] == "GREEN"),
-            "yellow_count": sum(1 for t in response_txs if t["status"] == "YELLOW"),
-            "red_count": sum(1 for t in response_txs if t["status"] == "RED"),
+            "id": batch.id,
+            "tenant_id": batch.tenant_id,
+            "client_id": batch.client_id,
+            "period_year": batch.period_year,
+            "period_type": batch.period_type,
+            "start_month": batch.start_month,
+            "end_month": batch.end_month,
+            "status": batch.status,
+            "total_movements": batch.total_movements,
+            "total_volume_eur": batch.total_volume_cents / 100.0,
+            "green_count": batch.green_count,
+            "yellow_count": batch.yellow_count,
+            "red_count": batch.red_count,
+            "file_name": batch.file_name,
+            "file_hash_sha256": batch.file_hash_sha256,
         }
-
-    batch = BatchReconciliationService.process_and_persist_batch(
-        db=db,
-        tenant_id=tenant_id,
-        client_id=client_id,
-        period_year=period_year,
-        period_type=period_type,
-        start_month=start_month,
-        end_month=end_month,
-        bank_transactions=bank_txs,
-        open_invoices=open_invoices,
-        file_name=file_name,
-        file_bytes=file_bytes,
-        gateway_name=resolved_gw,
-        gateway_transactions=gw_txs,
-    )
-
-    return {
-        "id": batch.id,
-        "tenant_id": batch.tenant_id,
-        "client_id": batch.client_id,
-        "period_year": batch.period_year,
-        "period_type": batch.period_type,
-        "start_month": batch.start_month,
-        "end_month": batch.end_month,
-        "status": batch.status,
-        "total_movements": batch.total_movements,
-        "total_volume_eur": batch.total_volume_cents / 100.0,
-        "green_count": batch.green_count,
-        "yellow_count": batch.yellow_count,
-        "red_count": batch.red_count,
-        "file_name": batch.file_name,
-        "file_hash_sha256": batch.file_hash_sha256,
-    }
-
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error en el motor contable: {str(exc)}",
+        )
 
 
 @router.get("/batches/{batch_id}")

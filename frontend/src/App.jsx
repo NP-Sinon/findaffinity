@@ -351,7 +351,7 @@ export default function App() {
       return null;
     }
 
-    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    const tenantIdToUse = selectedCompany?.tenantId || selectedCompany?.tenant_id || currentTenant?.id || currentUser?.tenant_id;
     if (!tenantIdToUse) {
       triggerToast('Sesión de despacho no válida.');
       return null;

@@ -337,3 +337,77 @@ def test_deletion_routes_and_slash_variants_never_return_405(api_client):
     assert del3.status_code == 200, f"DELETE con query param falló: {del3.status_code}"
     assert del3.status_code != 405
 
+
+def test_sample_data_folder_all_files_ingestion(api_client):
+    """
+    Verifica que todos los formatos generados en 'prueba Data'
+    (.n43, .csv, .xlsx, .json, .pdf) se procesan con 201 Created sin errores de lote.
+    """
+    from pathlib import Path
+    data_dir = Path("prueba Data")
+    if not data_dir.exists():
+        pytest.skip("Carpeta prueba Data no encontrada")
+
+    # Obtener token de superadmin y su cliente
+    sa_login = api_client.post("/api/v1/auth/login", json={
+        "email": "admin@findaffinity.com",
+        "password": "AdminPass2026!",
+    })
+    assert sa_login.status_code == 200
+    user_info = sa_login.json()["user"]
+    tenant_id = user_info["tenant_id"]
+
+    # Obtener o crear empresa para el admin
+    clients_res = api_client.get(f"/api/v1/clients?tenant_id={tenant_id}")
+    assert clients_res.status_code == 200
+    clients = clients_res.json()
+    if clients:
+        client_id = clients[0]["id"]
+    else:
+        new_c = api_client.post("/api/v1/clients", json={
+            "tenant_id": tenant_id,
+            "name": "Iberia Demo Test",
+            "fiscal_id": f"B{uuid.uuid4().hex[:8].upper()}",
+        })
+        assert new_c.status_code == 201
+        client_id = new_c.json()["id"]
+
+    # Probar todos los archivos de prueba
+    for p in data_dir.glob("*"):
+        if p.is_file() and p.name != "README_INSTRUCCIONES.md":
+            with open(p, "rb") as f:
+                res = api_client.post(
+                    "/api/v1/batches",
+                    data={
+                        "tenant_id": tenant_id,
+                        "client_id": client_id,
+                        "period_year": 2026,
+                        "period_type": "ALL",
+                        "start_month": 1,
+                        "end_month": 12,
+                    },
+                    files={"file": (p.name, f.read())},
+                )
+                assert res.status_code == 201, f"Error en archivo {p.name}: {res.text}"
+                data = res.json()
+                assert data["total_movements"] > 0, f"Archivo {p.name} devolvió 0 movimientos"
+
+    # Probar además al menos 1 PDF individual
+    pdf_files = list((data_dir / "facturas_pdf").glob("*.pdf"))
+    if pdf_files:
+        with open(pdf_files[0], "rb") as f:
+            res = api_client.post(
+                "/api/v1/batches",
+                data={
+                    "tenant_id": tenant_id,
+                    "client_id": client_id,
+                    "period_year": 2026,
+                    "period_type": "ALL",
+                    "start_month": 1,
+                    "end_month": 12,
+                },
+                files={"file": (pdf_files[0].name, f.read())},
+            )
+            assert res.status_code == 201, f"Error en PDF: {res.text}"
+            assert res.json()["total_movements"] > 0
+

@@ -278,6 +278,7 @@ export async function fetchClients(tenantId) {
   if (ok && Array.isArray(data)) {
     return data.map((c) => ({
       id: c.id,
+      tenantId: c.tenant_id,
       name: c.name,
       fiscalId: c.fiscal_id,
       defaultErp: c.default_erp,
@@ -317,6 +318,7 @@ export async function createClientApi({
       success: true,
       client: {
         id: data.id,
+        tenantId: data.tenant_id,
         name: data.name,
         fiscalId: data.fiscal_id,
         defaultErp: data.default_erp,
@@ -457,7 +459,15 @@ export async function uploadBatchFile({
       let errDetail = 'Error al procesar lote contable';
       try {
         const errJson = await res.json();
-        errDetail = typeof errJson.detail === 'object' ? errJson.detail.message : (errJson.detail || errDetail);
+        if (typeof errJson.detail === 'string') {
+          errDetail = errJson.detail;
+        } else if (Array.isArray(errJson.detail)) {
+          errDetail = errJson.detail.map((e) => e.msg || JSON.stringify(e)).join(', ');
+        } else if (errJson.detail && typeof errJson.detail === 'object') {
+          errDetail = errJson.detail.message || JSON.stringify(errJson.detail);
+        } else if (errJson.message) {
+          errDetail = errJson.message;
+        }
       } catch {
         // ignore
       }

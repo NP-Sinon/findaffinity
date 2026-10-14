@@ -51,6 +51,23 @@ def seed_initial_data(db: Session) -> None:
             existing_superadmin.tenant_id = master_tenant.id
         db.commit()
 
+    # Asegurar que el Administrador Global dispone de al menos 1 empresa cliente para operar y probar inmediatamente
+    from src.database.models import ClientCompany
+    admin_company = db.query(ClientCompany).filter(ClientCompany.tenant_id == master_tenant.id).first()
+    if not admin_company:
+        admin_company = ClientCompany(
+            id=str(uuid.uuid4()),
+            tenant_id=master_tenant.id,
+            name="Iberia Retail Logistics S.L.",
+            fiscal_id="B-87654321",
+            default_erp="A3",
+            account_length=9,
+            bank_account_code="572000001",
+            fee_account_code="626000001",
+        )
+        db.add(admin_company)
+        db.commit()
+
     # Si se solicita explícitamente sembrar datos de demo para testing/piloto
     seed_demo = os.getenv("SEED_DEMO_DATA", "false").strip().lower() in ("true", "1", "yes")
     if seed_demo:
