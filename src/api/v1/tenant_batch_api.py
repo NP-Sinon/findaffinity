@@ -860,9 +860,10 @@ async def upload_and_process_batch(
     except Exception as exc:
         import traceback
         traceback.print_exc()
-        raise HTTPException(
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error en el motor contable: {str(exc)}",
+            content={"detail": f"Error en el motor contable: {str(exc)}"},
         )
 
 

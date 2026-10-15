@@ -373,7 +373,7 @@ class ReconciliationRepository:
             .order_by(desc(AuditLog.timestamp))
             .first()
         )
-        prev_hash = last_log.current_hash_sha256 if last_log else "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000"
+        prev_hash = last_log.current_hash_sha256 if last_log else ("GENESIS_BLOCK_" + "0" * 50)
 
         now = datetime.now(timezone.utc)
         details_str = json.dumps(details, sort_keys=True)

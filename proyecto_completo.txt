@@ -20,7 +20,7 @@ htmlcov/
 
 # Frontend
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/ (tracked for lightweight Docker deployment)
 frontend/dist-ssr/
 frontend/*.local
 
@@ -37,15 +37,8 @@ FICHERO: Dockerfile
 
 # ==============================================================================
 # FICHERO: Dockerfile
-# Build Multi-Stage: Frontend React 19 (Vite) + Backend Python 3.12 (FastAPI)
+# Build Ultrarrápido de Producción para Render: Python 3.12 (FastAPI) + SPA Dist
 # ==============================================================================
-FROM node:22-alpine AS frontend-builder
-WORKDIR /app/frontend
-COPY frontend/package.json ./
-RUN npm install
-COPY frontend/ ./
-RUN npm run build
-
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -64,7 +57,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY data/ ./data/
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+COPY frontend/dist ./frontend/dist
 
 RUN mkdir -p /app/data /app/output_pilot
 
@@ -675,7 +668,6 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
 dist-ssr
 *.local
 
@@ -6991,14 +6983,20 @@ export async function uploadBatchFile({
       body: formData,
     });
 
+    const rawText = await res.text();
     if (res.ok) {
-      const data = await res.json();
+      let data = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = {};
+      }
       return { success: true, fromBackend: true, data };
     } else {
       const isPaywall = res.status === 402;
-      let errDetail = 'Error al procesar lote contable';
+      let errDetail = '';
       try {
-        const errJson = await res.json();
+        const errJson = JSON.parse(rawText);
         if (typeof errJson.detail === 'string') {
           errDetail = errJson.detail;
         } else if (Array.isArray(errJson.detail)) {
@@ -7009,7 +7007,10 @@ export async function uploadBatchFile({
           errDetail = errJson.message;
         }
       } catch {
-        // ignore
+        errDetail = rawText && rawText.length < 200 ? rawText.trim() : `Error del servidor (código ${res.status})`;
+      }
+      if (!errDetail) {
+        errDetail = `Error al procesar lote contable (HTTP ${res.status})`;
       }
       return { success: false, fromBackend: true, paywallTriggered: isPaywall, error: errDetail };
     }
@@ -7328,32 +7329,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "3650572c-4ae6-4da8-a4c0-57c23ea03457",
+  "tenant_id": "fdb37bec-834c-4955-b356-20fdadf7c8d2",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
-  "issued_at": "2026-10-14",
+  "issued_at": "2026-10-15",
   "total_events_certified": 6,
-  "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "d8a87c895e7e9c376415b981276f9900f8e1726561ae770595f4075cb45e8d3c",
+  "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000",
+  "head_hash_sha256": "bd121a49cbd4f85f79e550557212859daac6e5cbba838873d2582e0be3e38ac5",
   "audit_events": [
     {
-      "event_id": "00bc472e-413c-46a4-875a-8060ac3ca68e",
+      "event_id": "875f1490-1f55-46f3-9f65-b69c8eebbbe2",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T19:34:10.746882",
-      "sha256_hash": "0fee07da1cc5de1bf301e50d10ee56e6dba72a781268dc252023bb19561cc394",
+      "timestamp": "2026-10-15T15:42:17.111410",
+      "sha256_hash": "d771aee188f92428b3073a4fe37e9ca39fc7baa3617cfce325d4d67b91b4a1e3",
       "details": {
-        "batch_id": "155d0c3c-3a33-40e8-b7e7-b789a87dac68",
+        "batch_id": "4d6abe01-df20-47c2-b330-0bcfdf4b0813",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "950c5934-71bc-49e2-8071-e3dede8acfb2",
+      "event_id": "ed59386f-c0b5-43ad-bb18-a806938b9b00",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T19:34:10.758401",
-      "sha256_hash": "5fa2627feba376d91a1986bdeefbbeebfe0accc1c65d3bfedea4e6502f68ad28",
+      "timestamp": "2026-10-15T15:42:17.125410",
+      "sha256_hash": "81b1ae7577be1c9e37ad5f45236f8a8ad2a35a818ed05ea14702cc137a3acfe3",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7361,23 +7362,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "00945251-ba95-44cb-b32a-b02cdc07a75a",
+      "event_id": "881ffb32-6d96-4253-a578-ca072b0fbe24",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T19:34:10.764271",
-      "sha256_hash": "2a97083a196eb5669d93f1895d4b7f50ac71c500ccbf95350cfb81f59a8cc596",
+      "timestamp": "2026-10-15T15:42:17.131234",
+      "sha256_hash": "1e0541ae765d96031d3008f5fd6fae9e3756c470a743a07ba10c65d96665ed3f",
       "details": {
-        "batch_id": "06b26c01-973b-446e-b9c3-0fabf3e6a1cf",
+        "batch_id": "41dda2dd-124c-45ec-98b4-550ad5b9e977",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "bc8ead68-f949-4c5f-a429-28ec0bf7c4b3",
+      "event_id": "b7382d40-b25b-4c22-9e74-e89635ac7c02",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T19:34:10.769957",
-      "sha256_hash": "f95d930c90d0b1457898812cb8bf442cc2486888ce663b5389b68d8f4b7e1f31",
+      "timestamp": "2026-10-15T15:42:17.138482",
+      "sha256_hash": "363d2e40e85685ca6d44fcce8811f7d4147925bd51e8551f79d1997b45528a72",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7385,23 +7386,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "19d51807-d963-4c4b-b9e3-9f172ae9db9d",
+      "event_id": "1a4801ea-4cf8-4c8b-831b-e7ffa1c65ec2",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-14T19:34:10.774069",
-      "sha256_hash": "ce4ece59134a14f29f115c8025b5dd4913c02abe2090585b65d22b0d0e093674",
+      "timestamp": "2026-10-15T15:42:17.143476",
+      "sha256_hash": "9dc05a01fc5de8b2be2c7b13712e11c5dced8922c662320397cc4cc4e0dadbfc",
       "details": {
-        "batch_id": "0980eed8-b274-45cf-8944-8a96e0f2280a",
+        "batch_id": "c134b562-25fa-4d38-84fc-465fe9344eb4",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "1378110f-2040-4871-ae77-d7f19b9a0e7a",
+      "event_id": "6c43a547-ffe4-4c40-a4ed-6db1cefe1652",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-14T19:34:10.792072",
-      "sha256_hash": "d8a87c895e7e9c376415b981276f9900f8e1726561ae770595f4075cb45e8d3c",
+      "timestamp": "2026-10-15T15:42:17.165334",
+      "sha256_hash": "bd121a49cbd4f85f79e550557212859daac6e5cbba838873d2582e0be3e38ac5",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7415,7 +7416,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xac in position 11: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0x8d in position 11: invalid start byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -7906,6 +7907,7 @@ httpx>=0.27.0
 psycopg[binary]>=3.2.0
 psycopg2-binary>=2.9.9
 stripe>=8.0.0
+pypdf>=5.0.0
 
 
 ================================================================================
@@ -12341,9 +12343,10 @@ async def upload_and_process_batch(
     except Exception as exc:
         import traceback
         traceback.print_exc()
-        raise HTTPException(
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error en el motor contable: {str(exc)}",
+            content={"detail": f"Error en el motor contable: {str(exc)}"},
         )
 
 
@@ -13646,13 +13649,13 @@ class AuditLog(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    client_id = Column(String(36), ForeignKey("client_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id = Column(String(36), ForeignKey("client_companies.id", ondelete="CASCADE"), nullable=True, index=True)
     batch_id = Column(String(36), ForeignKey("reconciliation_batches.id", ondelete="CASCADE"), nullable=True, index=True)
     action = Column(String(50), nullable=False, index=True)
     actor = Column(String(120), nullable=False)
     details_json = Column(Text, nullable=True)
-    prev_hash = Column(String(64), nullable=True)
-    current_hash_sha256 = Column(String(64), nullable=False)
+    prev_hash = Column(String(128), nullable=True)
+    current_hash_sha256 = Column(String(128), nullable=False)
     timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     # Relaciones
@@ -14043,7 +14046,7 @@ class ReconciliationRepository:
             .order_by(desc(AuditLog.timestamp))
             .first()
         )
-        prev_hash = last_log.current_hash_sha256 if last_log else "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000000000"
+        prev_hash = last_log.current_hash_sha256 if last_log else ("GENESIS_BLOCK_" + "0" * 50)
 
         now = datetime.now(timezone.utc)
         details_str = json.dumps(details, sort_keys=True)
@@ -14680,7 +14683,8 @@ def health_check():
     return {
         "status": "healthy",
         "service": "ReconcileSaaS-Engine",
-        "version": "1.0.0",
+        "version": "1.0.1",
+        "build": "2026.10.15-v2",
         "staging_mode": "read_only_zero_liability",
     }
 

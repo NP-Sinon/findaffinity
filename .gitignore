@@ -10,7 +10,7 @@ htmlcov/
 
 # Frontend
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/ (tracked for lightweight Docker deployment)
 frontend/dist-ssr/
 frontend/*.local
 

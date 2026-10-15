@@ -451,14 +451,20 @@ export async function uploadBatchFile({
       body: formData,
     });
 
+    const rawText = await res.text();
     if (res.ok) {
-      const data = await res.json();
+      let data = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = {};
+      }
       return { success: true, fromBackend: true, data };
     } else {
       const isPaywall = res.status === 402;
-      let errDetail = 'Error al procesar lote contable';
+      let errDetail = '';
       try {
-        const errJson = await res.json();
+        const errJson = JSON.parse(rawText);
         if (typeof errJson.detail === 'string') {
           errDetail = errJson.detail;
         } else if (Array.isArray(errJson.detail)) {
@@ -469,7 +475,10 @@ export async function uploadBatchFile({
           errDetail = errJson.message;
         }
       } catch {
-        // ignore
+        errDetail = rawText && rawText.length < 200 ? rawText.trim() : `Error del servidor (código ${res.status})`;
+      }
+      if (!errDetail) {
+        errDetail = `Error al procesar lote contable (HTTP ${res.status})`;
       }
       return { success: false, fromBackend: true, paywallTriggered: isPaywall, error: errDetail };
     }

@@ -52,7 +52,8 @@ def health_check():
     return {
         "status": "healthy",
         "service": "ReconcileSaaS-Engine",
-        "version": "1.0.0",
+        "version": "1.0.1",
+        "build": "2026.10.15-v2",
         "staging_mode": "read_only_zero_liability",
     }
 

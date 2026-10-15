@@ -199,13 +199,13 @@ class AuditLog(Base):
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    client_id = Column(String(36), ForeignKey("client_companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id = Column(String(36), ForeignKey("client_companies.id", ondelete="CASCADE"), nullable=True, index=True)
     batch_id = Column(String(36), ForeignKey("reconciliation_batches.id", ondelete="CASCADE"), nullable=True, index=True)
     action = Column(String(50), nullable=False, index=True)
     actor = Column(String(120), nullable=False)
     details_json = Column(Text, nullable=True)
-    prev_hash = Column(String(64), nullable=True)
-    current_hash_sha256 = Column(String(64), nullable=False)
+    prev_hash = Column(String(128), nullable=True)
+    current_hash_sha256 = Column(String(128), nullable=False)
     timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     # Relaciones
