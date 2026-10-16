@@ -4486,7 +4486,7 @@ export function IngestionZone({
             ref={portfolioInputRef}
             type="file"
             onChange={handlePortfolioFileChange}
-            accept=".xlsx,.csv,.json"
+            accept=".xlsx,.csv,.json,.pdf"
             className="hidden"
           />
           {invoicesFile ? (
@@ -4545,7 +4545,7 @@ export function IngestionZone({
             ref={bankInputRef}
             type="file"
             onChange={handleBankFileChange}
-            accept=".n43,.txt,.csv,.xlsx"
+            accept=".n43,.txt,.csv,.xlsx,.pdf,.json"
             className="hidden"
           />
 
@@ -7329,32 +7329,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "fdb37bec-834c-4955-b356-20fdadf7c8d2",
+  "tenant_id": "8396419e-8a7b-477f-8040-0485397c3607",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
-  "issued_at": "2026-10-15",
+  "issued_at": "2026-10-16",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "bd121a49cbd4f85f79e550557212859daac6e5cbba838873d2582e0be3e38ac5",
+  "head_hash_sha256": "4cb49976ff642ae2907df4a8678120672be1bd1b31377868c4e94c6bebd4a482",
   "audit_events": [
     {
-      "event_id": "875f1490-1f55-46f3-9f65-b69c8eebbbe2",
+      "event_id": "97c55d19-3208-4705-b030-4143d515c545",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-15T15:42:17.111410",
-      "sha256_hash": "d771aee188f92428b3073a4fe37e9ca39fc7baa3617cfce325d4d67b91b4a1e3",
+      "timestamp": "2026-10-16T18:14:05.030658",
+      "sha256_hash": "835e46395ba1c80b79abd8facc0df335c73092417e6a2991b7293938c34e02f5",
       "details": {
-        "batch_id": "4d6abe01-df20-47c2-b330-0bcfdf4b0813",
+        "batch_id": "3309396b-d7e3-431f-8bb2-baf3a7f8fa4b",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "ed59386f-c0b5-43ad-bb18-a806938b9b00",
+      "event_id": "aa5f41f7-f727-4060-b297-7ae1277745cb",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-15T15:42:17.125410",
-      "sha256_hash": "81b1ae7577be1c9e37ad5f45236f8a8ad2a35a818ed05ea14702cc137a3acfe3",
+      "timestamp": "2026-10-16T18:14:05.046665",
+      "sha256_hash": "f32f21f09849527013d5fc558b312903992102c147dcb67b145c5ad4d17180cf",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7362,23 +7362,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "881ffb32-6d96-4253-a578-ca072b0fbe24",
+      "event_id": "0ff58b8b-b8f1-478c-9009-b44c1ef78ddd",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-15T15:42:17.131234",
-      "sha256_hash": "1e0541ae765d96031d3008f5fd6fae9e3756c470a743a07ba10c65d96665ed3f",
+      "timestamp": "2026-10-16T18:14:05.054379",
+      "sha256_hash": "588873dc84af105de061d8c0935111657d680193cf4b37262831f26e48bbe32b",
       "details": {
-        "batch_id": "41dda2dd-124c-45ec-98b4-550ad5b9e977",
+        "batch_id": "21d02a54-61a0-4316-b5e3-fbaef2909eef",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "b7382d40-b25b-4c22-9e74-e89635ac7c02",
+      "event_id": "df39ac7e-2533-4928-a89c-1fa18fdefaf4",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-15T15:42:17.138482",
-      "sha256_hash": "363d2e40e85685ca6d44fcce8811f7d4147925bd51e8551f79d1997b45528a72",
+      "timestamp": "2026-10-16T18:14:05.060625",
+      "sha256_hash": "b9b8d94bab7750f40ec942e9110b323f981a618ac177769485a07fb22aeaccdf",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7386,23 +7386,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "1a4801ea-4cf8-4c8b-831b-e7ffa1c65ec2",
+      "event_id": "ef1bfaa2-4780-466e-b61b-13a66cd816de",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-15T15:42:17.143476",
-      "sha256_hash": "9dc05a01fc5de8b2be2c7b13712e11c5dced8922c662320397cc4cc4e0dadbfc",
+      "timestamp": "2026-10-16T18:14:05.066874",
+      "sha256_hash": "f5a85b0885304e9caaed7f1fa9fa5b907325ac347f32a761fc169311f91f1838",
       "details": {
-        "batch_id": "c134b562-25fa-4d38-84fc-465fe9344eb4",
+        "batch_id": "159d488d-f42a-4be7-bd28-dd7a1843b4d8",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "6c43a547-ffe4-4c40-a4ed-6db1cefe1652",
+      "event_id": "31fdaf3b-92bd-4c16-822c-12b10e69e729",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-15T15:42:17.165334",
-      "sha256_hash": "bd121a49cbd4f85f79e550557212859daac6e5cbba838873d2582e0be3e38ac5",
+      "timestamp": "2026-10-16T18:14:05.091398",
+      "sha256_hash": "4cb49976ff642ae2907df4a8678120672be1bd1b31377868c4e94c6bebd4a482",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7416,7 +7416,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0x8d in position 11: invalid start byte]
+# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xc7 in position 15: invalid continuation byte]
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -11923,29 +11923,6 @@ async def upload_and_process_batch(
                         )
                     )
 
-        if not open_invoices:
-            base_dir = Path(__file__).resolve().parent.parent.parent.parent
-            inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
-            if inv_path.exists():
-                try:
-                    with open(inv_path, "r", encoding="utf-8") as f:
-                        inv_data = json.load(f)
-                    for item in inv_data:
-                        y, m, d = item["issue_date"].split("-")
-                        open_invoices.append(
-                            CanonicalInvoice(
-                                invoice_id=item["invoice_id"],
-                                invoice_number=item["invoice_number"],
-                                issue_date=date(int(y), int(m), int(d)),
-                                due_date=date(int(y), int(m), int(d)),
-                                customer_id=item["customer_id"],
-                                customer_name=item["customer_name"],
-                                gross_amount_cents=item["gross_amount_cents"],
-                                customer_fiscal_id=item["customer_fiscal_id"],
-                            )
-                        )
-                except Exception:
-                    pass
 
         fn_lower = file_name.lower()
         bank_txs = []
@@ -12016,23 +11993,25 @@ async def upload_and_process_batch(
             parsed_invoices_from_file = InvoicePortfolioParser.parse_file_bytes(file_bytes, file_name)
             if parsed_invoices_from_file:
                 # Incorporar a cartera de facturas pendientes
-                for idx, inv_item in enumerate(parsed_invoices_from_file, start=len(open_invoices) + 1):
+                file_invoices = []
+                for idx, inv_item in enumerate(parsed_invoices_from_file, start=1):
                     y, m, d = inv_item["issue_date"].split("-")
-                    open_invoices.append(
-                        CanonicalInvoice(
-                            invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
-                            invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
-                            issue_date=date(int(y), int(m), int(d)),
-                            due_date=date(int(y), int(m), int(d)),
-                            customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
-                            customer_name=inv_item.get("customer_name", "Cliente"),
-                            gross_amount_cents=inv_item.get("gross_amount_cents", 0),
-                            customer_fiscal_id=inv_item.get("customer_fiscal_id"),
-                        )
+                    inv_obj = CanonicalInvoice(
+                        invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                        invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                        issue_date=date(int(y), int(m), int(d)),
+                        due_date=date(int(y), int(m), int(d)),
+                        customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                        customer_name=inv_item.get("customer_name", "Cliente"),
+                        gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                        customer_fiscal_id=inv_item.get("customer_fiscal_id"),
                     )
+                    file_invoices.append(inv_obj)
+                    open_invoices.append(inv_obj)
+
                 # Si el usuario subió la cartera de facturas como fichero principal,
                 # generar los apuntes contables correspondientes para procesarlos en el Radar
-                for inv in open_invoices:
+                for inv in file_invoices:
                     bank_txs.append(
                         CanonicalBankTransaction(
                             transaction_id=f"COBRO-{inv.invoice_number}",
@@ -15845,62 +15824,89 @@ def parse_flexible_date(raw_val: Any) -> str:
 
 class InvoicePortfolioParser:
     @staticmethod
+    def _extract_single_pdf_invoice(text: str, filename: str, idx: int = 1) -> Optional[Dict[str, Any]]:
+        if not text or not text.strip():
+            return None
+        # 1. Número de Factura
+        num_m = re.search(r'(?:N[º°]?\s*Factura|Factura\s*N[º°]?|Invoice\s*N[º°]?)\s*[:]?\s*([A-Za-z0-9\-_/]+)', text, re.IGNORECASE)
+        if not num_m:
+            num_m = re.search(r'\b(FRA-\d{4}-\d+|FAC-\d{4}-\d+|INV-\d{4}-\d+)\b', text, re.IGNORECASE)
+        from pathlib import Path
+        inv_number = num_m.group(1).strip() if num_m else Path(filename).stem
+
+        # 2. Fecha de Emisión
+        date_m = re.search(r'(?:Fecha\s*Emisi[óo]n|Fecha\s*Factura|Fecha|Date)\s*[:]?\s*(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})', text, re.IGNORECASE)
+        issue_date = parse_flexible_date(date_m.group(1)) if date_m else date.today().isoformat()
+
+        # 3. CIF / NIF del Cliente (priorizando bloque de datos del cliente)
+        cif_m = re.search(r'DATOS\s*(?:FISCALES\s*)?DEL\s*CLIENTE[\s\S]*?(?:NIF\s*[/]?\s*CIF|CIF|NIF|DNI|NIE)\s*:\s*([A-Za-z0-9\-]{9,12})', text, re.IGNORECASE)
+        if not cif_m:
+            cif_m = re.search(r'(?:NIF\s*[/]?\s*CIF|CIF|NIF|DNI|NIE|VAT|Tax\s*ID)\s*:\s*([A-Za-z0-9\-]{9,12})', text, re.IGNORECASE)
+        customer_fiscal_id = cif_m.group(1).strip().upper() if cif_m else ""
+
+        # 4. Razón Social / Nombre del Cliente
+        client_m = re.search(r'Raz[óo]n\s*Social\s*:\s*([^\r\n]+)', text, re.IGNORECASE)
+        if not client_m:
+            client_m = re.search(r'(?:Cliente|Customer)\s*:\s*([^\r\n]+)', text, re.IGNORECASE)
+        if client_m:
+            customer_name = client_m.group(1).strip()
+            customer_name = re.sub(r'^(?:Raz[óo]n\s*Social|Cliente|Customer)\s*[:]?\s*', '', customer_name, flags=re.IGNORECASE).strip()
+        else:
+            customer_name = "Cliente Factura PDF"
+
+        # 5. Importe Total
+        total_m = re.search(r'(?:TOTAL\s*FACTURA|Total\s*a\s*Pagar|Total|Importe\s*Total|Gross\s*Amount)\s*[:]?\s*([\d\.,]+)', text, re.IGNORECASE)
+        gross_cents = parse_spanish_amount_to_cents(total_m.group(1)) if total_m else 0
+
+        if gross_cents <= 0:
+            euro_m = re.findall(r'([\d\.,]+)\s*€', text)
+            if euro_m:
+                cents_candidates = [parse_spanish_amount_to_cents(e) for e in euro_m]
+                gross_cents = max(cents_candidates) if cents_candidates else 0
+
+        # 6. Subcuenta PGC
+        subc_m = re.search(r'(?:Subcuenta\s*PGC|Subcuenta|Cuenta)\s*[:]?\s*(\d{9,12})', text, re.IGNORECASE)
+        account_code = subc_m.group(1).strip() if subc_m else f"430{idx:06d}"
+
+        if gross_cents > 0:
+            return {
+                "invoice_id": f"INV-PDF-{idx:04d}",
+                "invoice_number": inv_number,
+                "customer_name": customer_name,
+                "customer_fiscal_id": customer_fiscal_id,
+                "gross_amount_cents": gross_cents,
+                "gross_amount_eur": round(gross_cents / 100.0, 2),
+                "issue_date": issue_date,
+                "account_code": account_code,
+            }
+        return None
+
+    @staticmethod
     def parse_pdf_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
         """Extrae facturas a partir de documentos PDF utilizando pypdf y expresiones regulares contables."""
         try:
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(file_bytes))
-            full_text = "\n".join([page.extract_text() or "" for page in reader.pages])
-            if not full_text.strip():
-                return []
+            invoices: List[Dict[str, Any]] = []
 
-            # 1. Número de Factura
-            num_m = re.search(r'(?:N[º°]?\s*Factura|Factura\s*N[º°]?|Invoice\s*N[º°]?)\s*[:]?\s*([A-Za-z0-9\-_/]+)', full_text, re.IGNORECASE)
-            if not num_m:
-                num_m = re.search(r'\b(FRA-\d{4}-\d+|FAC-\d{4}-\d+|INV-\d{4}-\d+)\b', full_text, re.IGNORECASE)
-            inv_number = num_m.group(1).strip() if num_m else Path(filename).stem
+            # 1. Si el PDF tiene múltiples páginas, verificar si cada página contiene una factura distinta
+            if len(reader.pages) > 1:
+                for idx, page in enumerate(reader.pages, start=1):
+                    txt = page.extract_text() or ""
+                    inv = InvoicePortfolioParser._extract_single_pdf_invoice(txt, filename, idx)
+                    if inv:
+                        invoices.append(inv)
 
-            # 2. Fecha de Emisión
-            date_m = re.search(r'(?:Fecha\s*Emisi[óo]n|Fecha\s*Factura|Fecha|Date)\s*[:]?\s*(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})', full_text, re.IGNORECASE)
-            issue_date = parse_flexible_date(date_m.group(1)) if date_m else date.today().isoformat()
+            # 2. Si no se extrajeron facturas por páginas (o es PDF de una página), procesar el documento completo
+            if not invoices:
+                full_text = "\n".join([page.extract_text() or "" for page in reader.pages])
+                inv = InvoicePortfolioParser._extract_single_pdf_invoice(full_text, filename, 1)
+                if inv:
+                    invoices.append(inv)
 
-            # 3. CIF / NIF
-            cif_m = re.search(r'(?:CIF|NIF|DNI|NIE|VAT|Tax\s*ID)\s*[:]?\s*([A-Za-z0-9\-]{9,12})', full_text, re.IGNORECASE)
-            customer_fiscal_id = cif_m.group(1).strip().upper() if cif_m else ""
-
-            # 4. Razón Social / Cliente
-            client_m = re.search(r'(?:Raz[óo]n\s*Social|Cliente|Customer)\s*[:]?\s*([^\n\r]+)', full_text, re.IGNORECASE)
-            customer_name = client_m.group(1).strip() if client_m else "Cliente Factura PDF"
-
-            # 5. Importe Total
-            total_m = re.search(r'(?:TOTAL\s*FACTURA|Total\s*a\s*Pagar|Total|Importe\s*Total|Gross\s*Amount)\s*[:]?\s*([\d\.,]+)', full_text, re.IGNORECASE)
-            gross_cents = parse_spanish_amount_to_cents(total_m.group(1)) if total_m else 0
-
-            # 6. Subcuenta PGC
-            subc_m = re.search(r'(?:Subcuenta\s*PGC|Subcuenta|Cuenta)\s*[:]?\s*(\d{9,12})', full_text, re.IGNORECASE)
-            account_code = subc_m.group(1).strip() if subc_m else "430000001"
-
-            if gross_cents <= 0:
-                # Intentar buscar cualquier importe precedido o seguido de €
-                euro_m = re.findall(r'([\d\.,]+)\s*€', full_text)
-                if euro_m:
-                    cents_candidates = [parse_spanish_amount_to_cents(e) for e in euro_m]
-                    gross_cents = max(cents_candidates) if cents_candidates else 0
-
-            if gross_cents > 0:
-                return [{
-                    "invoice_id": "INV-PDF-0001",
-                    "invoice_number": inv_number,
-                    "customer_name": customer_name,
-                    "customer_fiscal_id": customer_fiscal_id,
-                    "gross_amount_cents": gross_cents,
-                    "gross_amount_eur": round(gross_cents / 100.0, 2),
-                    "issue_date": issue_date,
-                    "account_code": account_code,
-                }]
+            return invoices
         except Exception:
-            pass
-        return []
+            return []
 
     @staticmethod
     def parse_file_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:

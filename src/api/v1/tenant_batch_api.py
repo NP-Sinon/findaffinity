@@ -440,29 +440,6 @@ async def upload_and_process_batch(
                         )
                     )
 
-        if not open_invoices:
-            base_dir = Path(__file__).resolve().parent.parent.parent.parent
-            inv_path = base_dir / "data" / "pilot" / "cartera_viva_facturas.json"
-            if inv_path.exists():
-                try:
-                    with open(inv_path, "r", encoding="utf-8") as f:
-                        inv_data = json.load(f)
-                    for item in inv_data:
-                        y, m, d = item["issue_date"].split("-")
-                        open_invoices.append(
-                            CanonicalInvoice(
-                                invoice_id=item["invoice_id"],
-                                invoice_number=item["invoice_number"],
-                                issue_date=date(int(y), int(m), int(d)),
-                                due_date=date(int(y), int(m), int(d)),
-                                customer_id=item["customer_id"],
-                                customer_name=item["customer_name"],
-                                gross_amount_cents=item["gross_amount_cents"],
-                                customer_fiscal_id=item["customer_fiscal_id"],
-                            )
-                        )
-                except Exception:
-                    pass
 
         fn_lower = file_name.lower()
         bank_txs = []
@@ -533,23 +510,25 @@ async def upload_and_process_batch(
             parsed_invoices_from_file = InvoicePortfolioParser.parse_file_bytes(file_bytes, file_name)
             if parsed_invoices_from_file:
                 # Incorporar a cartera de facturas pendientes
-                for idx, inv_item in enumerate(parsed_invoices_from_file, start=len(open_invoices) + 1):
+                file_invoices = []
+                for idx, inv_item in enumerate(parsed_invoices_from_file, start=1):
                     y, m, d = inv_item["issue_date"].split("-")
-                    open_invoices.append(
-                        CanonicalInvoice(
-                            invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
-                            invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
-                            issue_date=date(int(y), int(m), int(d)),
-                            due_date=date(int(y), int(m), int(d)),
-                            customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
-                            customer_name=inv_item.get("customer_name", "Cliente"),
-                            gross_amount_cents=inv_item.get("gross_amount_cents", 0),
-                            customer_fiscal_id=inv_item.get("customer_fiscal_id"),
-                        )
+                    inv_obj = CanonicalInvoice(
+                        invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                        invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                        issue_date=date(int(y), int(m), int(d)),
+                        due_date=date(int(y), int(m), int(d)),
+                        customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                        customer_name=inv_item.get("customer_name", "Cliente"),
+                        gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                        customer_fiscal_id=inv_item.get("customer_fiscal_id"),
                     )
+                    file_invoices.append(inv_obj)
+                    open_invoices.append(inv_obj)
+
                 # Si el usuario subió la cartera de facturas como fichero principal,
                 # generar los apuntes contables correspondientes para procesarlos en el Radar
-                for inv in open_invoices:
+                for inv in file_invoices:
                     bank_txs.append(
                         CanonicalBankTransaction(
                             transaction_id=f"COBRO-{inv.invoice_number}",

@@ -128,7 +128,7 @@ export function IngestionZone({
             ref={portfolioInputRef}
             type="file"
             onChange={handlePortfolioFileChange}
-            accept=".xlsx,.csv,.json"
+            accept=".xlsx,.csv,.json,.pdf"
             className="hidden"
           />
           {invoicesFile ? (
@@ -187,7 +187,7 @@ export function IngestionZone({
             ref={bankInputRef}
             type="file"
             onChange={handleBankFileChange}
-            accept=".n43,.txt,.csv,.xlsx"
+            accept=".n43,.txt,.csv,.xlsx,.pdf,.json"
             className="hidden"
           />
 
