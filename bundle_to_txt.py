@@ -16,7 +16,7 @@ for dirpath, dirnames, filenames in os.walk(root_dir):
         if f in ("proyecto_comprimido.txt", "proyecto_completo.txt", "package-lock.json"):
             continue
         ext = os.path.splitext(f)[1].lower()
-        valid_exts = (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".ts", ".tsx", ".html", ".css", ".svg", ".n43", ".yaml", ".yml", ".sh", ".bat", ".ps1")
+        valid_exts = (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".ts", ".tsx", ".html", ".css", ".svg", ".n43", ".yaml", ".yml", ".sh", ".bat", ".ps1", ".pdf")
         valid_names = ("Dockerfile", ".dockerignore", ".env.example", ".gitignore")
         if ext in valid_exts or f in valid_names:
             rel_path = os.path.relpath(os.path.join(dirpath, f), root_dir)
@@ -64,14 +64,30 @@ with open(txt_plain_path, "w", encoding="utf-8") as f:
     f.write("=" * 80 + "\n\n")
     for rel_path in sorted(files_to_pack):
         full_path = os.path.join(root_dir, rel_path)
+        ext = os.path.splitext(rel_path)[1].lower()
         f.write("\n" + "=" * 80 + "\n")
         f.write(f"FICHERO: {rel_path}\n")
         f.write("=" * 80 + "\n\n")
-        try:
-            with open(full_path, "r", encoding="utf-8") as src:
+
+        # Archivos binarios (Excel, PDF): descripción clara para no corromper texto plano
+        if ext in (".xlsx", ".pdf", ".zip", ".png", ".jpg", ".ico"):
+            f.write(f"# [Archivo binario ({ext.upper()}) de {os.path.getsize(full_path)} bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']\n")
+            continue
+
+        content = None
+        for enc in ("utf-8", "utf-8-sig", "iso-8859-15", "windows-1252", "latin-1"):
+            try:
+                with open(full_path, "r", encoding=enc) as src:
+                    content = src.read()
+                break
+            except UnicodeDecodeError:
+                continue
+
+        if content is not None:
+            f.write(content + "\n")
+        else:
+            with open(full_path, "r", encoding="utf-8", errors="replace") as src:
                 f.write(src.read() + "\n")
-        except Exception as e:
-            f.write(f"# [Error leyendo {rel_path}: {e}]\n")
 
 print(f"Total archivos procesados: {len(files_to_pack)}")
 print(f"Tamaño archivo ZIP original: {len(zip_bytes)} bytes")

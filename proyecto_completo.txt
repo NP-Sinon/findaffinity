@@ -67,6 +67,12 @@ CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
 
 
 ================================================================================
+FICHERO: GUIA_MECANICAS_Y_DESPLIEGUE_FINDAFINITY.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 26014 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
 FICHERO: MANUAL_OPERATIVO_DESPACHO.md
 ================================================================================
 
@@ -274,6 +280,12 @@ python -m pytest tests/ -v
 
 
 ================================================================================
+FICHERO: Viabilidad SaaS Conciliación Contable.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 342069 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
 FICHERO: bundle_to_txt.py
 ================================================================================
 
@@ -295,7 +307,7 @@ for dirpath, dirnames, filenames in os.walk(root_dir):
         if f in ("proyecto_comprimido.txt", "proyecto_completo.txt", "package-lock.json"):
             continue
         ext = os.path.splitext(f)[1].lower()
-        valid_exts = (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".ts", ".tsx", ".html", ".css", ".svg", ".n43", ".yaml", ".yml", ".sh", ".bat", ".ps1")
+        valid_exts = (".py", ".md", ".txt", ".json", ".csv", ".xlsx", ".jsx", ".js", ".ts", ".tsx", ".html", ".css", ".svg", ".n43", ".yaml", ".yml", ".sh", ".bat", ".ps1", ".pdf")
         valid_names = ("Dockerfile", ".dockerignore", ".env.example", ".gitignore")
         if ext in valid_exts or f in valid_names:
             rel_path = os.path.relpath(os.path.join(dirpath, f), root_dir)
@@ -343,14 +355,30 @@ with open(txt_plain_path, "w", encoding="utf-8") as f:
     f.write("=" * 80 + "\n\n")
     for rel_path in sorted(files_to_pack):
         full_path = os.path.join(root_dir, rel_path)
+        ext = os.path.splitext(rel_path)[1].lower()
         f.write("\n" + "=" * 80 + "\n")
         f.write(f"FICHERO: {rel_path}\n")
         f.write("=" * 80 + "\n\n")
-        try:
-            with open(full_path, "r", encoding="utf-8") as src:
+
+        # Archivos binarios (Excel, PDF): descripción clara para no corromper texto plano
+        if ext in (".xlsx", ".pdf", ".zip", ".png", ".jpg", ".ico"):
+            f.write(f"# [Archivo binario ({ext.upper()}) de {os.path.getsize(full_path)} bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']\n")
+            continue
+
+        content = None
+        for enc in ("utf-8", "utf-8-sig", "iso-8859-15", "windows-1252", "latin-1"):
+            try:
+                with open(full_path, "r", encoding=enc) as src:
+                    content = src.read()
+                break
+            except UnicodeDecodeError:
+                continue
+
+        if content is not None:
+            f.write(content + "\n")
+        else:
+            with open(full_path, "r", encoding="utf-8", errors="replace") as src:
                 f.write(src.read() + "\n")
-        except Exception as e:
-            f.write(f"# [Error leyendo {rel_path}: {e}]\n")
 
 print(f"Total archivos procesados: {len(files_to_pack)}")
 print(f"Tamaño archivo ZIP original: {len(zip_bytes)} bytes")
@@ -508,7 +536,13 @@ FICHERO: data\pilot\cliente3_norma43.n43
 FICHERO: data\sample\extracto_bancario_norma43.n43
 ================================================================================
 
-# [Error leyendo data\sample\extracto_bancario_norma43.n43: 'utf-8' codec can't decode byte 0xd3 in position 172: invalid continuation byte]
+110049123412345678902610012610152000000010000009783CLIENTE PRUEBA SL           
+220049123426101026101004000200000000145025          STRIPE PAYOUT             
+2301LIQUIDACIÓN STRIPE ESPAÑA S.L. - COMPAÑÍA                                   
+220049123426101226101217000100000000001500          COMISION BANCO            
+2301COMISIÓN MANTENIMIENTO TRIMESTRAL                                           
+3300491234123456789000001000000000015000000100000000145025200000001143525978    
+889999999999999999000006                                                        
 
 ================================================================================
 FICHERO: data\sample\redsys_operaciones_octubre.csv
@@ -7416,7 +7450,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Error leyendo output_pilot\CONTASOL_CLIENTE3.xlsx: 'utf-8' codec can't decode byte 0xc7 in position 15: invalid continuation byte]
+# [Archivo binario (.XLSX) de 5336 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -7471,7 +7505,19 @@ FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
 FICHERO: output_pilot\SUENLACE_A3_CLIENTE1.txt
 ================================================================================
 
-# [Error leyendo output_pilot\SUENLACE_A3_CLIENTE1.txt: 'utf-8' codec can't decode byte 0xed in position 216: invalid continuation byte]
+000001;07102026;572000001;D;3823.82;Liq. Stripe 07/10;LIQ-202610;430000001
+
+000001;07102026;626000001;D;111.18;Comisiones Stripe;FEE-202610;572000001
+
+000001;07102026;430000001;H;1250.00;Cobro Fra. FRA-2026-901 Logíst;FRA-2026-9;572000001
+
+000001;07102026;430000001;H;890.00;Cobro Fra. FRA-2026-902 Sumini;FRA-2026-9;572000001
+
+000001;07102026;430000001;H;1100.00;Cobro Fra. FRA-2026-903 Almace;FRA-2026-9;572000001
+
+000001;07102026;430000001;H;695.00;Cobro Fra. FRA-2026-904 Paquet;FRA-2026-9;572000001
+
+
 
 ================================================================================
 FICHERO: output_pilot\XDIARIO_SAGE_CLIENTE2.csv
@@ -7825,7 +7871,7 @@ FICHERO: prueba Data\cartera_facturas_emitidas_20.json
 FICHERO: prueba Data\cartera_facturas_emitidas_20.xlsx
 ================================================================================
 
-# [Error leyendo prueba Data\cartera_facturas_emitidas_20.xlsx: 'utf-8' codec can't decode byte 0xaa in position 10: invalid start byte]
+# [Archivo binario (.XLSX) de 8415 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
 
 ================================================================================
 FICHERO: prueba Data\extracto_bancario_norma43.n43
@@ -7858,6 +7904,126 @@ py_1PqA12,Envases vidrio laboratorio,2026-10-10 16:40,1635.50,23.22,1612.28,Farm
 py_1PqA16,Rollos tejido transpirable,2026-10-12 14:10,1120.75,15.91,1104.84,Textil y Confección Galicia S.L.,pedidos@textilgalicia.com,FRA-2026-016
 py_1PqA19,Bolsas envasado al vacío,2026-10-13 18:05,1340.00,19.02,1320.98,Embutidos & Jamones de Burgos S.L.,jamones@embutidosburgos.es,FRA-2026-019
 
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-001_Logistica_Expres_Iberica.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3497 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-002_Telefonica_Soluciones_Dig.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3476 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-003_Almacenes_Centrales_Madri.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3490 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-004_Distribuciones_Alimentari.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3485 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-005_Consultoria_Tecnologica_N.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3466 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-006_Construcciones_Reformas.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3512 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-007_Papeleria_e_Imprenta_Graf.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3489 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-008_CONSTRUCCIONES_HNOS_MART.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3487 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-009_AMAZON_SERVICES_EUROPE_S.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3497 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-010_Asesoria_Fiscal_Laboral.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3477 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-011_Maquinaria_Industrial_Ara.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3519 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-012_Farmaceutica_Cosmetica.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3492 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-013_Hoteleria_Alojamientos.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3492 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-014_Citricos_Frutas_del_Tur.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3482 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-015_Frigorificos_Pesca_del.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3500 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-016_Textil_y_Confeccion_Galic.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3494 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-017_Metalurgica_del_Besaya_S.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3509 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-018_Bodegas_y_Vinedos_de_La_R.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3479 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-019_Embutidos_Jamones_de_Bu.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3486 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+
+================================================================================
+FICHERO: prueba Data\facturas_pdf\FRA-2026-020_Software_Soluciones_Clo.pdf
+================================================================================
+
+# [Archivo binario (.PDF) de 3524 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
 
 ================================================================================
 FICHERO: render.yaml
@@ -14662,8 +14828,8 @@ def health_check():
     return {
         "status": "healthy",
         "service": "ReconcileSaaS-Engine",
-        "version": "1.0.1",
-        "build": "2026.10.15-v2",
+        "version": "1.0.2",
+        "build": "2026.10.16-v1",
         "staging_mode": "read_only_zero_liability",
     }
 
