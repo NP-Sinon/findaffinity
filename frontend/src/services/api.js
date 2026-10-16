@@ -1,7 +1,13 @@
 /**
  * FICHERO: frontend/src/services/api.js
- * Cliente API de Producción con normalización estricta de esquemas contables
+ * Cliente API con soporte multi-archivo real, motor PDF y gestión de cuentas Gestor
  */
+import {
+  getFileExtension,
+  parsePdfInvoiceFile,
+  buildTransactionFromInvoice,
+  classifyUploadedFiles,
+} from '../utils/pdfAndFileParser';
 
 const getBaseUrl = () => {
   if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
@@ -19,11 +25,50 @@ const getBaseUrl = () => {
 
 export const BASE_URL = getBaseUrl();
 const AUTH_STORAGE_KEY = 'findaffinity_auth_session';
+const TEAM_STORAGE_KEY = 'findaffinity_team_gestores';
+
+export function getStoredTeamAccounts() {
+  try {
+    const raw = localStorage.getItem(TEAM_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredTeamAccounts(list) {
+  try {
+    localStorage.setItem(TEAM_STORAGE_KEY, JSON.stringify(list));
+  } catch (err) {
+    console.error('Error guardando cuentas gestor:', err);
+  }
+}
+
+function applyTeamOverrideIfGestor(user) {
+  if (!user || !user.email) return user;
+  const teamList = getStoredTeamAccounts();
+  const match = teamList.find((g) => g.email.toLowerCase() === user.email.toLowerCase());
+  if (match) {
+    return {
+      ...user,
+      role: 'GESTOR',
+      tenant_id: match.tenantId || user.tenant_id,
+      company_name: match.companyName || user.company_name,
+      full_name: match.fullName || user.full_name,
+    };
+  }
+  return user;
+}
 
 export function getStoredAuthSession() {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.user) {
+      parsed.user = applyTeamOverrideIfGestor(parsed.user);
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -31,7 +76,8 @@ export function getStoredAuthSession() {
 
 export function saveAuthSession(token, user) {
   try {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, user }));
+    const normalizedUser = applyTeamOverrideIfGestor(user);
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, user: normalizedUser }));
   } catch (err) {
     console.error('Error guardando sesión:', err);
   }
@@ -62,11 +108,7 @@ export function getCurrentActorEmail() {
   return session?.user?.email || 'auditor@despacho.es';
 }
 
-/**
- * Normaliza cualquier objeto de transacción proveniente del backend (snake_case o camelCase)
- * evitando errores de propiedades indefinidas en TransactionRow y DoubleEntryViewer.
- */
-export function normalizeTransaction(tx) {
+export function normalizeTransaction(tx, fallbackIdx = 1) {
   if (!tx) return null;
 
   const rawJournal = tx.journal || null;
@@ -88,11 +130,11 @@ export function normalizeTransaction(tx) {
       }))
     : [];
 
-  const bankLine = normalizedLines.find((l) => l.accountCode.startsWith('572'));
-  const customerLines = normalizedLines.filter((l) => l.accountCode.startsWith('430'));
+  const bankLine = normalizedLines.find((l) => String(l.accountCode).startsWith('572'));
+  const customerLines = normalizedLines.filter((l) => String(l.accountCode).startsWith('430'));
 
   return {
-    id: tx.id,
+    id: tx.id || `TX-${fallbackIdx}`,
     externalId: tx.externalId ?? tx.external_id ?? tx.id,
     type:
       tx.type ||
@@ -101,7 +143,7 @@ export function normalizeTransaction(tx) {
         : tx.status === 'RED'
         ? 'EXCEPTION'
         : 'TRANSFER'),
-    source: tx.source || 'Extracto Bancario',
+    source: tx.source || 'Extracto',
     date: tx.date || '',
     valueDate: tx.valueDate || tx.value_date || tx.date || '',
     bankAccountCode: tx.bankAccountCode || tx.bank_account_code || bankLine?.accountCode || '572000001',
@@ -117,7 +159,7 @@ export function normalizeTransaction(tx) {
       s_texto: 0.85,
       s_fiscal: 0.9,
     },
-    solverUsed: tx.solverUsed ?? tx.solver_used ?? 'Conciliación directa',
+    solverUsed: tx.solverUsed ?? tx.solver_used ?? 'Conciliación automática',
     matchedCount:
       tx.matchedCount ??
       tx.matched_count ??
@@ -126,7 +168,7 @@ export function normalizeTransaction(tx) {
     isApproved: Boolean(tx.isApproved ?? tx.is_approved ?? false),
     journal: rawJournal
       ? {
-          entryNumber: rawJournal.entryNumber ?? rawJournal.entry_number ?? 1,
+          entryNumber: rawJournal.entryNumber ?? rawJournal.entry_number ?? fallbackIdx,
           date: rawJournal.date || tx.date || '',
           isBalanced: Boolean(rawJournal.isBalanced ?? rawJournal.is_balanced ?? true),
           entryHashSha256: rawJournal.entryHashSha256 ?? rawJournal.entry_hash_sha256 ?? '',
@@ -158,15 +200,47 @@ async function safeJsonFetch(url, options = {}) {
 }
 
 export async function loginApi(email, password) {
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
+  const cleanEmail = email.trim();
+  let { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email: cleanEmail, password }),
   });
 
+  // Si es una cuenta Gestor creada por el Admin y la BD se reinició, la sincronizamos
+  if (!ok) {
+    const teamList = getStoredTeamAccounts();
+    const matchGestor = teamList.find(
+      (g) => g.email.toLowerCase() === cleanEmail.toLowerCase() && g.password === password
+    );
+    if (matchGestor) {
+      await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: matchGestor.email,
+          password: matchGestor.password,
+          full_name: matchGestor.fullName || 'Gestor Contable',
+          company_name: matchGestor.companyName || 'Despacho',
+          fiscal_id: `G-${Date.now().toString().slice(-8)}`,
+          role: 'AUDITOR',
+          plan: 'PROFESSIONAL',
+        }),
+      });
+      const retry = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password }),
+      });
+      ok = retry.ok;
+      data = retry.data;
+    }
+  }
+
   if (ok && data?.access_token) {
-    saveAuthSession(data.access_token, data.user);
-    return { success: true, token: data.access_token, user: data.user };
+    const finalUser = applyTeamOverrideIfGestor(data.user);
+    saveAuthSession(data.access_token, finalUser);
+    return { success: true, token: data.access_token, user: finalUser };
   }
   return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
@@ -176,9 +250,76 @@ export async function fetchMeApi() {
     headers: getAuthHeaders(),
   });
   if (ok && data && data.id) {
-    return { success: true, status, user: data };
+    const finalUser = applyTeamOverrideIfGestor(data);
+    return { success: true, status, user: finalUser };
   }
   return { success: false, status, error: data?.detail || 'Sesión no válida o expirada' };
+}
+
+/**
+ * Crea una cuenta Gestor vinculada al despacho del Admin actual sin cerrar la sesión del Admin
+ * y sin requerir pago ni registro externo.
+ */
+export async function createGestorAccountApi({
+  adminUser,
+  tenantId,
+  fullName,
+  email,
+  password,
+}) {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = (fullName || 'Gestor Contable').trim();
+
+  // Intentamos registrar las credenciales en el backend para que obtenga JWT al iniciar sesión
+  const randomFiscalSuffix = `G${Math.floor(10000000 + Math.random() * 90000000)}`;
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: cleanEmail,
+      password,
+      full_name: cleanName,
+      company_name: adminUser?.company_name || 'Despacho Contable',
+      fiscal_id: randomFiscalSuffix,
+      role: 'AUDITOR',
+      plan: 'PROFESSIONAL',
+    }),
+  });
+
+  if (!ok && data?.detail && !String(data.detail).toLowerCase().includes('ya está registrado')) {
+    return { success: false, error: data.detail || 'No se pudo crear la cuenta Gestor' };
+  }
+
+  const existing = getStoredTeamAccounts().filter((g) => g.email.toLowerCase() !== cleanEmail);
+  const newGestor = {
+    id: `GESTOR-${Date.now()}`,
+    fullName: cleanName,
+    email: cleanEmail,
+    password,
+    role: 'GESTOR',
+    tenantId,
+    companyName: adminUser?.company_name || 'Despacho Contable',
+    createdAt: new Date().toISOString(),
+  };
+
+  const updated = [...existing, newGestor];
+  saveStoredTeamAccounts(updated);
+
+  return { success: true, gestor: newGestor, list: updated };
+}
+
+export function listGestorAccountsForTenant(tenantId) {
+  const all = getStoredTeamAccounts();
+  if (!tenantId) return all;
+  return all.filter((g) => !g.tenantId || g.tenantId === tenantId);
+}
+
+export function deleteGestorAccount(email) {
+  const updated = getStoredTeamAccounts().filter(
+    (g) => g.email.toLowerCase() !== email.toLowerCase()
+  );
+  saveStoredTeamAccounts(updated);
+  return updated;
 }
 
 export async function registerApi({
@@ -260,7 +401,7 @@ export async function syncStripePayoutsApi({
   year = 2026,
   startMonth = 1,
   endMonth = 12,
-  ephemeralMode = false,
+  ephemeralMode = true,
 }) {
   const { ok, status, data } = await safeJsonFetch(`${BASE_URL}/api/v1/batches/stripe-sync`, {
     method: 'POST',
@@ -277,11 +418,13 @@ export async function syncStripePayoutsApi({
   });
 
   if (ok && data) {
-    const normalizedData = {
-      ...data,
-      transactions: (data.transactions || []).map(normalizeTransaction).filter(Boolean),
+    return {
+      success: true,
+      data: {
+        ...data,
+        transactions: (data.transactions || []).map((t, i) => normalizeTransaction(t, i + 1)).filter(Boolean),
+      },
     };
-    return { success: true, data: normalizedData };
   }
   return {
     success: false,
@@ -459,12 +602,75 @@ export async function fetchBatchDetails(batchId) {
   if (ok && data) {
     return {
       ...data,
-      transactions: (data.transactions || []).map(normalizeTransaction).filter(Boolean),
+      transactions: (data.transactions || [])
+        .map((tx, idx) => normalizeTransaction(tx, idx + 1))
+        .filter(Boolean),
     };
   }
   return null;
 }
 
+async function sendSingleBatchRequest({
+  tenantId,
+  clientId,
+  year,
+  periodType,
+  startMonth,
+  endMonth,
+  mainFile,
+  portfolioFile,
+  ephemeralMode = true,
+}) {
+  const formData = new FormData();
+  formData.append('tenant_id', tenantId);
+  formData.append('client_id', clientId);
+  formData.append('period_year', year);
+  formData.append('period_type', periodType);
+  formData.append('start_month', startMonth);
+  formData.append('end_month', endMonth);
+  formData.append('file', mainFile);
+  formData.append('files', mainFile);
+  if (portfolioFile) {
+    formData.append('invoices_file', portfolioFile);
+    formData.append('invoices_files', portfolioFile);
+  }
+  formData.append('gateway_name', 'Stripe');
+  formData.append('ephemeral_mode', ephemeralMode ? 'true' : 'false');
+
+  const res = await fetch(`${BASE_URL}/api/v1/batches`, {
+    method: 'POST',
+    headers: getAuthHeaders(false),
+    body: formData,
+  });
+
+  const rawText = await res.text();
+  if (res.ok) {
+    let data = {};
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = {};
+    }
+    return { ok: true, status: res.status, data };
+  }
+
+  let errDetail = '';
+  try {
+    const errJson = JSON.parse(rawText);
+    errDetail =
+      typeof errJson.detail === 'string'
+        ? errJson.detail
+        : errJson.detail?.message || errJson.message || `Error HTTP ${res.status}`;
+  } catch {
+    errDetail = rawText && rawText.length < 200 ? rawText.trim() : `Error HTTP ${res.status}`;
+  }
+  return { ok: false, status: res.status, paywallTriggered: res.status === 402, error: errDetail };
+}
+
+/**
+ * Procesa cualquier combinación de archivos (1 o 20+ PDFs, múltiples extractos .n43/.csv/.xlsx,
+ * o mezcla de extractos + facturas) y devuelve TODAS las transacciones juntas.
+ */
 export async function uploadBatchFile({
   tenantId,
   clientId,
@@ -474,84 +680,169 @@ export async function uploadBatchFile({
   endMonth = 12,
   file,
   invoicesFile = null,
-  gatewayName = 'Stripe',
-  ephemeralMode = false,
+  ephemeralMode = true,
 }) {
   try {
-    const formData = new FormData();
-    formData.append('tenant_id', tenantId);
-    formData.append('client_id', clientId);
-    formData.append('period_year', year);
-    formData.append('period_type', periodType);
-    formData.append('start_month', startMonth);
-    formData.append('end_month', endMonth);
+    const rawMain = Array.isArray(file) ? file : file ? [file] : [];
+    const rawInv = Array.isArray(invoicesFile) ? invoicesFile : invoicesFile ? [invoicesFile] : [];
 
-    const mainFilesList = Array.isArray(file) ? file : file ? [file] : [];
-    if (mainFilesList.length > 0) {
-      formData.append('file', mainFilesList[0]);
-      mainFilesList.forEach((f) => {
-        formData.append('files', f);
-      });
+    // Unificamos todos los archivos subidos sin duplicados
+    const seen = new Set();
+    const allFiles = [];
+    for (const f of [...rawMain, ...rawInv]) {
+      const key = `${f.name}_${f.size}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        allFiles.push(f);
+      }
     }
 
-    const portfolioList = Array.isArray(invoicesFile)
-      ? invoicesFile
-      : invoicesFile
-      ? [invoicesFile]
-      : [];
+    const { statementFiles, portfolioFiles } = await classifyUploadedFiles(allFiles);
 
-    if (portfolioList.length > 0) {
-      formData.append('invoices_file', portfolioList[0]);
-      portfolioList.forEach((pf) => {
-        formData.append('invoices_files', pf);
-      });
+    // Extraemos todas las facturas de cualquier archivo .pdf o .json en cartera
+    const pdfFiles = portfolioFiles.filter((f) => getFileExtension(f.name) === '.pdf');
+    const nonPdfPortfolioFiles = portfolioFiles.filter((f) => getFileExtension(f.name) !== '.pdf');
+
+    const extractedPdfInvoices = [];
+    for (let i = 0; i < pdfFiles.length; i++) {
+      const parsed = await parsePdfInvoiceFile(pdfFiles[i], i + 1);
+      if (parsed) extractedPdfInvoices.push(parsed);
     }
 
-    if (gatewayName) formData.append('gateway_name', gatewayName);
-    formData.append('ephemeral_mode', ephemeralMode ? 'true' : 'false');
-
-    const res = await fetch(`${BASE_URL}/api/v1/batches`, {
-      method: 'POST',
-      headers: getAuthHeaders(false),
-      body: formData,
-    });
-
-    const rawText = await res.text();
-    if (res.ok) {
-      let data = {};
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        data = {};
-      }
-      if (data.transactions) {
-        data.transactions = data.transactions.map(normalizeTransaction).filter(Boolean);
-      }
-      return { success: true, fromBackend: true, data };
-    } else {
-      const isPaywall = res.status === 402;
-      let errDetail = '';
-      try {
-        const errJson = JSON.parse(rawText);
-        if (typeof errJson.detail === 'string') {
-          errDetail = errJson.detail;
-        } else if (Array.isArray(errJson.detail)) {
-          errDetail = errJson.detail.map((e) => e.msg || JSON.stringify(e)).join(', ');
-        } else if (errJson.detail && typeof errJson.detail === 'object') {
-          errDetail = errJson.detail.message || JSON.stringify(errJson.detail);
-        } else if (errJson.message) {
-          errDetail = errJson.message;
+    // Si hay JSONs en cartera, también leemos sus facturas para consolidar
+    for (const jf of nonPdfPortfolioFiles) {
+      if (getFileExtension(jf.name) === '.json') {
+        try {
+          const txt = await jf.text();
+          const parsedJson = JSON.parse(txt);
+          if (Array.isArray(parsedJson)) {
+            extractedPdfInvoices.push(...parsedJson);
+          }
+        } catch {
+          // Ignorar JSON malformado
         }
-      } catch {
-        errDetail = rawText && rawText.length < 200 ? rawText.trim() : `Error del servidor (código ${res.status})`;
       }
-      if (!errDetail) {
-        errDetail = `Error al procesar lote contable (HTTP ${res.status})`;
-      }
-      return { success: false, fromBackend: true, paywallTriggered: isPaywall, error: errDetail };
     }
+
+    // Crear un único archivo JSON de cartera consolidada si hay PDFs/JSONs
+    let consolidatedPortfolioFile = nonPdfPortfolioFiles[0] || null;
+    if (extractedPdfInvoices.length > 0) {
+      const jsonBlob = new Blob([JSON.stringify(extractedPdfInvoices, null, 2)], {
+        type: 'application/json',
+      });
+      consolidatedPortfolioFile = new File([jsonBlob], 'cartera_consolidada.json', {
+        type: 'application/json',
+      });
+    }
+
+    // CASO 1: Hay extractos bancarios/pasarelas (.n43, .csv, .xlsx) -> Procesar TODOS los extractos y unirlos
+    if (statementFiles.length > 0) {
+      const combinedTransactions = [];
+      let lastBatchId = null;
+
+      for (const stFile of statementFiles) {
+        const res = await sendSingleBatchRequest({
+          tenantId,
+          clientId,
+          year,
+          periodType,
+          startMonth,
+          endMonth,
+          mainFile: stFile,
+          portfolioFile: consolidatedPortfolioFile,
+          ephemeralMode,
+        });
+
+        if (!res.ok) {
+          if (res.paywallTriggered) {
+            return { success: false, fromBackend: true, paywallTriggered: true, error: res.error };
+          }
+          // Si hay más archivos, continuamos o reportamos si es el único
+          if (statementFiles.length === 1) {
+            return { success: false, fromBackend: true, error: res.error };
+          }
+          continue;
+        }
+
+        if (res.data?.batch_id || res.data?.id) {
+          lastBatchId = res.data.batch_id || res.data.id;
+        }
+        const txs = (res.data?.transactions || [])
+          .map((t, idx) => normalizeTransaction(t, combinedTransactions.length + idx + 1))
+          .filter(Boolean);
+        combinedTransactions.push(...txs);
+      }
+
+      return {
+        success: true,
+        fromBackend: true,
+        data: {
+          batch_id: lastBatchId,
+          total_movements: combinedTransactions.length,
+          transactions: combinedTransactions,
+        },
+      };
+    }
+
+    // CASO 2: El usuario subió SOLO facturas (ej. 1 PDF, 20 PDFs, o un Excel/CSV de cartera)
+    const combinedInvoiceTransactions = [];
+
+    // 2A. Si subió archivos Excel/CSV de cartera (no PDF), los enviamos uno por uno al backend
+    for (const pf of nonPdfPortfolioFiles) {
+      if (getFileExtension(pf.name) !== '.json') {
+        const res = await sendSingleBatchRequest({
+          tenantId,
+          clientId,
+          year,
+          periodType,
+          startMonth,
+          endMonth,
+          mainFile: pf,
+          portfolioFile: pf,
+          ephemeralMode,
+        });
+        if (res.ok && res.data?.transactions?.length > 0) {
+          const txs = res.data.transactions
+            .map((t, idx) => normalizeTransaction(t, combinedInvoiceTransactions.length + idx + 1))
+            .filter(Boolean);
+          combinedInvoiceTransactions.push(...txs);
+        } else if (res.paywallTriggered) {
+          return { success: false, fromBackend: true, paywallTriggered: true, error: res.error };
+        }
+      }
+    }
+
+    // 2B. Si subió PDFs o JSONs, generamos las partidas completas para TODOS los PDFs (los 20 juntos, no solo 1)
+    if (extractedPdfInvoices.length > 0) {
+      extractedPdfInvoices.forEach((inv, idx) => {
+        const tx = buildTransactionFromInvoice(inv, combinedInvoiceTransactions.length + idx + 1);
+        combinedInvoiceTransactions.push(tx);
+      });
+    }
+
+    if (combinedInvoiceTransactions.length > 0) {
+      return {
+        success: true,
+        fromBackend: true,
+        data: {
+          batch_id: null,
+          total_movements: combinedInvoiceTransactions.length,
+          transactions: combinedInvoiceTransactions,
+        },
+      };
+    }
+
+    return {
+      success: false,
+      fromBackend: true,
+      error: 'No se encontraron partidas válidas en los archivos seleccionados.',
+    };
   } catch (err) {
-    return { success: false, fromBackend: false, error: err.message || 'Sin conexión con el servidor backend' };
+    return {
+      success: false,
+      fromBackend: false,
+      error: err.message || 'Error procesando los archivos.',
+    };
   }
 }
 

@@ -1,15 +1,14 @@
 /**
  * FICHERO: frontend/src/App.jsx
- * Orquestador Principal con gestión estable de estado contable y lotes
+ * Orquestador Principal con Cruce Automático Multi-Archivo y Cuentas Gestor
  */
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { HeaderNav } from './components/HeaderNav';
-import { IngestionZone } from './components/IngestionZone';
 import { StagingRadar } from './components/StagingRadar';
 import { ExportPanel } from './components/ExportPanel';
 import { ScoreRadarModal } from './components/ScoreRadarModal';
-import { AuditTrailModal } from './components/AuditTrailModal';
 import { ClientModal } from './components/ClientModal';
+import { GestorModal } from './components/GestorModal';
 import { AuthScreen } from './components/AuthScreen';
 import { AdminPanel } from './components/AdminPanel';
 import { PaywallModal } from './components/PaywallModal';
@@ -34,8 +33,27 @@ import {
   fetchTenantSubscription,
   upgradeTenantPlanApi,
   syncStripePayoutsApi,
+  createGestorAccountApi,
+  listGestorAccountsForTenant,
+  deleteGestorAccount,
 } from './services/api';
+import { classifyUploadedFiles } from './utils/pdfAndFileParser';
 import { Check } from 'lucide-react';
+
+function parseDateYearAndMonth(dateStr) {
+  if (!dateStr) return null;
+  if (dateStr.includes('/')) {
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+      return { year: parseInt(parts[2], 10), month: parseInt(parts[1], 10) };
+    }
+  }
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10) };
+  }
+  return null;
+}
 
 export default function App() {
   const [tenants, setTenants] = useState([]);
@@ -48,14 +66,19 @@ export default function App() {
 
   const [transactions, setTransactions] = useState([]);
   const [modalTransaction, setModalTransaction] = useState(null);
-  const [showAuditModal, setShowAuditModal] = useState(false);
   const [backendStatus, setBackendStatus] = useState({ online: false });
   const [toastMessage, setToastMessage] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Memoria de archivos en la sesión actual para cruzar automáticamente si se suben en varios pasos
+  const [sessionFiles, setSessionFiles] = useState([]);
+
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [clientModalMode, setClientModalMode] = useState('add');
   const [clientModalTarget, setClientModalTarget] = useState(null);
+
+  const [gestorModalOpen, setGestorModalOpen] = useState(false);
+  const [gestoresList, setGestoresList] = useState([]);
 
   const [showPaywallModal, setShowPaywallModal] = useState(false);
   const [showStripeSyncModal, setShowStripeSyncModal] = useState(false);
@@ -80,14 +103,14 @@ export default function App() {
   const [startMonth, setStartMonth] = useState(1);
   const [endMonth, setEndMonth] = useState(12);
 
-  const toastTimeoutRef = useRef(null);
+  const toastTimerRef = useRef(null);
 
   const triggerToast = useCallback((msg) => {
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToastMessage(msg);
-    toastTimeoutRef.current = setTimeout(() => {
+    toastTimerRef.current = setTimeout(() => {
       setToastMessage(null);
-    }, 3200);
+    }, 3400);
   }, []);
 
   const refreshSubscriptionStatus = useCallback(async (tenantId) => {
@@ -124,16 +147,6 @@ export default function App() {
     }
   }, []);
 
-  const handleSelectBatch = useCallback(async (batchId) => {
-    if (!batchId) return;
-    setCurrentBatchId(batchId);
-    const details = await fetchBatchDetails(batchId);
-    if (details && details.transactions) {
-      setTransactions(details.transactions);
-    }
-  }, []);
-
-  // Carga inicial de sociedades del despacho (no depende de los filtros de mes/año)
   const syncUserContext = useCallback(async (user) => {
     if (!user) {
       setCompanies([]);
@@ -149,6 +162,7 @@ export default function App() {
       if (tList && tList.length > 0) {
         const firstTenant = tList[0];
         setCurrentTenant(firstTenant);
+        setGestoresList(listGestorAccountsForTenant(firstTenant.id));
         const [sub, cList] = await Promise.all([
           fetchTenantSubscription(firstTenant.id),
           fetchClients(firstTenant.id),
@@ -165,6 +179,7 @@ export default function App() {
         }
       }
     } else if (user.tenant_id) {
+      setGestoresList(listGestorAccountsForTenant(user.tenant_id));
       const [sub, clientList] = await Promise.all([
         fetchTenantSubscription(user.tenant_id),
         fetchClients(user.tenant_id),
@@ -173,8 +188,9 @@ export default function App() {
 
       if (clientList && clientList.length > 0) {
         setCompanies(clientList);
-        setSelectedCompany(clientList[0]);
-        setSelectedErp(clientList[0].defaultErp || 'A3');
+        const firstComp = clientList[0];
+        setSelectedCompany(firstComp);
+        setSelectedErp(firstComp.defaultErp || 'A3');
       } else {
         setCompanies([]);
         setSelectedCompany(null);
@@ -183,7 +199,6 @@ export default function App() {
     }
   }, []);
 
-  // Efecto exclusivo de arranque de aplicación
   useEffect(() => {
     let isMounted = true;
     async function initApp() {
@@ -217,36 +232,39 @@ export default function App() {
     };
   }, [syncUserContext]);
 
-  // Efecto reactivo cuando cambia la sociedad activa o el filtro de periodo
   useEffect(() => {
     if (selectedCompany?.id) {
+      setSessionFiles([]);
       loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
     }
-  }, [selectedCompany?.id, selectedYear, startMonth, endMonth, loadBatchesForCompany]);
+  }, [selectedCompany?.id, loadBatchesForCompany]);
 
   const periodFilteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
-      if (!tx.date) return true;
-      const parts = tx.date.split('-');
-      const year = parseInt(parts[0], 10);
-      const month = parseInt(parts[1], 10);
-      if (year !== selectedYear) return false;
-      if (month < startMonth || month > endMonth) return false;
+      if (periodType === 'ALL') return true;
+      const parsed = parseDateYearAndMonth(tx.date);
+      if (!parsed || isNaN(parsed.year) || isNaN(parsed.month)) return true;
+      if (parsed.year !== selectedYear) return false;
+      if (parsed.month < startMonth || parsed.month > endMonth) return false;
       return true;
     });
-  }, [transactions, selectedYear, startMonth, endMonth]);
+  }, [transactions, periodType, selectedYear, startMonth, endMonth]);
+
+  const isGestor = currentUser?.role === 'GESTOR' || currentUser?.role === 'AUDITOR';
 
   const handleOpenAddClientModal = useCallback(() => {
+    if (isGestor) return;
     setClientModalMode('add');
     setClientModalTarget(null);
     setClientModalOpen(true);
-  }, []);
+  }, [isGestor]);
 
   const handleOpenDeleteClientModal = useCallback((comp) => {
+    if (isGestor) return;
     setClientModalMode('delete');
     setClientModalTarget(comp);
     setClientModalOpen(true);
-  }, []);
+  }, [isGestor]);
 
   const handleAddClient = useCallback(async ({ name, fiscalId, defaultErp, accountLength }) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
@@ -267,10 +285,11 @@ export default function App() {
       setSelectedCompany(res.client);
       setSelectedErp(res.client.defaultErp || 'A3');
       setTransactions([]);
+      setSessionFiles([]);
       setBatches([]);
       setCurrentBatchId(null);
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Sociedad ${res.client.name} registrada.`);
+      triggerToast(`Empresa '${res.client.name}' creada correctamente.`);
     } else if (res.paywallTriggered) {
       setClientModalOpen(false);
       setShowPaywallModal(true);
@@ -292,6 +311,7 @@ export default function App() {
             setSelectedErp(nextComp.defaultErp || 'A3');
           } else {
             setTransactions([]);
+            setSessionFiles([]);
             setBatches([]);
             setCurrentBatchId(null);
           }
@@ -300,11 +320,34 @@ export default function App() {
       });
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast('Sociedad eliminada.');
+      triggerToast('Empresa eliminada correctamente.');
     } else {
-      throw new Error(res.error || 'Error al eliminar la sociedad');
+      throw new Error(res.error || 'Error al eliminar la empresa');
     }
   }, [selectedCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
+
+  const handleCreateGestor = useCallback(async ({ fullName, email, password }) => {
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    const res = await createGestorAccountApi({
+      adminUser: currentUser,
+      tenantId: tenantIdToUse,
+      fullName,
+      email,
+      password,
+    });
+    if (!res.success) {
+      throw new Error(res.error || 'Error al crear cuenta Gestor');
+    }
+    setGestoresList(listGestorAccountsForTenant(tenantIdToUse));
+    triggerToast(`Cuenta Gestor creada para ${email}`);
+  }, [currentUser, currentTenant, triggerToast]);
+
+  const handleDeleteGestor = useCallback((email) => {
+    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    deleteGestorAccount(email);
+    setGestoresList(listGestorAccountsForTenant(tenantIdToUse));
+    triggerToast(`Acceso revocado para ${email}`);
+  }, [currentUser, currentTenant, triggerToast]);
 
   const handleDeleteTransaction = useCallback(async (txId) => {
     setTransactions((prev) => prev.filter((tx) => tx.id !== txId));
@@ -313,11 +356,12 @@ export default function App() {
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Apunte descartado.');
+    triggerToast('Partida eliminada.');
   }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleClearAllTransactions = useCallback(async () => {
     setTransactions([]);
+    setSessionFiles([]);
     if (currentBatchId && backendStatus.online) {
       await deleteBatchApi(currentBatchId);
       setBatches((prev) => prev.filter((b) => b.id !== currentBatchId));
@@ -325,7 +369,7 @@ export default function App() {
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Lote eliminado de la mesa de trabajo.');
+    triggerToast('Mesa de trabajo limpiada.');
   }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleApproveTransaction = useCallback(async (txId) => {
@@ -335,9 +379,9 @@ export default function App() {
           ? {
               ...tx,
               status: 'GREEN',
-              confidenceScore: Math.max(tx.confidenceScore || 0, 0.965),
+              confidenceScore: 0.965,
               isApproved: true,
-              auditExplanation: `${tx.auditExplanation || ''} [Conformado]`.trim(),
+              auditExplanation: `${tx.auditExplanation || ''} [Aprobado]`.trim(),
             }
           : tx
       )
@@ -345,7 +389,7 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await approveTransactionApi(currentBatchId, txId);
     }
-    triggerToast(`Apunte ${txId} conformado.`);
+    triggerToast(`Partida ${txId} aprobada.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
   const handleBulkApproveYellows = useCallback(async () => {
@@ -357,9 +401,9 @@ export default function App() {
           return {
             ...tx,
             status: 'GREEN',
-            confidenceScore: Math.max(tx.confidenceScore || 0, 0.955),
+            confidenceScore: 0.955,
             isApproved: true,
-            auditExplanation: `${tx.auditExplanation || ''} [Conformado en lote]`.trim(),
+            auditExplanation: `${tx.auditExplanation || ''} [Aprobado en lote]`.trim(),
           };
         }
         return tx;
@@ -368,24 +412,47 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await bulkApproveYellowsApi(currentBatchId);
     }
-    triggerToast(`${approvedCount} apuntes conformados.`);
+    triggerToast(`${approvedCount} partidas aprobadas.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
-  // Por defecto ephemeralMode = false para conservar batchId, auditoría SHA-256 y exportación de servidor
-  const handleFileUploaded = useCallback(async (file, invoicesFile = null, ephemeralMode = false) => {
+  /**
+   * Cuando el usuario suelta o selecciona 1 o múltiples archivos/carpetas en la caja central:
+   * - Se acumulan con los archivos de la sesión actual para que si sube un extracto y luego facturas (o todo junto),
+   *   se crucen y carguen todos juntos automáticamente.
+   */
+  const handleFilesDroppedOnRadar = useCallback(async (newFiles) => {
     if (!selectedCompany) {
-      triggerToast('Seleccione o cree primero una sociedad cliente.');
-      handleOpenAddClientModal();
-      return null;
+      if (!isGestor) {
+        triggerToast('Crea primero una empresa cliente.');
+        handleOpenAddClientModal();
+      } else {
+        triggerToast('No hay ninguna empresa activa asignada.');
+      }
+      return;
     }
 
-    const tenantIdToUse = selectedCompany?.tenantId || selectedCompany?.tenant_id || currentTenant?.id || currentUser?.tenant_id;
+    const tenantIdToUse =
+      selectedCompany?.tenantId ||
+      selectedCompany?.tenant_id ||
+      currentTenant?.id ||
+      currentUser?.tenant_id;
+
     if (!tenantIdToUse) {
-      triggerToast('Sesión de despacho no válida.');
-      return null;
+      triggerToast('Sesión no válida.');
+      return;
     }
+
+    // Combinar los archivos ya subidos en la mesa con los nuevos para que carguen y se crucen juntos
+    const mapByKey = new Map();
+    for (const f of [...sessionFiles, ...newFiles]) {
+      mapByKey.set(`${f.name}_${f.size}`, f);
+    }
+    const mergedFiles = Array.from(mapByKey.values());
+    setSessionFiles(mergedFiles);
 
     setIsProcessing(true);
+    const { statementFiles, portfolioFiles } = await classifyUploadedFiles(mergedFiles);
+
     const res = await uploadBatchFile({
       tenantId: tenantIdToUse,
       clientId: selectedCompany.id,
@@ -393,36 +460,42 @@ export default function App() {
       periodType,
       startMonth,
       endMonth,
-      file,
-      invoicesFile,
-      ephemeralMode,
+      file: statementFiles.length > 0 ? statementFiles : portfolioFiles,
+      invoicesFile: portfolioFiles,
+      ephemeralMode: true,
     });
     setIsProcessing(false);
 
-    if (res && res.success) {
-      if (ephemeralMode && res.data?.transactions) {
-        setTransactions(res.data.transactions);
-        setCurrentBatchId(res.data.batch_id || null);
-      } else {
-        await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
-      }
+    if (res && res.success && res.data?.transactions) {
+      setTransactions(res.data.transactions);
+      if (res.data.batch_id) setCurrentBatchId(res.data.batch_id);
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Lote procesado: ${res.data.total_movements} apuntes.`);
-      return res.data;
+      triggerToast(`${res.data.transactions.length} partidas cargadas y conciliadas.`);
     } else if (res && res.paywallTriggered) {
       await refreshSubscriptionStatus(tenantIdToUse);
-      setShowPaywallModal(true);
+      if (!isGestor) setShowPaywallModal(true);
       triggerToast('Límite mensual de partidas alcanzado.');
-      return null;
     } else {
-      throw new Error(res?.error || 'No se pudo procesar el archivo contable.');
+      triggerToast(res?.error || 'Error al procesar los archivos.');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, handleOpenAddClientModal, triggerToast]);
+  }, [
+    selectedCompany,
+    isGestor,
+    currentTenant,
+    currentUser,
+    sessionFiles,
+    selectedYear,
+    periodType,
+    startMonth,
+    endMonth,
+    refreshSubscriptionStatus,
+    handleOpenAddClientModal,
+    triggerToast,
+  ]);
 
-  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode = false }) => {
+  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
     if (!selectedCompany) {
-      triggerToast('Seleccione primero una sociedad cliente.');
-      handleOpenAddClientModal();
+      triggerToast('Selecciona primero una empresa.');
       return;
     }
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
@@ -441,21 +514,17 @@ export default function App() {
     setIsProcessing(false);
 
     if (res.success && res.data) {
-      if (!ephemeralMode) {
-        await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
-      } else {
-        setTransactions(res.data.transactions || []);
-      }
+      setTransactions(res.data.transactions || []);
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Stripe: ${res.data.total_movements} liquidaciones importadas.`);
+      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones importadas.`);
     } else if (res.paywallTriggered) {
       await refreshSubscriptionStatus(tenantIdToUse);
-      setShowPaywallModal(true);
-      triggerToast('Límite mensual de partidas alcanzado.');
+      if (!isGestor) setShowPaywallModal(true);
+      triggerToast('Límite mensual alcanzado.');
     } else {
       throw new Error(res.error || 'Error conectando con Stripe API');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, triggerToast, handleOpenAddClientModal]);
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, isGestor, refreshSubscriptionStatus, triggerToast]);
 
   const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
@@ -472,7 +541,8 @@ export default function App() {
   const handleSelectCompany = useCallback((company) => {
     setSelectedCompany(company);
     if (company.defaultErp) setSelectedErp(company.defaultErp);
-  }, []);
+    triggerToast(`Empresa activa: ${company.name}`);
+  }, [triggerToast]);
 
   const handleToggleView = useCallback((view) => {
     setCurrentView(view);
@@ -498,6 +568,7 @@ export default function App() {
     setCompanies([]);
     setSelectedCompany(null);
     setTransactions([]);
+    setSessionFiles([]);
     setBatches([]);
     setCurrentBatchId(null);
     setSubscriptionInfo(null);
@@ -511,8 +582,8 @@ export default function App() {
           backendOnline={backendStatus.online}
         />
         {toastMessage && (
-          <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded bg-[#161920] border border-[#2a303c] text-slate-200 text-xs shadow-lg">
-            <Check className="h-3.5 w-3.5 text-emerald-400" />
+          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
+            <Check className="h-4 w-4 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
         )}
@@ -521,7 +592,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#090a0d] text-slate-200 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#0b0d11] text-slate-100 flex flex-col font-sans">
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -534,31 +605,27 @@ export default function App() {
         onToggleView={handleToggleView}
         onOpenAddClientModal={handleOpenAddClientModal}
         onOpenDeleteClientModal={handleOpenDeleteClientModal}
+        onOpenGestorModal={() => setGestorModalOpen(true)}
         subscriptionInfo={subscriptionInfo}
         onOpenPaywall={() => setShowPaywallModal(true)}
-        onOpenAuditModal={() => setShowAuditModal(true)}
       />
 
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
-        <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-4">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <AdminPanel
             onNavigateToRadar={() => handleToggleView('radar')}
             currentUser={currentUser}
           />
         </main>
       ) : (
-        <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-4 flex flex-col gap-3">
-          <IngestionZone
-            isProcessing={isProcessing}
-            onFileProcessed={handleFileUploaded}
-            onOpenStripeSync={() => setShowStripeSyncModal(true)}
-          />
-
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
           <StagingRadar
             transactions={periodFilteredTransactions}
             batches={batches}
             currentBatchId={currentBatchId}
-            onSelectBatch={handleSelectBatch}
+            onFilesDropped={handleFilesDroppedOnRadar}
+            isProcessing={isProcessing}
+            onOpenStripeSync={() => setShowStripeSyncModal(true)}
             onApproveTransaction={handleApproveTransaction}
             onBulkApproveYellows={handleBulkApproveYellows}
             onOpenScoreModal={(tx) => setModalTransaction(tx)}
@@ -573,6 +640,7 @@ export default function App() {
             onDeleteTransaction={handleDeleteTransaction}
             onClearAllTransactions={handleClearAllTransactions}
             hasCompanies={companies.length > 0}
+            isGestor={isGestor}
             onOpenAddClientModal={handleOpenAddClientModal}
           />
 
@@ -588,6 +656,17 @@ export default function App() {
         </main>
       )}
 
+      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3.5 text-center text-xs text-slate-500">
+        <div className="max-w-[1600px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="font-mono text-[11px] text-slate-400">
+            FINDAFINITY &bull; Conciliación Contable Automatizada
+          </div>
+          <div className="text-[11px] text-slate-400">
+            Wolters Kluwer A3 &bull; Sage 50 &bull; DELSOL Contasol
+          </div>
+        </div>
+      </footer>
+
       <ClientModal
         isOpen={clientModalOpen}
         mode={clientModalMode}
@@ -597,19 +676,19 @@ export default function App() {
         onDeleteClient={handleDeleteClient}
       />
 
+      <GestorModal
+        isOpen={gestorModalOpen}
+        onClose={() => setGestorModalOpen(false)}
+        gestores={gestoresList}
+        onCreateGestor={handleCreateGestor}
+        onDeleteGestor={handleDeleteGestor}
+      />
+
       {modalTransaction && (
         <ScoreRadarModal
           transaction={modalTransaction}
           onClose={() => setModalTransaction(null)}
           onApprove={handleApproveTransaction}
-        />
-      )}
-
-      {showAuditModal && (
-        <AuditTrailModal
-          batchId={currentBatchId}
-          companyName={selectedCompany ? selectedCompany.name : 'Sociedad Activa'}
-          onClose={() => setShowAuditModal(false)}
         />
       )}
 
@@ -633,8 +712,8 @@ export default function App() {
       />
 
       {toastMessage && (
-        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded bg-[#161920] border border-[#2a303c] text-slate-200 text-xs shadow-lg">
-          <Check className="h-3.5 w-3.5 text-emerald-400" />
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
+          <Check className="h-4 w-4 text-emerald-400" />
           <span>{toastMessage}</span>
         </div>
       )}
