@@ -430,7 +430,7 @@ export async function uploadBatchFile({
   file,
   invoicesFile = null,
   gatewayName = 'Stripe',
-  ephemeralMode = false,
+  ephemeralMode = true,
 }) {
   try {
     const formData = new FormData();
@@ -440,8 +440,30 @@ export async function uploadBatchFile({
     formData.append('period_type', periodType);
     formData.append('start_month', startMonth);
     formData.append('end_month', endMonth);
-    formData.append('file', file);
-    if (invoicesFile) formData.append('invoices_file', invoicesFile);
+
+    // Soportar tanto un único File como un array de múltiples Files (ej. 20 PDFs)
+    const mainFilesList = Array.isArray(file) ? file : file ? [file] : [];
+    if (mainFilesList.length > 0) {
+      formData.append('file', mainFilesList[0]);
+      mainFilesList.forEach((f) => {
+        formData.append('files', f);
+      });
+    }
+
+    // Soportar una carpeta entera o lista de múltiples archivos en Cartera de Facturas
+    const portfolioList = Array.isArray(invoicesFile)
+      ? invoicesFile
+      : invoicesFile
+      ? [invoicesFile]
+      : [];
+
+    if (portfolioList.length > 0) {
+      formData.append('invoices_file', portfolioList[0]);
+      portfolioList.forEach((pf) => {
+        formData.append('invoices_files', pf);
+      });
+    }
+
     if (gatewayName) formData.append('gateway_name', gatewayName);
     formData.append('ephemeral_mode', ephemeralMode ? 'true' : 'false');
 

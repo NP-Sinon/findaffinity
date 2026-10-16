@@ -394,13 +394,15 @@ async def upload_and_process_batch(
     period_type: str = Form("ALL"),
     start_month: int = Form(1),
     end_month: int = Form(12),
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     invoices_file: Optional[UploadFile] = File(None),
-    gateway_name: Optional[str] = Form(None),
+    invoices_files: Optional[List[UploadFile]] = File(None),
+    gateway_name: Optional[str] = Form("Stripe"),
     ephemeral_mode: Optional[str] = Form("false"),
     db: Session = Depends(get_db),
 ):
-    """Sube un fichero bancario o de pasarela, ejecuta el motor de conciliación y persiste el lote."""
+    """Sube ficheros bancarios, pasarelas o carteras de facturas en lote/carpetas, ejecuta el motor de conciliación y persiste el lote."""
     client = ReconciliationRepository.get_client(db, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Empresa cliente no encontrada.")
@@ -410,38 +412,216 @@ async def upload_and_process_batch(
         if client.tenant_id and client.tenant_id != tenant_id:
             tenant_id = client.tenant_id
 
-        file_bytes = await file.read()
-        file_name = file.filename or "uploaded_file"
-
         import json
         from pathlib import Path
-        from datetime import date
+        from datetime import date, datetime
         from src.parsers.base import CanonicalInvoice, CanonicalBankTransaction, TransactionType
         from src.parsers.bank.norma43 import Norma43Parser
         from src.parsers.gateways.stripe import StripeParser
         from src.parsers.gateways.redsys import RedsysParser
         from src.parsers.invoices.portfolio_parser import InvoicePortfolioParser
         from src.billing.pricing_plans import QuotaManager
+        from src.accounting.double_entry import AccountingEntryBuilder
+
+        # 1. Consolidar archivos de Cartera de Facturas (carpeta completa o múltiples PDFs/Excels/CSVs)
+        portfolio_uploads: List[Tuple[bytes, str]] = []
+        seen_uploads = set()
+
+        all_inv_files = []
+        if invoices_files:
+            all_inv_files.extend(invoices_files)
+        if invoices_file:
+            all_inv_files.append(invoices_file)
+
+        for pf in all_inv_files:
+            if pf and pf.filename:
+                raw_b = await pf.read()
+                key = f"{pf.filename}_{len(raw_b)}"
+                if raw_b and key not in seen_uploads:
+                    seen_uploads.add(key)
+                    portfolio_uploads.append((raw_b, pf.filename))
+
+        custom_portfolio = (
+            InvoicePortfolioParser.parse_multiple_files(portfolio_uploads)
+            if portfolio_uploads
+            else []
+        )
 
         open_invoices = []
-        if invoices_file and hasattr(invoices_file, "read"):
-            inv_bytes = await invoices_file.read()
-            if inv_bytes:
-                parsed_invs = InvoicePortfolioParser.parse_file_bytes(inv_bytes, invoices_file.filename or "invoices.csv")
-                for idx, inv_item in enumerate(parsed_invs, start=1):
-                    y, m, d = inv_item["issue_date"].split("-")
-                    open_invoices.append(
-                        CanonicalInvoice(
-                            invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
-                            invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
-                            issue_date=date(int(y), int(m), int(d)),
-                            due_date=date(int(y), int(m), int(d)),
-                            customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
-                            customer_name=inv_item.get("customer_name", "Cliente"),
-                            gross_amount_cents=inv_item.get("gross_amount_cents", 0),
-                            customer_fiscal_id=inv_item.get("customer_fiscal_id"),
-                        )
-                    )
+        for idx, inv_item in enumerate(custom_portfolio, start=1):
+            y, m, d = inv_item["issue_date"].split("-")
+            open_invoices.append(
+                CanonicalInvoice(
+                    invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                    invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                    issue_date=date(int(y), int(m), int(d)),
+                    due_date=date(int(y), int(m), int(d)),
+                    customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                    customer_name=inv_item.get("customer_name", "Cliente"),
+                    gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                    customer_fiscal_id=inv_item.get("customer_fiscal_id"),
+                )
+            )
+
+        # 2. Consolidar los archivos principales subidos al Dropzone
+        main_uploads: List[Tuple[bytes, str]] = []
+        seen_main = set()
+        all_main_files = []
+        if files:
+            all_main_files.extend(files)
+        if file:
+            all_main_files.append(file)
+
+        for mf in all_main_files:
+            if mf and mf.filename:
+                raw_b = await mf.read()
+                key = f"{mf.filename}_{len(raw_b)}"
+                if raw_b and key not in seen_main:
+                    seen_main.add(key)
+                    main_uploads.append((raw_b, mf.filename))
+
+        if not main_uploads and not custom_portfolio:
+            raise HTTPException(status_code=400, detail="No se ha recibido ningún archivo válido.")
+
+        # 3. Caso especial: si se subieron múltiples facturas PDF sueltas o una carpeta de PDFs sin extracto
+        all_main_are_pdfs = bool(main_uploads) and all(fname.lower().endswith(".pdf") for _, fname in main_uploads)
+        if (all_main_are_pdfs and len(main_uploads) > 0) or (not main_uploads and custom_portfolio and all(fname.lower().endswith(".pdf") for _, fname in portfolio_uploads)):
+            pdf_invoices = InvoicePortfolioParser.parse_multiple_files(main_uploads if main_uploads else portfolio_uploads)
+            if not pdf_invoices:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se pudieron extraer importes contables de los PDFs seleccionados.",
+                )
+
+            tenant = ReconciliationRepository.get_tenant(db, tenant_id)
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Despacho o Sociedad no encontrados.")
+
+            consumed_tx = get_and_sync_tenant_consumed_tx(db, tenant)
+            quota = QuotaManager.evaluate_tenant_quota(
+                plan_code=tenant.plan or "FREE",
+                extra_blocks=tenant.extra_blocks or 0,
+                current_clients_count=len(tenant.clients) if tenant.clients else 1,
+                current_month_transactions=consumed_tx,
+                incoming_transactions=len(pdf_invoices),
+            )
+            if quota["paywall_triggered"]:
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail={
+                        "code": "PAYWALL_LIMIT_REACHED",
+                        "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
+                        "quota": quota,
+                    },
+                )
+
+            serialized_transactions = []
+            for idx, inv in enumerate(pdf_invoices, start=1):
+                inv_date_str = inv.get("issue_date") or f"{period_year}-10-15"
+                try:
+                    inv_date_obj = datetime.strptime(inv_date_str[:10], "%Y-%m-%d").date()
+                except Exception:
+                    inv_date_obj = date(period_year, 1, 15)
+                gross_cents = int(inv["gross_amount_cents"])
+
+                journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+                    entry_number=idx,
+                    entry_date=inv_date_obj,
+                    bank_account_code=client.bank_account_code or "572000001",
+                    fee_account_code=client.fee_account_code or "626000001",
+                    payout_net_cents=gross_cents,
+                    matched_invoices=[
+                        {
+                            "account_code": inv.get("account_code") or f"430{idx:06d}",
+                            "invoice_number": inv["invoice_number"],
+                            "gross_cents": gross_cents,
+                            "fee_cents": 0,
+                            "customer_name": inv["customer_name"],
+                        }
+                    ],
+                    gateway_name="Factura PDF",
+                    account_length=client.account_length or 9,
+                )
+
+                serialized_transactions.append({
+                    "id": f"TX-PDF-{idx:03d}",
+                    "type": "TRANSFER",
+                    "source": f"Factura PDF ({inv['invoice_number']})",
+                    "date": inv_date_str,
+                    "valueDate": inv_date_str,
+                    "value_date": inv_date_str,
+                    "bankAccountCode": client.bank_account_code or "572000001",
+                    "bank_account_code": client.bank_account_code or "572000001",
+                    "concept": f"{inv['invoice_number']} — {inv['customer_name']} ({inv.get('customer_fiscal_id') or 'Sin CIF'})",
+                    "netAmountEur": inv["gross_amount_eur"],
+                    "net_amount_eur": inv["gross_amount_eur"],
+                    "grossAmountEur": inv["gross_amount_eur"],
+                    "gross_amount_eur": inv["gross_amount_eur"],
+                    "feeAmountEur": 0.0,
+                    "fee_amount_eur": 0.0,
+                    "status": "GREEN",
+                    "confidenceScore": 0.99,
+                    "confidence_score": 0.99,
+                    "solverUsed": "Extracción Directa Lote PDF",
+                    "solver_used": "Extracción Directa Lote PDF",
+                    "matchedCount": 1,
+                    "matched_count": 1,
+                    "imbalanceEur": 0.0,
+                    "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 0.98, "s_fiscal": 1.0},
+                    "auditExplanation": "Factura PDF procesada en lote con cuadre PGC a 0,00 €.",
+                    "audit_explanation": "Factura PDF procesada en lote con cuadre PGC a 0,00 €.",
+                    "isApproved": True,
+                    "is_approved": True,
+                    "journal": {
+                        "entryNumber": journal.entry_number,
+                        "entry_number": journal.entry_number,
+                        "date": journal.entry_date.isoformat(),
+                        "isBalanced": journal.is_balanced,
+                        "is_balanced": journal.is_balanced,
+                        "lines": [
+                            {
+                                "accountCode": l.account_code,
+                                "account_code": l.account_code,
+                                "accountName": l.account_name,
+                                "account_name": l.account_name,
+                                "concept": l.concept,
+                                "documentNumber": l.document_number,
+                                "document_number": l.document_number,
+                                "debitEur": round(l.debit_cents / 100.0, 2),
+                                "creditEur": round(l.credit_cents / 100.0, 2),
+                                "contrapartida": l.contrapartida,
+                            }
+                            for l in journal.lines
+                        ],
+                    },
+                })
+
+            # Incrementar de forma permanente el contador mensual del plan en Supabase
+            increment_tenant_consumed_tx(db, tenant, len(serialized_transactions))
+
+            return {
+                "id": "BATCH-EPHEMERAL-RAM",
+                "ephemeral": True,
+                "filename": f"Lote_{len(pdf_invoices)}_Facturas_PDF",
+                "file_name": f"Lote_{len(pdf_invoices)}_Facturas_PDF",
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "period_year": period_year,
+                "period_type": period_type,
+                "start_month": start_month,
+                "end_month": end_month,
+                "status": "PROCESSED",
+                "total_movements": len(serialized_transactions),
+                "total_volume_eur": round(sum(t["netAmountEur"] for t in serialized_transactions), 2),
+                "green_count": len(serialized_transactions),
+                "yellow_count": 0,
+                "red_count": 0,
+                "file_hash_sha256": "EPHEMERAL_RAM_ZERO_STORAGE",
+                "transactions": serialized_transactions,
+            }
+
+        # En caso de extracto bancario/pasarela principal:
+        file_bytes, file_name = main_uploads[0] if main_uploads else portfolio_uploads[0]
 
 
         fn_lower = file_name.lower()

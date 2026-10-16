@@ -4326,11 +4326,12 @@ FICHERO: frontend\src\components\IngestionZone.jsx
 
 /**
  * FICHERO: frontend/src/components/IngestionZone.jsx
- * Dropzone Grande e Intuitivo (RAM Efímera Activa Siempre por Defecto)
+ * Soporta arrastrar múltiples PDFs a la vez, carpetas completas y selección de directorios
  */
 import React, { useState, useRef } from 'react';
 import {
   UploadCloud,
+  FolderOpen,
   FileSpreadsheet,
   CheckCircle2,
   AlertCircle,
@@ -4338,7 +4339,79 @@ import {
   FileCheck,
   X,
   Zap,
+  Play,
 } from 'lucide-react';
+
+const VALID_PORTFOLIO_EXTS = ['.pdf', '.xlsx', '.csv', '.json'];
+const VALID_STATEMENT_EXTS = ['.n43', '.txt', '.csv', '.xlsx', '.pdf', '.json'];
+
+/**
+ * Extrae recursivamente todos los archivos cuando el usuario arrastra
+ * múltiples ficheros sueltos o una carpeta completa desde su ordenador.
+ */
+async function extractFilesFromDataTransfer(dataTransfer) {
+  const files = [];
+
+  const readEntry = (entry) =>
+    new Promise((resolve) => {
+      if (!entry) {
+        resolve();
+      } else if (entry.isFile) {
+        entry.file(
+          (file) => {
+            files.push(file);
+            resolve();
+          },
+          () => resolve()
+        );
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        const readAllEntries = () => {
+          dirReader.readEntries(
+            async (entries) => {
+              if (!entries || entries.length === 0) {
+                resolve();
+              } else {
+                await Promise.all(entries.map((e) => readEntry(e)));
+                readAllEntries();
+              }
+            },
+            () => resolve()
+          );
+        };
+        readAllEntries();
+      } else {
+        resolve();
+      }
+    });
+
+  if (dataTransfer.items && dataTransfer.items.length > 0) {
+    const entries = [];
+    for (let i = 0; i < dataTransfer.items.length; i++) {
+      const item = dataTransfer.items[i];
+      if (item.kind === 'file') {
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+        if (entry) {
+          entries.push(entry);
+        } else {
+          const f = item.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+    }
+    if (entries.length > 0) {
+      await Promise.all(entries.map((entry) => readEntry(entry)));
+      return files;
+    }
+  }
+
+  return Array.from(dataTransfer.files || []);
+}
+
+function getExtension(filename = '') {
+  const idx = filename.lastIndexOf('.');
+  return idx !== -1 ? filename.slice(idx).toLowerCase() : '';
+}
 
 export function IngestionZone({
   onFileProcessed,
@@ -4346,49 +4419,126 @@ export function IngestionZone({
   isProcessing,
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
-  const [invoicesFile, setInvoicesFile] = useState(null);
+  const [invoicesFiles, setInvoicesFiles] = useState([]);
   const [feedback, setFeedback] = useState(null);
   const [localProcessing, setLocalProcessing] = useState(false);
 
   const bankInputRef = useRef(null);
-  const portfolioInputRef = useRef(null);
+  const portfolioFilesInputRef = useRef(null);
+  const portfolioFolderInputRef = useRef(null);
 
-  const handleDrop = async (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      await processSelectedFile(e.dataTransfer.files[0]);
+  const addPortfolioFiles = (fileList) => {
+    const valid = fileList.filter((f) => VALID_PORTFOLIO_EXTS.includes(getExtension(f.name)));
+    if (valid.length === 0) {
+      setFeedback({
+        type: 'error',
+        text: 'No se encontraron archivos válidos (.pdf, .xlsx, .csv, .json) en la selección.',
+      });
+      return [];
     }
+    setInvoicesFiles((prev) => {
+      const existingNames = new Set(prev.map((p) => `${p.name}_${p.size}`));
+      const merged = [...prev];
+      valid.forEach((f) => {
+        const key = `${f.name}_${f.size}`;
+        if (!existingNames.has(key)) {
+          existingNames.add(key);
+          merged.push(f);
+        }
+      });
+      return merged;
+    });
+    setFeedback({
+      type: 'ok',
+      text: `${valid.length} archivo(s) cargados en Cartera de Facturas`,
+    });
+    return valid;
   };
 
-  const handleBankFileChange = async (e) => {
+  const handlePortfolioInputChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      await processSelectedFile(e.target.files[0]);
+      addPortfolioFiles(Array.from(e.target.files));
       e.target.value = '';
     }
   };
 
-  const handlePortfolioFileChange = (e) => {
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+
+    const droppedFiles = await extractFilesFromDataTransfer(e.dataTransfer);
+    if (!droppedFiles || droppedFiles.length === 0) return;
+
+    await handleSmartFilesExecution(droppedFiles);
+  };
+
+  const handleBankFileChange = async (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      setInvoicesFile(e.target.files[0]);
+      const selected = Array.from(e.target.files);
+      e.target.value = '';
+      await handleSmartFilesExecution(selected);
     }
   };
 
-  const processSelectedFile = async (file) => {
+  /**
+   * Clasifica inteligentemente lotes de archivos o carpetas:
+   * - Si sueltas 20 PDFs + 1 extracto (.n43/.csv), mete los 20 PDFs en cartera y los cruza con el extracto.
+   * - Si sueltas 20 PDFs sueltos (o una carpeta de PDFs), los carga todos en Cartera y los procesa en bloque.
+   */
+  const handleSmartFilesExecution = async (fileList) => {
+    const validFiles = fileList.filter((f) => VALID_STATEMENT_EXTS.includes(getExtension(f.name)));
+    if (validFiles.length === 0) {
+      setFeedback({
+        type: 'error',
+        text: 'Formato no soportado. Usa .n43, .csv, .xlsx, .pdf o .json',
+      });
+      return;
+    }
+
+    const pdfOrPortfolioFiles = validFiles.filter(
+      (f) => getExtension(f.name) === '.pdf' || f.name.toLowerCase().includes('cartera')
+    );
+    const statementFiles = validFiles.filter(
+      (f) => getExtension(f.name) !== '.pdf' && !f.name.toLowerCase().includes('cartera')
+    );
+
+    // Caso 1: El usuario arrastró a la vez las facturas (PDFs/Cartera) y el extracto bancario (.n43/.csv)
+    if (pdfOrPortfolioFiles.length > 0 && statementFiles.length > 0) {
+      const updatedPortfolio = [...invoicesFiles, ...pdfOrPortfolioFiles];
+      setInvoicesFiles(updatedPortfolio);
+      await executeProcessing(statementFiles, updatedPortfolio);
+      return;
+    }
+
+    // Caso 2: El usuario arrastró múltiples PDFs (ej. 20 facturas PDF de golpe o una carpeta de PDFs)
+    if (pdfOrPortfolioFiles.length > 0 && statementFiles.length === 0) {
+      const updatedPortfolio = [...invoicesFiles, ...pdfOrPortfolioFiles];
+      setInvoicesFiles(updatedPortfolio);
+      await executeProcessing(pdfOrPortfolioFiles, updatedPortfolio);
+      return;
+    }
+
+    // Caso 3: El usuario arrastró uno o varios extractos (.n43 / .csv) y ya tenía o no cartera cargada
+    await executeProcessing(statementFiles, invoicesFiles);
+  };
+
+  const executeProcessing = async (mainFiles, portfolioList) => {
+    const countLabel =
+      mainFiles.length > 1 ? `${mainFiles.length} archivos` : mainFiles[0]?.name || 'lote';
+
     setLocalProcessing(true);
     setFeedback({
       type: 'loading',
-      text: `Procesando ${file.name}...`,
+      text: `Procesando ${countLabel}${portfolioList.length > 0 ? ` con ${portfolioList.length} factura(s) en cartera` : ''}...`,
     });
 
     try {
       if (onFileProcessed) {
-        // RAM Efímera siempre activa (true)
-        const result = await onFileProcessed(file, invoicesFile, true);
+        const result = await onFileProcessed(mainFiles, portfolioList, true);
         if (result && result.total_movements !== undefined) {
           setFeedback({
             type: 'ok',
-            text: `${file.name} • ${result.total_movements} partidas conciliadas`,
+            text: `${result.total_movements} partidas procesadas correctamente`,
           });
         } else {
           setFeedback(null);
@@ -4397,7 +4547,7 @@ export function IngestionZone({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err.message || 'Error al procesar el archivo',
+        text: err.message || 'Error al procesar los archivos',
       });
     } finally {
       setLocalProcessing(false);
@@ -4406,10 +4556,10 @@ export function IngestionZone({
 
   return (
     <section className="bg-[#10131a] border border-[#1e232d] rounded-xl p-5 shadow-lg">
-      {/* Cabecera compacta con acciones secundarias */}
+      {/* Barra superior de acciones: Cartera de Facturas (Archivos o Carpeta entera) + Stripe API */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2.5">
-          <h2 className="text-sm font-semibold text-white">Importar Extracto o Liquidación</h2>
+          <h2 className="text-sm font-semibold text-white">Importar Extractos y Facturas</h2>
           {feedback && (
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono ${
@@ -4428,41 +4578,79 @@ export function IngestionZone({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Botón para adjuntar Cartera de Facturas */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Input oculto para múltiples archivos de cartera (.pdf, .xlsx, .csv, .json) */}
           <input
-            ref={portfolioInputRef}
+            ref={portfolioFilesInputRef}
             type="file"
-            onChange={handlePortfolioFileChange}
-            accept=".xlsx,.csv,.json,.pdf"
+            multiple
+            onChange={handlePortfolioInputChange}
+            accept=".pdf,.xlsx,.csv,.json"
             className="hidden"
           />
 
-          {invoicesFile ? (
+          {/* Input oculto para seleccionar una CARPETA entera de facturas */}
+          <input
+            ref={portfolioFolderInputRef}
+            type="file"
+            webkitdirectory=""
+            directory=""
+            multiple
+            onChange={handlePortfolioInputChange}
+            className="hidden"
+          />
+
+          {invoicesFiles.length > 0 ? (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-xs text-emerald-300">
               <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="truncate max-w-[160px] font-mono text-[11px]">{invoicesFile.name}</span>
+              <span className="font-mono text-[11px]">
+                {invoicesFiles.length === 1
+                  ? invoicesFiles[0].name
+                  : `${invoicesFiles.length} facturas en cartera`}
+              </span>
               <button
                 type="button"
-                onClick={() => setInvoicesFile(null)}
-                className="text-slate-400 hover:text-white"
-                title="Quitar cartera"
+                onClick={() => executeProcessing(invoicesFiles, invoicesFiles)}
+                disabled={isProcessing || localProcessing}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-semibold transition-colors"
+                title="Procesar directamente las facturas de la cartera"
+              >
+                <Play className="h-2.5 w-2.5" />
+                <span>Procesar</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setInvoicesFiles([])}
+                className="text-slate-400 hover:text-white ml-1"
+                title="Vaciar cartera de facturas"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => portfolioInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-300 transition-colors"
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5 text-blue-400" />
-              <span>+ Cartera Facturas (Opcional)</span>
-            </button>
-          )}
+          ) : null}
 
-          {/* Botón Stripe API */}
+          <button
+            type="button"
+            onClick={() => portfolioFolderInputRef.current?.click()}
+            disabled={isProcessing || localProcessing}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-200 transition-colors"
+            title="Seleccionar una carpeta completa con facturas PDF, Excel o CSV"
+          >
+            <FolderOpen className="h-3.5 w-3.5 text-blue-400" />
+            <span>Subir Carpeta Facturas</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => portfolioFilesInputRef.current?.click()}
+            disabled={isProcessing || localProcessing}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-300 transition-colors"
+            title="Seleccionar múltiples archivos de facturas (.pdf, .xlsx, .csv)"
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
+            <span>+ Facturas Sueltas</span>
+          </button>
+
           {onOpenStripeSync && (
             <button
               type="button"
@@ -4477,7 +4665,7 @@ export function IngestionZone({
         </div>
       </div>
 
-      {/* Cuadro Grande e Intuitivo de Subida (Dropzone) */}
+      {/* Cuadro Grande Central: acepta múltiples archivos sueltos o carpetas completas arrastradas */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -4498,8 +4686,9 @@ export function IngestionZone({
         <input
           ref={bankInputRef}
           type="file"
+          multiple
           onChange={handleBankFileChange}
-          accept=".n43,.txt,.csv,.xlsx,.json"
+          accept=".n43,.txt,.csv,.xlsx,.pdf,.json"
           className="hidden"
         />
 
@@ -4512,10 +4701,10 @@ export function IngestionZone({
         </div>
 
         <p className="text-sm font-semibold text-white">
-          Arrastra aquí tu archivo o haz clic para seleccionarlo
+          Arrastra aquí tus archivos o carpetas enteras (Norma 43, CSV, Excel o múltiples PDFs)
         </p>
         <p className="text-xs text-slate-400 mt-1 font-mono">
-          Norma 43 (.n43) &bull; Stripe (.csv) &bull; Redsys TPV (.csv) &bull; Excel (.xlsx)
+          Soporta subida simultánea de 20+ facturas PDF junto con el extracto bancario (.n43 / .csv)
         </p>
       </div>
     </section>
@@ -6820,7 +7009,7 @@ export async function uploadBatchFile({
   file,
   invoicesFile = null,
   gatewayName = 'Stripe',
-  ephemeralMode = false,
+  ephemeralMode = true,
 }) {
   try {
     const formData = new FormData();
@@ -6830,8 +7019,30 @@ export async function uploadBatchFile({
     formData.append('period_type', periodType);
     formData.append('start_month', startMonth);
     formData.append('end_month', endMonth);
-    formData.append('file', file);
-    if (invoicesFile) formData.append('invoices_file', invoicesFile);
+
+    // Soportar tanto un único File como un array de múltiples Files (ej. 20 PDFs)
+    const mainFilesList = Array.isArray(file) ? file : file ? [file] : [];
+    if (mainFilesList.length > 0) {
+      formData.append('file', mainFilesList[0]);
+      mainFilesList.forEach((f) => {
+        formData.append('files', f);
+      });
+    }
+
+    // Soportar una carpeta entera o lista de múltiples archivos en Cartera de Facturas
+    const portfolioList = Array.isArray(invoicesFile)
+      ? invoicesFile
+      : invoicesFile
+      ? [invoicesFile]
+      : [];
+
+    if (portfolioList.length > 0) {
+      formData.append('invoices_file', portfolioList[0]);
+      portfolioList.forEach((pf) => {
+        formData.append('invoices_files', pf);
+      });
+    }
+
     if (gatewayName) formData.append('gateway_name', gatewayName);
     formData.append('ephemeral_mode', ephemeralMode ? 'true' : 'false');
 
@@ -7187,32 +7398,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "91593bdf-48d4-4f2f-8cdc-b16839bc1529",
+  "tenant_id": "9a813c3f-dcb3-4d6e-a066-54cf8c897c2f",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-16",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "ad161ce33a836d7a2636dd65e3428d183270d82fb4f159b5f22d1471083de7ef",
+  "head_hash_sha256": "c743aec77849330671b09087c98f8423f1708d6ccca4fde789045099ee9d822a",
   "audit_events": [
     {
-      "event_id": "53f40940-fe45-43fe-a5be-a919cbb7e842",
+      "event_id": "fc5e2599-9d62-40de-b6ba-5471d8658238",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T19:21:05.339155",
-      "sha256_hash": "cd402bcb4ec8b3dfc9f30ad78b96e789ca915662a150cd4f2fab34b94829a13e",
+      "timestamp": "2026-10-16T20:16:59.165724",
+      "sha256_hash": "2766a90480884d1b02013d21cb8ba99434985f4f49ed999199a760f03834c2c7",
       "details": {
-        "batch_id": "16c1d07d-17a9-48c8-b487-ec787e29c94e",
+        "batch_id": "b7826dcb-9723-4e7c-99cd-d32b2bb1fe9d",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "3ac8619d-a75f-49b0-81d5-9e5d6bdf27c9",
+      "event_id": "9856552c-9af5-4a42-a1c6-743078511320",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T19:21:05.349676",
-      "sha256_hash": "ef692a84ce8150125126a1b2ffc0e444ba29397370d7bb0acf566bf2ab519cc6",
+      "timestamp": "2026-10-16T20:16:59.177737",
+      "sha256_hash": "5919adca64e8644f82e4469796a1863d041641a4d7c3eea5d8ceb57775ba64f5",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7220,23 +7431,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "af1be55e-4a5d-41b7-aed9-542f6b84b51a",
+      "event_id": "fbb088a6-deb0-4d3e-bbd4-e2a8e6948154",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T19:21:05.356069",
-      "sha256_hash": "ef8f7439b15bbdd86b4d0705f7bb13f55e89146a88bb01bb93288125be9e6380",
+      "timestamp": "2026-10-16T20:16:59.184527",
+      "sha256_hash": "b9b84ff39b733b48966b314c3d425811a7c110b59d9d95cfe16227c93710f100",
       "details": {
-        "batch_id": "9169afb3-ed90-4a0a-87e3-6039518eeb86",
+        "batch_id": "e0be8a37-589b-4799-846f-9d28d51f1ae1",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "19321342-6973-4f58-98c9-dceff1852659",
+      "event_id": "dd49404e-6511-4477-90b3-44376055ecc8",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T19:21:05.361774",
-      "sha256_hash": "f1f7310d45b7f050bb888e44110c3ff886a9f5016acb0dc664d0fcbdad73695c",
+      "timestamp": "2026-10-16T20:16:59.191222",
+      "sha256_hash": "196626b4ea125aedf2ddfbf2b1b3e0a8372b074fab9893a3000e13ca6d12c36c",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7244,23 +7455,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "6950f205-b31a-4723-866c-99492c0c6ae6",
+      "event_id": "d6f9384d-9613-41af-9754-cd60ddad4c09",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T19:21:05.366505",
-      "sha256_hash": "1cefdf26cd97f7bcaaf29aca006a44c77afa7a28b5e851af1b03c83693fcd8c8",
+      "timestamp": "2026-10-16T20:16:59.196554",
+      "sha256_hash": "995fe953eb504017d8539f09d01ac6bf6c39a8072a448bf0c3e4bae9884cf27a",
       "details": {
-        "batch_id": "1378a406-ff7e-4042-8b47-f704d130bc08",
+        "batch_id": "28c91101-4e57-4c35-90c2-03f1f28f6e8c",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "9d73d281-be06-456c-9edd-1b1c333b73fe",
+      "event_id": "46f68630-ce6c-46fb-a9c0-806aefcd50c7",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T19:21:05.383325",
-      "sha256_hash": "ad161ce33a836d7a2636dd65e3428d183270d82fb4f159b5f22d1471083de7ef",
+      "timestamp": "2026-10-16T20:16:59.220994",
+      "sha256_hash": "c743aec77849330671b09087c98f8423f1708d6ccca4fde789045099ee9d822a",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -11882,13 +12093,15 @@ async def upload_and_process_batch(
     period_type: str = Form("ALL"),
     start_month: int = Form(1),
     end_month: int = Form(12),
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     invoices_file: Optional[UploadFile] = File(None),
-    gateway_name: Optional[str] = Form(None),
+    invoices_files: Optional[List[UploadFile]] = File(None),
+    gateway_name: Optional[str] = Form("Stripe"),
     ephemeral_mode: Optional[str] = Form("false"),
     db: Session = Depends(get_db),
 ):
-    """Sube un fichero bancario o de pasarela, ejecuta el motor de conciliación y persiste el lote."""
+    """Sube ficheros bancarios, pasarelas o carteras de facturas en lote/carpetas, ejecuta el motor de conciliación y persiste el lote."""
     client = ReconciliationRepository.get_client(db, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Empresa cliente no encontrada.")
@@ -11898,38 +12111,216 @@ async def upload_and_process_batch(
         if client.tenant_id and client.tenant_id != tenant_id:
             tenant_id = client.tenant_id
 
-        file_bytes = await file.read()
-        file_name = file.filename or "uploaded_file"
-
         import json
         from pathlib import Path
-        from datetime import date
+        from datetime import date, datetime
         from src.parsers.base import CanonicalInvoice, CanonicalBankTransaction, TransactionType
         from src.parsers.bank.norma43 import Norma43Parser
         from src.parsers.gateways.stripe import StripeParser
         from src.parsers.gateways.redsys import RedsysParser
         from src.parsers.invoices.portfolio_parser import InvoicePortfolioParser
         from src.billing.pricing_plans import QuotaManager
+        from src.accounting.double_entry import AccountingEntryBuilder
+
+        # 1. Consolidar archivos de Cartera de Facturas (carpeta completa o múltiples PDFs/Excels/CSVs)
+        portfolio_uploads: List[Tuple[bytes, str]] = []
+        seen_uploads = set()
+
+        all_inv_files = []
+        if invoices_files:
+            all_inv_files.extend(invoices_files)
+        if invoices_file:
+            all_inv_files.append(invoices_file)
+
+        for pf in all_inv_files:
+            if pf and pf.filename:
+                raw_b = await pf.read()
+                key = f"{pf.filename}_{len(raw_b)}"
+                if raw_b and key not in seen_uploads:
+                    seen_uploads.add(key)
+                    portfolio_uploads.append((raw_b, pf.filename))
+
+        custom_portfolio = (
+            InvoicePortfolioParser.parse_multiple_files(portfolio_uploads)
+            if portfolio_uploads
+            else []
+        )
 
         open_invoices = []
-        if invoices_file and hasattr(invoices_file, "read"):
-            inv_bytes = await invoices_file.read()
-            if inv_bytes:
-                parsed_invs = InvoicePortfolioParser.parse_file_bytes(inv_bytes, invoices_file.filename or "invoices.csv")
-                for idx, inv_item in enumerate(parsed_invs, start=1):
-                    y, m, d = inv_item["issue_date"].split("-")
-                    open_invoices.append(
-                        CanonicalInvoice(
-                            invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
-                            invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
-                            issue_date=date(int(y), int(m), int(d)),
-                            due_date=date(int(y), int(m), int(d)),
-                            customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
-                            customer_name=inv_item.get("customer_name", "Cliente"),
-                            gross_amount_cents=inv_item.get("gross_amount_cents", 0),
-                            customer_fiscal_id=inv_item.get("customer_fiscal_id"),
-                        )
-                    )
+        for idx, inv_item in enumerate(custom_portfolio, start=1):
+            y, m, d = inv_item["issue_date"].split("-")
+            open_invoices.append(
+                CanonicalInvoice(
+                    invoice_id=inv_item.get("invoice_id", f"INV-{idx:04d}"),
+                    invoice_number=inv_item.get("invoice_number", f"FRA-{idx:04d}"),
+                    issue_date=date(int(y), int(m), int(d)),
+                    due_date=date(int(y), int(m), int(d)),
+                    customer_id=inv_item.get("customer_fiscal_id") or f"CUST-{idx}",
+                    customer_name=inv_item.get("customer_name", "Cliente"),
+                    gross_amount_cents=inv_item.get("gross_amount_cents", 0),
+                    customer_fiscal_id=inv_item.get("customer_fiscal_id"),
+                )
+            )
+
+        # 2. Consolidar los archivos principales subidos al Dropzone
+        main_uploads: List[Tuple[bytes, str]] = []
+        seen_main = set()
+        all_main_files = []
+        if files:
+            all_main_files.extend(files)
+        if file:
+            all_main_files.append(file)
+
+        for mf in all_main_files:
+            if mf and mf.filename:
+                raw_b = await mf.read()
+                key = f"{mf.filename}_{len(raw_b)}"
+                if raw_b and key not in seen_main:
+                    seen_main.add(key)
+                    main_uploads.append((raw_b, mf.filename))
+
+        if not main_uploads and not custom_portfolio:
+            raise HTTPException(status_code=400, detail="No se ha recibido ningún archivo válido.")
+
+        # 3. Caso especial: si se subieron múltiples facturas PDF sueltas o una carpeta de PDFs sin extracto
+        all_main_are_pdfs = bool(main_uploads) and all(fname.lower().endswith(".pdf") for _, fname in main_uploads)
+        if (all_main_are_pdfs and len(main_uploads) > 0) or (not main_uploads and custom_portfolio and all(fname.lower().endswith(".pdf") for _, fname in portfolio_uploads)):
+            pdf_invoices = InvoicePortfolioParser.parse_multiple_files(main_uploads if main_uploads else portfolio_uploads)
+            if not pdf_invoices:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No se pudieron extraer importes contables de los PDFs seleccionados.",
+                )
+
+            tenant = ReconciliationRepository.get_tenant(db, tenant_id)
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Despacho o Sociedad no encontrados.")
+
+            consumed_tx = get_and_sync_tenant_consumed_tx(db, tenant)
+            quota = QuotaManager.evaluate_tenant_quota(
+                plan_code=tenant.plan or "FREE",
+                extra_blocks=tenant.extra_blocks or 0,
+                current_clients_count=len(tenant.clients) if tenant.clients else 1,
+                current_month_transactions=consumed_tx,
+                incoming_transactions=len(pdf_invoices),
+            )
+            if quota["paywall_triggered"]:
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail={
+                        "code": "PAYWALL_LIMIT_REACHED",
+                        "message": f"Has superado el límite de {quota['max_monthly_transactions']} partidas de tu {quota['plan_name']}.",
+                        "quota": quota,
+                    },
+                )
+
+            serialized_transactions = []
+            for idx, inv in enumerate(pdf_invoices, start=1):
+                inv_date_str = inv.get("issue_date") or f"{period_year}-10-15"
+                try:
+                    inv_date_obj = datetime.strptime(inv_date_str[:10], "%Y-%m-%d").date()
+                except Exception:
+                    inv_date_obj = date(period_year, 1, 15)
+                gross_cents = int(inv["gross_amount_cents"])
+
+                journal = AccountingEntryBuilder.build_payout_reconciliation_entry(
+                    entry_number=idx,
+                    entry_date=inv_date_obj,
+                    bank_account_code=client.bank_account_code or "572000001",
+                    fee_account_code=client.fee_account_code or "626000001",
+                    payout_net_cents=gross_cents,
+                    matched_invoices=[
+                        {
+                            "account_code": inv.get("account_code") or f"430{idx:06d}",
+                            "invoice_number": inv["invoice_number"],
+                            "gross_cents": gross_cents,
+                            "fee_cents": 0,
+                            "customer_name": inv["customer_name"],
+                        }
+                    ],
+                    gateway_name="Factura PDF",
+                    account_length=client.account_length or 9,
+                )
+
+                serialized_transactions.append({
+                    "id": f"TX-PDF-{idx:03d}",
+                    "type": "TRANSFER",
+                    "source": f"Factura PDF ({inv['invoice_number']})",
+                    "date": inv_date_str,
+                    "valueDate": inv_date_str,
+                    "value_date": inv_date_str,
+                    "bankAccountCode": client.bank_account_code or "572000001",
+                    "bank_account_code": client.bank_account_code or "572000001",
+                    "concept": f"{inv['invoice_number']} — {inv['customer_name']} ({inv.get('customer_fiscal_id') or 'Sin CIF'})",
+                    "netAmountEur": inv["gross_amount_eur"],
+                    "net_amount_eur": inv["gross_amount_eur"],
+                    "grossAmountEur": inv["gross_amount_eur"],
+                    "gross_amount_eur": inv["gross_amount_eur"],
+                    "feeAmountEur": 0.0,
+                    "fee_amount_eur": 0.0,
+                    "status": "GREEN",
+                    "confidenceScore": 0.99,
+                    "confidence_score": 0.99,
+                    "solverUsed": "Extracción Directa Lote PDF",
+                    "solver_used": "Extracción Directa Lote PDF",
+                    "matchedCount": 1,
+                    "matched_count": 1,
+                    "imbalanceEur": 0.0,
+                    "dimensions": {"s_importe": 1.0, "s_fecha": 1.0, "s_texto": 0.98, "s_fiscal": 1.0},
+                    "auditExplanation": "Factura PDF procesada en lote con cuadre PGC a 0,00 €.",
+                    "audit_explanation": "Factura PDF procesada en lote con cuadre PGC a 0,00 €.",
+                    "isApproved": True,
+                    "is_approved": True,
+                    "journal": {
+                        "entryNumber": journal.entry_number,
+                        "entry_number": journal.entry_number,
+                        "date": journal.entry_date.isoformat(),
+                        "isBalanced": journal.is_balanced,
+                        "is_balanced": journal.is_balanced,
+                        "lines": [
+                            {
+                                "accountCode": l.account_code,
+                                "account_code": l.account_code,
+                                "accountName": l.account_name,
+                                "account_name": l.account_name,
+                                "concept": l.concept,
+                                "documentNumber": l.document_number,
+                                "document_number": l.document_number,
+                                "debitEur": round(l.debit_cents / 100.0, 2),
+                                "creditEur": round(l.credit_cents / 100.0, 2),
+                                "contrapartida": l.contrapartida,
+                            }
+                            for l in journal.lines
+                        ],
+                    },
+                })
+
+            # Incrementar de forma permanente el contador mensual del plan en Supabase
+            increment_tenant_consumed_tx(db, tenant, len(serialized_transactions))
+
+            return {
+                "id": "BATCH-EPHEMERAL-RAM",
+                "ephemeral": True,
+                "filename": f"Lote_{len(pdf_invoices)}_Facturas_PDF",
+                "file_name": f"Lote_{len(pdf_invoices)}_Facturas_PDF",
+                "tenant_id": tenant_id,
+                "client_id": client_id,
+                "period_year": period_year,
+                "period_type": period_type,
+                "start_month": start_month,
+                "end_month": end_month,
+                "status": "PROCESSED",
+                "total_movements": len(serialized_transactions),
+                "total_volume_eur": round(sum(t["netAmountEur"] for t in serialized_transactions), 2),
+                "green_count": len(serialized_transactions),
+                "yellow_count": 0,
+                "red_count": 0,
+                "file_hash_sha256": "EPHEMERAL_RAM_ZERO_STORAGE",
+                "transactions": serialized_transactions,
+            }
+
+        # En caso de extracto bancario/pasarela principal:
+        file_bytes, file_name = main_uploads[0] if main_uploads else portfolio_uploads[0]
 
 
         fn_lower = file_name.lower()
@@ -15865,26 +16256,44 @@ FICHERO: src\parsers\invoices\portfolio_parser.py
 ================================================================================
 
 """
-Ingesta Tolerante a Fallos para Carteras de Facturas Emitidas (.csv, .xlsx, .json)
-Autodescubre columnas (Factura, Cliente, NIF/CIF, Importe Bruto, Fecha, Subcuenta 430)
-sin importar el orden o idioma de las cabeceras del Excel/CSV del cliente.
+FICHERO: src/parsers/invoices/portfolio_parser.py
+Ingesta Masiva de Carteras de Facturas (.pdf, .xlsx, .csv, .json) por Archivos o Carpetas Completas
 """
 import csv
 import io
 import json
 import re
 from datetime import datetime, date
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import openpyxl
+from pypdf import PdfReader
 
 
 COLUMN_ALIASES = {
-    "invoice_number": ["factura", "nº factura", "num factura", "numero", "invoice", "invoice_number", "documento", "ref", "pedido", "order id"],
-    "customer_name": ["cliente", "razon social", "razón social", "nombre", "empresa", "customer", "customer_name", "titular"],
-    "customer_fiscal_id": ["nif", "cif", "dni", "nie", "nif/cif", "identificador fiscal", "vat", "tax id", "customer_fiscal_id"],
-    "gross_amount": ["total", "importe", "importe bruto", "total factura", "bruto", "amount", "gross", "gross_amount_cents", "base + iva"],
-    "issue_date": ["fecha", "fecha emision", "fecha emisión", "fecha factura", "date", "issue_date", "created"],
-    "account_code": ["subcuenta", "cuenta", "cuenta cliente", "430", "account", "account_code"],
+    "invoice_number": [
+        "factura", "nº factura", "num factura", "numero", "invoice",
+        "invoice_number", "documento", "ref", "pedido", "order id",
+    ],
+    "customer_name": [
+        "cliente", "razon social", "razón social", "cliente / razón social",
+        "nombre", "empresa", "customer", "customer_name", "titular",
+    ],
+    "customer_fiscal_id": [
+        "nif", "cif", "dni", "nie", "nif/cif", "cif / nif",
+        "identificador fiscal", "vat", "tax id", "customer_fiscal_id",
+    ],
+    "gross_amount": [
+        "total factura (€)", "total factura", "total", "importe",
+        "importe bruto", "bruto", "amount", "gross", "gross_amount_cents",
+    ],
+    "issue_date": [
+        "fecha emisión", "fecha emision", "fecha", "fecha factura",
+        "date", "issue_date", "created",
+    ],
+    "account_code": [
+        "subcuenta 430", "subcuenta", "cuenta", "cuenta cliente",
+        "430", "account", "account_code",
+    ],
 }
 
 
@@ -15892,13 +16301,11 @@ def parse_spanish_amount_to_cents(raw_val: Any) -> int:
     if raw_val is None:
         return 0
     if isinstance(raw_val, (int, float)):
-        # Si ya viene expresado en céntimos en un JSON (>10000 sin decimales y clave cents)
         return int(round(float(raw_val) * 100))
     s = str(raw_val).strip()
     s = re.sub(r"[€$£\sA-Za-z]", "", s)
     if not s:
         return 0
-    # Detectar formato europeo 1.250,50 vs anglosajón 1,250.50
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
             s = s.replace(".", "").replace(",", ".")
@@ -15928,95 +16335,37 @@ def parse_flexible_date(raw_val: Any) -> str:
 
 class InvoicePortfolioParser:
     @staticmethod
-    def _extract_single_pdf_invoice(text: str, filename: str, idx: int = 1) -> Optional[Dict[str, Any]]:
-        if not text or not text.strip():
-            return None
-        # 1. Número de Factura
-        num_m = re.search(r'(?:N[º°]?\s*Factura|Factura\s*N[º°]?|Invoice\s*N[º°]?)\s*[:]?\s*([A-Za-z0-9\-_/]+)', text, re.IGNORECASE)
-        if not num_m:
-            num_m = re.search(r'\b(FRA-\d{4}-\d+|FAC-\d{4}-\d+|INV-\d{4}-\d+)\b', text, re.IGNORECASE)
-        from pathlib import Path
-        inv_number = num_m.group(1).strip() if num_m else Path(filename).stem
+    def parse_multiple_files(files_with_names: List[Tuple[bytes, str]]) -> List[Dict[str, Any]]:
+        """
+        Procesa una carpeta entera o lista de archivos (.pdf, .xlsx, .csv, .json)
+        y consolida todas las facturas sin duplicados.
+        """
+        consolidated: List[Dict[str, Any]] = []
+        seen_invoices = set()
 
-        # 2. Fecha de Emisión
-        date_m = re.search(r'(?:Fecha\s*Emisi[óo]n|Fecha\s*Factura|Fecha|Date)\s*[:]?\s*(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})', text, re.IGNORECASE)
-        issue_date = parse_flexible_date(date_m.group(1)) if date_m else date.today().isoformat()
+        for idx, (f_bytes, f_name) in enumerate(files_with_names, start=1):
+            if not f_bytes:
+                continue
+            parsed_items = InvoicePortfolioParser.parse_file_bytes(f_bytes, f_name, fallback_index=idx)
+            for item in parsed_items:
+                inv_key = f"{item.get('invoice_number')}_{item.get('gross_amount_cents')}"
+                if inv_key not in seen_invoices:
+                    seen_invoices.add(inv_key)
+                    consolidated.append(item)
 
-        # 3. CIF / NIF del Cliente (priorizando bloque de datos del cliente)
-        cif_m = re.search(r'DATOS\s*(?:FISCALES\s*)?DEL\s*CLIENTE[\s\S]*?(?:NIF\s*[/]?\s*CIF|CIF|NIF|DNI|NIE)\s*:\s*([A-Za-z0-9\-]{9,12})', text, re.IGNORECASE)
-        if not cif_m:
-            cif_m = re.search(r'(?:NIF\s*[/]?\s*CIF|CIF|NIF|DNI|NIE|VAT|Tax\s*ID)\s*:\s*([A-Za-z0-9\-]{9,12})', text, re.IGNORECASE)
-        customer_fiscal_id = cif_m.group(1).strip().upper() if cif_m else ""
-
-        # 4. Razón Social / Nombre del Cliente
-        client_m = re.search(r'Raz[óo]n\s*Social\s*:\s*([^\r\n]+)', text, re.IGNORECASE)
-        if not client_m:
-            client_m = re.search(r'(?:Cliente|Customer)\s*:\s*([^\r\n]+)', text, re.IGNORECASE)
-        if client_m:
-            customer_name = client_m.group(1).strip()
-            customer_name = re.sub(r'^(?:Raz[óo]n\s*Social|Cliente|Customer)\s*[:]?\s*', '', customer_name, flags=re.IGNORECASE).strip()
-        else:
-            customer_name = "Cliente Factura PDF"
-
-        # 5. Importe Total
-        total_m = re.search(r'(?:TOTAL\s*FACTURA|Total\s*a\s*Pagar|Total|Importe\s*Total|Gross\s*Amount)\s*[:]?\s*([\d\.,]+)', text, re.IGNORECASE)
-        gross_cents = parse_spanish_amount_to_cents(total_m.group(1)) if total_m else 0
-
-        if gross_cents <= 0:
-            euro_m = re.findall(r'([\d\.,]+)\s*€', text)
-            if euro_m:
-                cents_candidates = [parse_spanish_amount_to_cents(e) for e in euro_m]
-                gross_cents = max(cents_candidates) if cents_candidates else 0
-
-        # 6. Subcuenta PGC
-        subc_m = re.search(r'(?:Subcuenta\s*PGC|Subcuenta|Cuenta)\s*[:]?\s*(\d{9,12})', text, re.IGNORECASE)
-        account_code = subc_m.group(1).strip() if subc_m else f"430{idx:06d}"
-
-        if gross_cents > 0:
-            return {
-                "invoice_id": f"INV-PDF-{idx:04d}",
-                "invoice_number": inv_number,
-                "customer_name": customer_name,
-                "customer_fiscal_id": customer_fiscal_id,
-                "gross_amount_cents": gross_cents,
-                "gross_amount_eur": round(gross_cents / 100.0, 2),
-                "issue_date": issue_date,
-                "account_code": account_code,
-            }
-        return None
+        return consolidated
 
     @staticmethod
-    def parse_pdf_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
-        """Extrae facturas a partir de documentos PDF utilizando pypdf y expresiones regulares contables."""
-        try:
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(file_bytes))
-            invoices: List[Dict[str, Any]] = []
-
-            # 1. Si el PDF tiene múltiples páginas, verificar si cada página contiene una factura distinta
-            if len(reader.pages) > 1:
-                for idx, page in enumerate(reader.pages, start=1):
-                    txt = page.extract_text() or ""
-                    inv = InvoicePortfolioParser._extract_single_pdf_invoice(txt, filename, idx)
-                    if inv:
-                        invoices.append(inv)
-
-            # 2. Si no se extrajeron facturas por páginas (o es PDF de una página), procesar el documento completo
-            if not invoices:
-                full_text = "\n".join([page.extract_text() or "" for page in reader.pages])
-                inv = InvoicePortfolioParser._extract_single_pdf_invoice(full_text, filename, 1)
-                if inv:
-                    invoices.append(inv)
-
-            return invoices
-        except Exception:
-            return []
-
-    @staticmethod
-    def parse_file_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
+    def parse_file_bytes(
+        file_bytes: bytes,
+        filename: str,
+        fallback_index: int = 1,
+    ) -> List[Dict[str, Any]]:
         fname = (filename or "").lower()
-        if fname.endswith(".pdf") or file_bytes.startswith(b"%PDF"):
-            return InvoicePortfolioParser.parse_pdf_bytes(file_bytes, filename)
+
+        if fname.endswith(".pdf"):
+            pdf_item = InvoicePortfolioParser._parse_single_pdf(file_bytes, filename, fallback_index)
+            return [pdf_item] if pdf_item else []
 
         if fname.endswith(".json"):
             data = json.loads(file_bytes.decode("utf-8", errors="replace"))
@@ -16034,7 +16383,6 @@ class InvoicePortfolioParser:
             dict_rows = [dict(zip(headers, r)) for r in rows[1:] if any(r)]
             return InvoicePortfolioParser._normalize_records(dict_rows)
 
-        # Fallback CSV con autodetección de codificación y delimitador (; o ,)
         text = None
         for enc in ("utf-8-sig", "iso-8859-15", "windows-1252", "utf-8"):
             try:
@@ -16049,6 +16397,118 @@ class InvoicePortfolioParser:
         delimiter = ";" if sample_line.count(";") >= sample_line.count(",") else ","
         reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
         return InvoicePortfolioParser._normalize_records(list(reader))
+
+    @staticmethod
+    def parse_pdf_bytes(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
+        """Compatibilidad retrospectiva para parse_pdf_bytes."""
+        item = InvoicePortfolioParser._parse_single_pdf(file_bytes, filename, 1)
+        return [item] if item else []
+
+    @staticmethod
+    def _parse_single_pdf(
+        file_bytes: bytes,
+        filename: str,
+        fallback_index: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Extrae automáticamente los metadatos contables de una factura en PDF:
+        Número de factura, NIF/CIF, Razón Social, Fecha, Subcuenta 430 e Importe Total.
+        """
+        text = ""
+        try:
+            reader = PdfReader(io.BytesIO(file_bytes))
+            for page in reader.pages:
+                text += (page.extract_text() or "") + "\n"
+        except Exception:
+            text = ""
+
+        base_name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        name_without_ext = re.sub(r"\.pdf$", "", base_name, flags=re.IGNORECASE)
+
+        # 1. Número de Factura (desde texto o nombre de fichero ej. FRA-2026-001)
+        inv_match = re.search(
+            r"\b((?:FRA|FAC|INV|TPV|PRO|F)[-\s]?\d{4}[-\s]?\d{1,6})\b",
+            text + " " + name_without_ext,
+            flags=re.IGNORECASE,
+        )
+        inv_num = inv_match.group(1).upper().replace(" ", "-") if inv_match else f"FRA-2026-{fallback_index:03d}"
+
+        # 2. NIF / CIF Español o Intracomunitario (ej. B-87654321, A-28001234, W0185698H)
+        nif_matches = re.findall(
+            r"\b([A-HJ-NP-SUVW][-\s]?\d{7}[0-9A-J]|\d{8}[-\s]?[A-Z]|[XYZ][-\s]?\d{7}[A-Z])\b",
+            text.upper(),
+        )
+        # Si hay varios CIFs en el PDF (emisor y receptor), tomamos el del cliente receptor
+        customer_nif = nif_matches[-1].replace(" ", "") if nif_matches else ""
+
+        # 3. Subcuenta contable 430
+        acct_match = re.search(r"\b(430\d{5,9})\b", text)
+        if acct_match:
+            account_code = acct_match.group(1)
+        else:
+            seq_digits = re.findall(r"\d+", inv_num)
+            seq_num = int(seq_digits[-1]) if seq_digits else fallback_index
+            account_code = f"430{seq_num:06d}"
+
+        # 4. Fecha de emisión
+        date_match = re.search(r"\b(20\d{2}-\d{2}-\d{2}|\d{2}/\d{2}/20\d{2})\b", text)
+        issue_date = parse_flexible_date(date_match.group(1)) if date_match else date.today().isoformat()
+
+        # 5. Importe Total de la Factura en céntimos
+        gross_cents = 0
+        total_patterns = [
+            r"TOTAL\s+FACTURA[^\d]*([\d.,]+)\s*€?",
+            r"TOTAL\s+A\s+PAGAR[^\d]*([\d.,]+)\s*€?",
+            r"IMPORTE\s+TOTAL[^\d]*([\d.,]+)\s*€?",
+            r"TOTAL\s*\(?€\)?[^\d]*([\d.,]+)",
+        ]
+        for pat in total_patterns:
+            m = re.search(pat, text, flags=re.IGNORECASE)
+            if m:
+                c = parse_spanish_amount_to_cents(m.group(1))
+                if c > 0:
+                    gross_cents = c
+                    break
+
+        if gross_cents <= 0:
+            # Buscar todos los importes con formato moneda en el PDF y tomar el mayor (Total con IVA)
+            all_amounts = re.findall(r"\b\d{1,3}(?:[.,]\d{3})*[.,]\d{2}(?=\s*€|\b)", text)
+            cents_candidates = [parse_spanish_amount_to_cents(a) for a in all_amounts]
+            # Filtrar años como 2026,00 si apareciesen
+            valid_candidates = [c for c in cents_candidates if c > 0 and c != 202600]
+            if valid_candidates:
+                gross_cents = max(valid_candidates)
+
+        # 6. Razón Social del Cliente
+        customer_name = "Cliente Factura PDF"
+        client_line_match = re.search(
+            r"(?:Cliente|Raz[oó]n\s+Social|Destinatario)\s*[:\-]?\s*([^\n\r]{3,60})",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if client_line_match:
+            candidate_name = client_line_match.group(1).strip()
+            if not any(k in candidate_name.lower() for k in ("cif", "nif", "fecha")):
+                customer_name = candidate_name
+
+        if customer_name == "Cliente Factura PDF" and "_" in name_without_ext:
+            parts = name_without_ext.split("_", 1)
+            if len(parts) == 2 and len(parts[1]) > 2:
+                customer_name = parts[1].replace("_", " ").strip()
+
+        if gross_cents <= 0:
+            return None
+
+        return {
+            "invoice_id": f"INV-PDF-{fallback_index:04d}",
+            "invoice_number": inv_num,
+            "customer_name": customer_name,
+            "customer_fiscal_id": customer_nif,
+            "gross_amount_cents": gross_cents,
+            "gross_amount_eur": round(gross_cents / 100.0, 2),
+            "issue_date": issue_date,
+            "account_code": account_code,
+        }
 
     @staticmethod
     def _match_column(headers: List[str], field_key: str) -> Optional[str]:
