@@ -1,8 +1,8 @@
 /**
  * FICHERO: frontend/src/App.jsx
- * Orquestador Principal de Producción con Sincronización Inmutable de Cuota y Lotes
+ * Orquestador Principal con gestión estable de estado contable y lotes
  */
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { HeaderNav } from './components/HeaderNav';
 import { IngestionZone } from './components/IngestionZone';
 import { StagingRadar } from './components/StagingRadar';
@@ -80,11 +80,14 @@ export default function App() {
   const [startMonth, setStartMonth] = useState(1);
   const [endMonth, setEndMonth] = useState(12);
 
+  const toastTimeoutRef = useRef(null);
+
   const triggerToast = useCallback((msg) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setToastMessage(msg);
-    setTimeout(() => {
+    toastTimeoutRef.current = setTimeout(() => {
       setToastMessage(null);
-    }, 3400);
+    }, 3200);
   }, []);
 
   const refreshSubscriptionStatus = useCallback(async (tenantId) => {
@@ -130,6 +133,7 @@ export default function App() {
     }
   }, []);
 
+  // Carga inicial de sociedades del despacho (no depende de los filtros de mes/año)
   const syncUserContext = useCallback(async (user) => {
     if (!user) {
       setCompanies([]);
@@ -154,7 +158,6 @@ export default function App() {
           setCompanies(cList);
           setSelectedCompany(cList[0]);
           setSelectedErp(cList[0].defaultErp || 'A3');
-          await loadBatchesForCompany(cList[0].id, selectedYear, startMonth, endMonth);
         } else {
           setCompanies([]);
           setSelectedCompany(null);
@@ -170,18 +173,17 @@ export default function App() {
 
       if (clientList && clientList.length > 0) {
         setCompanies(clientList);
-        const firstComp = clientList[0];
-        setSelectedCompany(firstComp);
-        setSelectedErp(firstComp.defaultErp || 'A3');
-        await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
+        setSelectedCompany(clientList[0]);
+        setSelectedErp(clientList[0].defaultErp || 'A3');
       } else {
         setCompanies([]);
         setSelectedCompany(null);
         setTransactions([]);
       }
     }
-  }, [loadBatchesForCompany, selectedYear, startMonth, endMonth]);
+  }, []);
 
+  // Efecto exclusivo de arranque de aplicación
   useEffect(() => {
     let isMounted = true;
     async function initApp() {
@@ -214,6 +216,13 @@ export default function App() {
       isMounted = false;
     };
   }, [syncUserContext]);
+
+  // Efecto reactivo cuando cambia la sociedad activa o el filtro de periodo
+  useEffect(() => {
+    if (selectedCompany?.id) {
+      loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
+    }
+  }, [selectedCompany?.id, selectedYear, startMonth, endMonth, loadBatchesForCompany]);
 
   const periodFilteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
@@ -261,7 +270,7 @@ export default function App() {
       setBatches([]);
       setCurrentBatchId(null);
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Sociedad '${res.client.name}' dada de alta correctamente.`);
+      triggerToast(`Sociedad ${res.client.name} registrada.`);
     } else if (res.paywallTriggered) {
       setClientModalOpen(false);
       setShowPaywallModal(true);
@@ -281,7 +290,6 @@ export default function App() {
           setSelectedCompany(nextComp);
           if (nextComp) {
             setSelectedErp(nextComp.defaultErp || 'A3');
-            loadBatchesForCompany(nextComp.id, selectedYear, startMonth, endMonth);
           } else {
             setTransactions([]);
             setBatches([]);
@@ -292,13 +300,12 @@ export default function App() {
       });
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast('Sociedad eliminada correctamente.');
+      triggerToast('Sociedad eliminada.');
     } else {
       throw new Error(res.error || 'Error al eliminar la sociedad');
     }
-  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
+  }, [selectedCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
-  // Al borrar una partida o limpiar el radar, el contador de cuota mensual NO se reduce
   const handleDeleteTransaction = useCallback(async (txId) => {
     setTransactions((prev) => prev.filter((tx) => tx.id !== txId));
     if (currentBatchId && backendStatus.online) {
@@ -306,7 +313,7 @@ export default function App() {
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Apunte retirado de la mesa de trabajo.');
+    triggerToast('Apunte descartado.');
   }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleClearAllTransactions = useCallback(async () => {
@@ -318,7 +325,7 @@ export default function App() {
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Mesa de trabajo limpiada.');
+    triggerToast('Lote eliminado de la mesa de trabajo.');
   }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleApproveTransaction = useCallback(async (txId) => {
@@ -328,9 +335,9 @@ export default function App() {
           ? {
               ...tx,
               status: 'GREEN',
-              confidenceScore: 0.965,
+              confidenceScore: Math.max(tx.confidenceScore || 0, 0.965),
               isApproved: true,
-              auditExplanation: `${tx.auditExplanation || ''} [Conformado por Auditor Contable].`,
+              auditExplanation: `${tx.auditExplanation || ''} [Conformado]`.trim(),
             }
           : tx
       )
@@ -350,9 +357,9 @@ export default function App() {
           return {
             ...tx,
             status: 'GREEN',
-            confidenceScore: 0.955,
+            confidenceScore: Math.max(tx.confidenceScore || 0, 0.955),
             isApproved: true,
-            auditExplanation: `${tx.auditExplanation || ''} [Conformado en lote por Auditor Contable].`,
+            auditExplanation: `${tx.auditExplanation || ''} [Conformado en lote]`.trim(),
           };
         }
         return tx;
@@ -361,12 +368,13 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await bulkApproveYellowsApi(currentBatchId);
     }
-    triggerToast(`${approvedCount} apuntes conformados en lote.`);
+    triggerToast(`${approvedCount} apuntes conformados.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
+  // Por defecto ephemeralMode = false para conservar batchId, auditoría SHA-256 y exportación de servidor
   const handleFileUploaded = useCallback(async (file, invoicesFile = null, ephemeralMode = false) => {
     if (!selectedCompany) {
-      triggerToast('Seleccione o dé de alta primero una Sociedad Cliente.');
+      triggerToast('Seleccione o cree primero una sociedad cliente.');
       handleOpenAddClientModal();
       return null;
     }
@@ -394,26 +402,26 @@ export default function App() {
     if (res && res.success) {
       if (ephemeralMode && res.data?.transactions) {
         setTransactions(res.data.transactions);
-        setCurrentBatchId(null);
+        setCurrentBatchId(res.data.batch_id || null);
       } else {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
       }
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Fichero procesado (${res.data.total_movements} apuntes conciliados).`);
+      triggerToast(`Lote procesado: ${res.data.total_movements} apuntes.`);
       return res.data;
     } else if (res && res.paywallTriggered) {
       await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
+      triggerToast('Límite mensual de partidas alcanzado.');
       return null;
     } else {
       throw new Error(res?.error || 'No se pudo procesar el archivo contable.');
     }
   }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, handleOpenAddClientModal, triggerToast]);
 
-  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
+  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode = false }) => {
     if (!selectedCompany) {
-      triggerToast('Seleccione primero una Sociedad Cliente.');
+      triggerToast('Seleccione primero una sociedad cliente.');
       handleOpenAddClientModal();
       return;
     }
@@ -433,17 +441,21 @@ export default function App() {
     setIsProcessing(false);
 
     if (res.success && res.data) {
-      setTransactions(res.data.transactions || []);
+      if (!ephemeralMode) {
+        await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
+      } else {
+        setTransactions(res.data.transactions || []);
+      }
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones importadas.`);
+      triggerToast(`Stripe: ${res.data.total_movements} liquidaciones importadas.`);
     } else if (res.paywallTriggered) {
       await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
+      triggerToast('Límite mensual de partidas alcanzado.');
     } else {
       throw new Error(res.error || 'Error conectando con Stripe API');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, refreshSubscriptionStatus, triggerToast, handleOpenAddClientModal]);
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, triggerToast, handleOpenAddClientModal]);
 
   const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
@@ -460,9 +472,7 @@ export default function App() {
   const handleSelectCompany = useCallback((company) => {
     setSelectedCompany(company);
     if (company.defaultErp) setSelectedErp(company.defaultErp);
-    loadBatchesForCompany(company.id, selectedYear, startMonth, endMonth);
-    triggerToast(`Sociedad activa: ${company.name}`);
-  }, [loadBatchesForCompany, selectedYear, startMonth, endMonth, triggerToast]);
+  }, []);
 
   const handleToggleView = useCallback((view) => {
     setCurrentView(view);
@@ -501,8 +511,8 @@ export default function App() {
           backendOnline={backendStatus.online}
         />
         {toastMessage && (
-          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
-            <Check className="h-4 w-4 text-emerald-400" />
+          <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded bg-[#161920] border border-[#2a303c] text-slate-200 text-xs shadow-lg">
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
         )}
@@ -511,7 +521,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0b0d11] text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#090a0d] text-slate-200 flex flex-col font-sans">
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -530,14 +540,14 @@ export default function App() {
       />
 
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
+        <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-4">
           <AdminPanel
             onNavigateToRadar={() => handleToggleView('radar')}
             currentUser={currentUser}
           />
         </main>
       ) : (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
+        <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-4 flex flex-col gap-3">
           <IngestionZone
             isProcessing={isProcessing}
             onFileProcessed={handleFileUploaded}
@@ -577,17 +587,6 @@ export default function App() {
           />
         </main>
       )}
-
-      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3.5 text-center text-xs text-slate-500">
-        <div className="max-w-[1600px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="font-mono text-[11px] text-slate-400">
-            FINDAFINITY &bull; Conciliación Algorítmica y Partida Doble PGC &bull; Descuadre 0,00 €
-          </div>
-          <div className="text-[11px] text-slate-400">
-            Formatos Oficiales: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
-          </div>
-        </div>
-      </footer>
 
       <ClientModal
         isOpen={clientModalOpen}
@@ -634,8 +633,8 @@ export default function App() {
       />
 
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
-          <Check className="h-4 w-4 text-emerald-400" />
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded bg-[#161920] border border-[#2a303c] text-slate-200 text-xs shadow-lg">
+          <Check className="h-3.5 w-3.5 text-emerald-400" />
           <span>{toastMessage}</span>
         </div>
       )}

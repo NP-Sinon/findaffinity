@@ -1,17 +1,10 @@
 /**
  * FICHERO: frontend/src/utils/exporters.js
  * Generadores oficiales de ficheros de intercambio contable para ERPs españoles
- * - Wolters Kluwer A3 (Suenlace / a3conv)
- * - Sage 50 / Sage Despachos (XDIARIO.csv)
- * - DELSOL Contasol (XLSX nativo / CSV)
  */
 import * as XLSX from 'xlsx';
 import { formatAccountCode } from './formatters';
 
-/**
- * Genera fichero Suenlace para Wolters Kluwer A3.
- * Estructura: Asiento;Fecha;Cuenta;Signo;Importe;Concepto;Documento;Contrapartida
- */
 export function generateA3Suenlace(journals, accountLength = 9) {
   const lines = [];
 
@@ -42,10 +35,6 @@ export function generateA3Suenlace(journals, accountLength = 9) {
   return lines.join('\r\n') + (lines.length > 0 ? '\r\n' : '');
 }
 
-/**
- * Genera fichero XDIARIO.csv para Sage 50 y Sage Despachos.
- * Cabecera oficial de 9 columnas: Asiento;Fecha;Cuenta;Concepto;Documento;Debe;Haber;Factura;Contrapartida
- */
 export function generateSageXdiario(journals, accountLength = 9) {
   const lines = ['Asiento;Fecha;Cuenta;Concepto;Documento;Debe;Haber;Factura;Contrapartida'];
 
@@ -73,9 +62,6 @@ export function generateSageXdiario(journals, accountLength = 9) {
   return lines.join('\r\n') + '\r\n';
 }
 
-/**
- * Genera filas de diario para DELSOL Contasol con las 9 columnas oficiales
- */
 export function getContasolRows(journals, accountLength = 9) {
   const rows = [];
   journals.forEach((journal, idx) => {
@@ -85,7 +71,7 @@ export function getContasolRows(journals, accountLength = 9) {
 
     (journal.lines || []).forEach((line) => {
       rows.push({
-        Diario: 1, // Diario 1 General en Contasol
+        Diario: 1,
         Fecha: dateFormatted,
         Asiento: entryNum,
         Subcuenta: formatAccountCode(line.accountCode, accountLength),
@@ -102,23 +88,20 @@ export function getContasolRows(journals, accountLength = 9) {
   return rows;
 }
 
-/**
- * Genera fichero Excel .xlsx nativo para Contasol
- */
 export function generateContasolXlsx(journals, accountLength = 9) {
   const rows = getContasolRows(journals, accountLength);
   const worksheet = XLSX.utils.json_to_sheet(rows);
 
   worksheet['!cols'] = [
-    { wch: 8 },  // Diario
-    { wch: 12 }, // Fecha
-    { wch: 10 }, // Asiento
-    { wch: 14 }, // Subcuenta
-    { wch: 40 }, // Concepto
-    { wch: 16 }, // Documento
-    { wch: 14 }, // Debe
-    { wch: 14 }, // Haber
-    { wch: 14 }, // Contrapartida
+    { wch: 8 },
+    { wch: 12 },
+    { wch: 10 },
+    { wch: 14 },
+    { wch: 40 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
   ];
 
   const workbook = XLSX.utils.book_new();
@@ -126,8 +109,29 @@ export function generateContasolXlsx(journals, accountLength = 9) {
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
 }
 
-export function downloadTextFile(content, filename, mimeType = 'text/plain;charset=utf-8') {
-  const blob = new Blob([content], { type: mimeType });
+/**
+ * Codifica un string JS a bytes Windows-1252 reales para que A3 y Sage 50
+ * lean correctamente tildes y la letra Ñ sin depender de UTF-8.
+ */
+function encodeWindows1252(str) {
+  const bytes = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 0xff) {
+      bytes[i] = code;
+    } else if (code === 0x20ac) {
+      bytes[i] = 0x80; // Símbolo € en Windows-1252
+    } else {
+      bytes[i] = 0x3f; // '?'
+    }
+  }
+  return bytes;
+}
+
+export function downloadTextFile(content, filename, mimeType = 'text/plain;charset=windows-1252') {
+  const isWin1252 = mimeType.toLowerCase().includes('windows-1252');
+  const payload = isWin1252 ? encodeWindows1252(content) : new TextEncoder().encode('\uFEFF' + content);
+  const blob = new Blob([payload], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

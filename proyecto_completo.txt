@@ -1047,9 +1047,9 @@ FICHERO: frontend\src\App.jsx
 
 /**
  * FICHERO: frontend/src/App.jsx
- * Orquestador Principal de Producción con Sincronización Inmutable de Cuota y Lotes
+ * Orquestador Principal con gestión estable de estado contable y lotes
  */
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { HeaderNav } from './components/HeaderNav';
 import { IngestionZone } from './components/IngestionZone';
 import { StagingRadar } from './components/StagingRadar';
@@ -1127,11 +1127,14 @@ export default function App() {
   const [startMonth, setStartMonth] = useState(1);
   const [endMonth, setEndMonth] = useState(12);
 
+  const toastTimeoutRef = useRef(null);
+
   const triggerToast = useCallback((msg) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setToastMessage(msg);
-    setTimeout(() => {
+    toastTimeoutRef.current = setTimeout(() => {
       setToastMessage(null);
-    }, 3400);
+    }, 3200);
   }, []);
 
   const refreshSubscriptionStatus = useCallback(async (tenantId) => {
@@ -1177,6 +1180,7 @@ export default function App() {
     }
   }, []);
 
+  // Carga inicial de sociedades del despacho (no depende de los filtros de mes/año)
   const syncUserContext = useCallback(async (user) => {
     if (!user) {
       setCompanies([]);
@@ -1201,7 +1205,6 @@ export default function App() {
           setCompanies(cList);
           setSelectedCompany(cList[0]);
           setSelectedErp(cList[0].defaultErp || 'A3');
-          await loadBatchesForCompany(cList[0].id, selectedYear, startMonth, endMonth);
         } else {
           setCompanies([]);
           setSelectedCompany(null);
@@ -1217,18 +1220,17 @@ export default function App() {
 
       if (clientList && clientList.length > 0) {
         setCompanies(clientList);
-        const firstComp = clientList[0];
-        setSelectedCompany(firstComp);
-        setSelectedErp(firstComp.defaultErp || 'A3');
-        await loadBatchesForCompany(firstComp.id, selectedYear, startMonth, endMonth);
+        setSelectedCompany(clientList[0]);
+        setSelectedErp(clientList[0].defaultErp || 'A3');
       } else {
         setCompanies([]);
         setSelectedCompany(null);
         setTransactions([]);
       }
     }
-  }, [loadBatchesForCompany, selectedYear, startMonth, endMonth]);
+  }, []);
 
+  // Efecto exclusivo de arranque de aplicación
   useEffect(() => {
     let isMounted = true;
     async function initApp() {
@@ -1261,6 +1263,13 @@ export default function App() {
       isMounted = false;
     };
   }, [syncUserContext]);
+
+  // Efecto reactivo cuando cambia la sociedad activa o el filtro de periodo
+  useEffect(() => {
+    if (selectedCompany?.id) {
+      loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
+    }
+  }, [selectedCompany?.id, selectedYear, startMonth, endMonth, loadBatchesForCompany]);
 
   const periodFilteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
@@ -1308,7 +1317,7 @@ export default function App() {
       setBatches([]);
       setCurrentBatchId(null);
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Sociedad '${res.client.name}' dada de alta correctamente.`);
+      triggerToast(`Sociedad ${res.client.name} registrada.`);
     } else if (res.paywallTriggered) {
       setClientModalOpen(false);
       setShowPaywallModal(true);
@@ -1328,7 +1337,6 @@ export default function App() {
           setSelectedCompany(nextComp);
           if (nextComp) {
             setSelectedErp(nextComp.defaultErp || 'A3');
-            loadBatchesForCompany(nextComp.id, selectedYear, startMonth, endMonth);
           } else {
             setTransactions([]);
             setBatches([]);
@@ -1339,13 +1347,12 @@ export default function App() {
       });
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast('Sociedad eliminada correctamente.');
+      triggerToast('Sociedad eliminada.');
     } else {
       throw new Error(res.error || 'Error al eliminar la sociedad');
     }
-  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
+  }, [selectedCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
-  // Al borrar una partida o limpiar el radar, el contador de cuota mensual NO se reduce
   const handleDeleteTransaction = useCallback(async (txId) => {
     setTransactions((prev) => prev.filter((tx) => tx.id !== txId));
     if (currentBatchId && backendStatus.online) {
@@ -1353,7 +1360,7 @@ export default function App() {
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Apunte retirado de la mesa de trabajo.');
+    triggerToast('Apunte descartado.');
   }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleClearAllTransactions = useCallback(async () => {
@@ -1365,7 +1372,7 @@ export default function App() {
       const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
       await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Mesa de trabajo limpiada.');
+    triggerToast('Lote eliminado de la mesa de trabajo.');
   }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleApproveTransaction = useCallback(async (txId) => {
@@ -1375,9 +1382,9 @@ export default function App() {
           ? {
               ...tx,
               status: 'GREEN',
-              confidenceScore: 0.965,
+              confidenceScore: Math.max(tx.confidenceScore || 0, 0.965),
               isApproved: true,
-              auditExplanation: `${tx.auditExplanation || ''} [Conformado por Auditor Contable].`,
+              auditExplanation: `${tx.auditExplanation || ''} [Conformado]`.trim(),
             }
           : tx
       )
@@ -1397,9 +1404,9 @@ export default function App() {
           return {
             ...tx,
             status: 'GREEN',
-            confidenceScore: 0.955,
+            confidenceScore: Math.max(tx.confidenceScore || 0, 0.955),
             isApproved: true,
-            auditExplanation: `${tx.auditExplanation || ''} [Conformado en lote por Auditor Contable].`,
+            auditExplanation: `${tx.auditExplanation || ''} [Conformado en lote]`.trim(),
           };
         }
         return tx;
@@ -1408,12 +1415,13 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await bulkApproveYellowsApi(currentBatchId);
     }
-    triggerToast(`${approvedCount} apuntes conformados en lote.`);
+    triggerToast(`${approvedCount} apuntes conformados.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
+  // Por defecto ephemeralMode = false para conservar batchId, auditoría SHA-256 y exportación de servidor
   const handleFileUploaded = useCallback(async (file, invoicesFile = null, ephemeralMode = false) => {
     if (!selectedCompany) {
-      triggerToast('Seleccione o dé de alta primero una Sociedad Cliente.');
+      triggerToast('Seleccione o cree primero una sociedad cliente.');
       handleOpenAddClientModal();
       return null;
     }
@@ -1441,26 +1449,26 @@ export default function App() {
     if (res && res.success) {
       if (ephemeralMode && res.data?.transactions) {
         setTransactions(res.data.transactions);
-        setCurrentBatchId(null);
+        setCurrentBatchId(res.data.batch_id || null);
       } else {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
       }
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Fichero procesado (${res.data.total_movements} apuntes conciliados).`);
+      triggerToast(`Lote procesado: ${res.data.total_movements} apuntes.`);
       return res.data;
     } else if (res && res.paywallTriggered) {
       await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
+      triggerToast('Límite mensual de partidas alcanzado.');
       return null;
     } else {
       throw new Error(res?.error || 'No se pudo procesar el archivo contable.');
     }
   }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, handleOpenAddClientModal, triggerToast]);
 
-  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
+  const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode = false }) => {
     if (!selectedCompany) {
-      triggerToast('Seleccione primero una Sociedad Cliente.');
+      triggerToast('Seleccione primero una sociedad cliente.');
       handleOpenAddClientModal();
       return;
     }
@@ -1480,17 +1488,21 @@ export default function App() {
     setIsProcessing(false);
 
     if (res.success && res.data) {
-      setTransactions(res.data.transactions || []);
+      if (!ephemeralMode) {
+        await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
+      } else {
+        setTransactions(res.data.transactions || []);
+      }
       await refreshSubscriptionStatus(tenantIdToUse);
-      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones importadas.`);
+      triggerToast(`Stripe: ${res.data.total_movements} liquidaciones importadas.`);
     } else if (res.paywallTriggered) {
       await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
+      triggerToast('Límite mensual de partidas alcanzado.');
     } else {
       throw new Error(res.error || 'Error conectando con Stripe API');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, refreshSubscriptionStatus, triggerToast, handleOpenAddClientModal]);
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, triggerToast, handleOpenAddClientModal]);
 
   const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
@@ -1507,9 +1519,7 @@ export default function App() {
   const handleSelectCompany = useCallback((company) => {
     setSelectedCompany(company);
     if (company.defaultErp) setSelectedErp(company.defaultErp);
-    loadBatchesForCompany(company.id, selectedYear, startMonth, endMonth);
-    triggerToast(`Sociedad activa: ${company.name}`);
-  }, [loadBatchesForCompany, selectedYear, startMonth, endMonth, triggerToast]);
+  }, []);
 
   const handleToggleView = useCallback((view) => {
     setCurrentView(view);
@@ -1548,8 +1558,8 @@ export default function App() {
           backendOnline={backendStatus.online}
         />
         {toastMessage && (
-          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
-            <Check className="h-4 w-4 text-emerald-400" />
+          <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded bg-[#161920] border border-[#2a303c] text-slate-200 text-xs shadow-lg">
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
         )}
@@ -1558,7 +1568,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0b0d11] text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#090a0d] text-slate-200 flex flex-col font-sans">
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -1577,14 +1587,14 @@ export default function App() {
       />
 
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
+        <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-4">
           <AdminPanel
             onNavigateToRadar={() => handleToggleView('radar')}
             currentUser={currentUser}
           />
         </main>
       ) : (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
+        <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-4 flex flex-col gap-3">
           <IngestionZone
             isProcessing={isProcessing}
             onFileProcessed={handleFileUploaded}
@@ -1624,17 +1634,6 @@ export default function App() {
           />
         </main>
       )}
-
-      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3.5 text-center text-xs text-slate-500">
-        <div className="max-w-[1600px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="font-mono text-[11px] text-slate-400">
-            FINDAFINITY &bull; Conciliación Algorítmica y Partida Doble PGC &bull; Descuadre 0,00 €
-          </div>
-          <div className="text-[11px] text-slate-400">
-            Formatos Oficiales: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
-          </div>
-        </div>
-      </footer>
 
       <ClientModal
         isOpen={clientModalOpen}
@@ -1681,8 +1680,8 @@ export default function App() {
       />
 
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
-          <Check className="h-4 w-4 text-emerald-400" />
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded bg-[#161920] border border-[#2a303c] text-slate-200 text-xs shadow-lg">
+          <Check className="h-3.5 w-3.5 text-emerald-400" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -1730,25 +1729,6 @@ import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi, deleteCo
 import { formatEuro } from '../utils/formatters';
 
 export function AdminPanel({ onNavigateToRadar, currentUser }) {
-  if (currentUser?.role !== 'SUPERADMIN') {
-    return (
-      <div className="bg-[#101013] border border-rose-900/50 rounded-lg p-8 text-center max-w-xl mx-auto my-12 shadow-2xl">
-        <ShieldCheck className="h-12 w-12 text-rose-500 mx-auto mb-4" />
-        <h2 className="text-lg font-bold text-zinc-100 mb-2">Acceso Exclusivo a Administrador Global</h2>
-        <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
-          El Panel de Licencias & Empresas SaaS está reservado exclusivamente para la cuenta maestra SUPERADMIN de la plataforma. Como usuario de despacho o empresa, su gestión contable se realiza desde el Radar de Conciliación.
-        </p>
-        <button
-          type="button"
-          onClick={onNavigateToRadar}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-sm"
-        >
-          Volver al Radar de Conciliación
-        </button>
-      </div>
-    );
-  }
-
   const [companies, setCompanies] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1764,6 +1744,7 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const loadData = useCallback(async () => {
+    if (currentUser?.role !== 'SUPERADMIN') return;
     setLoading(true);
     try {
       const [comps, st] = await Promise.all([
@@ -1777,7 +1758,7 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentUser?.role]);
 
   useEffect(() => {
     loadData();
@@ -1804,6 +1785,25 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
   const totalMrr = useMemo(() => {
     return companies.reduce((acc, c) => acc + (Number(c.monthly_price_eur) || 0), 0);
   }, [companies]);
+
+  if (currentUser?.role !== 'SUPERADMIN') {
+    return (
+      <div className="bg-[#101013] border border-rose-900/50 rounded-lg p-8 text-center max-w-xl mx-auto my-12 shadow-2xl">
+        <ShieldCheck className="h-12 w-12 text-rose-500 mx-auto mb-4" />
+        <h2 className="text-lg font-bold text-zinc-100 mb-2">Acceso Exclusivo a Administrador Global</h2>
+        <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
+          El Panel de Licencias & Empresas SaaS está reservado exclusivamente para la cuenta maestra SUPERADMIN de la plataforma. Como usuario de despacho o empresa, su gestión contable se realiza desde el Radar de Conciliación.
+        </p>
+        <button
+          type="button"
+          onClick={onNavigateToRadar}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors shadow-sm"
+        >
+          Volver al Radar de Conciliación
+        </button>
+      </div>
+    );
+  }
 
   const handleOpenEdit = (c) => {
     setEditingCompany(c);
@@ -2470,8 +2470,6 @@ import {
 } from '../services/api';
 
 export default function AuthModal({ isOpen, onClose, initialView = 'login', onAuthSuccess }) {
-  if (!isOpen) return null;
-
   const [view, setView] = useState(initialView); // 'login' | 'register' | 'forgot' | 'reset'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -2486,6 +2484,8 @@ export default function AuthModal({ isOpen, onClose, initialView = 'login', onAu
   const [role, setRole] = useState('ADMIN');
   const [resetToken, setResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
+
+  if (!isOpen) return null;
 
   const clearMessages = () => {
     setError(null);
@@ -3634,15 +3634,17 @@ export function ClientModal({
 FICHERO: frontend\src\components\DoubleEntryViewer.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/components/DoubleEntryViewer.jsx
+ */
 import React from 'react';
-import { CheckCircle2, AlertTriangle, ArrowRight, BookOpen } from 'lucide-react';
 import { formatEuro, formatEuroNoSymbol } from '../utils/formatters';
 
-export function DoubleEntryViewer({ journal, transactionId }) {
+export function DoubleEntryViewer({ journal }) {
   if (!journal || !journal.lines || journal.lines.length === 0) {
     return (
-      <div className="p-3 text-xs text-zinc-400 bg-zinc-950/60 rounded border border-zinc-800">
-        No se ha generado pre-asiento para esta partida aún.
+      <div className="p-3 text-xs text-slate-500 bg-[#111318] rounded border border-[#1e222a]">
+        Pre-asiento contable no disponible para esta partida.
       </div>
     );
   }
@@ -3653,130 +3655,73 @@ export function DoubleEntryViewer({ journal, transactionId }) {
   const isPerfectSquare = imbalance < 0.005;
 
   return (
-    <div className="bg-[#0e0e11] border border-zinc-800/90 rounded-md p-3.5 my-2 text-xs shadow-inner">
-      {/* Header of Entry */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 mb-2.5 border-b border-zinc-800/60 gap-2">
-        <div className="flex items-center gap-2">
-          <BookOpen className="h-3.5 w-3.5 text-zinc-400" />
-          <span className="font-semibold text-zinc-200">
-            Pre-Asiento de Partida Doble PGC
+    <div className="bg-[#111318] border border-[#1e222a] rounded p-3 text-xs">
+      <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#1e222a]">
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-slate-200">
+            Asiento #{String(journal.entryNumber || 1).padStart(4, '0')}
           </span>
-          <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/40">
-            Asiento #{String(journal.entryNumber || 1).padStart(4, '0')} &bull; Fecha: {journal.date}
+          <span className="font-mono text-[11px] text-slate-400">
+            Fecha: {journal.date}
           </span>
         </div>
 
-        {/* Verification Checksum */}
-        <div className="flex items-center gap-2 text-[11px]">
-          {isPerfectSquare ? (
-            <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Cuadre PGC: 0,00 €
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-rose-400 font-medium">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Descuadre detectado: {formatEuro(imbalance)}
-            </span>
-          )}
-        </div>
+        <span
+          className={`font-mono text-[11px] ${
+            isPerfectSquare ? 'text-emerald-400' : 'text-rose-400'
+          }`}
+        >
+          {isPerfectSquare ? 'Descuadre: 0,00 €' : `Descuadre: ${formatEuro(imbalance)}`}
+        </span>
       </div>
 
-      {/* Accounting Lines Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-zinc-800/70 text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
-              <th className="py-1.5 px-2">Subcuenta</th>
-              <th className="py-1.5 px-2">Concepto Contable Oficial</th>
-              <th className="py-1.5 px-2 text-right">Debe (€)</th>
-              <th className="py-1.5 px-2 text-right">Haber (€)</th>
-              <th className="py-1.5 px-2 text-center">Contrapartida</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-900 font-mono text-[11px]">
-            {journal.lines.map((line, idx) => {
-              const isDebit = Number(line.debitEur) > 0;
-              const isFee = line.accountCode.startsWith('626') || line.accountCode.startsWith('669');
-              const isBank = line.accountCode.startsWith('572');
-              const isCustomer = line.accountCode.startsWith('430');
-
-              return (
-                <tr 
-                  key={idx}
-                  className="hover:bg-zinc-900/40 transition-colors"
-                >
-                  {/* Account Code */}
-                  <td className="py-1.5 px-2 font-medium">
-                    <span className={`px-1.5 py-0.5 rounded text-[11px] ${
-                      isBank ? 'bg-blue-950/40 text-blue-300 border border-blue-900/50' :
-                      isFee ? 'bg-amber-950/40 text-amber-300 border border-amber-900/50' :
-                      isCustomer ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-900/50' :
-                      'bg-zinc-800 text-zinc-300'
-                    }`}>
-                      {line.accountCode}
-                    </span>
-                  </td>
-
-                  {/* Concept */}
-                  <td className="py-1.5 px-2 text-zinc-300 font-sans text-xs">
-                    {line.concept}
-                  </td>
-
-                  {/* Debit */}
-                  <td className="py-1.5 px-2 text-right tabular-nums">
-                    {Number(line.debitEur) > 0 ? (
-                      <span className="text-zinc-100 font-semibold">
-                        {formatEuroNoSymbol(line.debitEur)}
-                      </span>
-                    ) : (
-                      <span className="text-zinc-600">0,00</span>
-                    )}
-                  </td>
-
-                  {/* Credit */}
-                  <td className="py-1.5 px-2 text-right tabular-nums">
-                    {Number(line.creditEur) > 0 ? (
-                      <span className="text-zinc-100 font-semibold">
-                        {formatEuroNoSymbol(line.creditEur)}
-                      </span>
-                    ) : (
-                      <span className="text-zinc-600">0,00</span>
-                    )}
-                  </td>
-
-                  {/* Contrapartida */}
-                  <td className="py-1.5 px-2 text-center text-zinc-400 text-[10px]">
-                    {line.contrapartida || '—'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-
-          {/* Table Footer: Sum Totals */}
-          <tfoot>
-            <tr className="border-t border-zinc-700/80 bg-zinc-950/80 font-mono font-semibold text-[11px]">
-              <td colSpan={2} className="py-2 px-2 text-right uppercase tracking-wider text-[10px] text-zinc-400 font-sans">
-                Totales de Control Contable:
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums text-zinc-100">
-                {formatEuroNoSymbol(totalDebit)} €
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums text-zinc-100">
-                {formatEuroNoSymbol(totalCredit)} €
-              </td>
-              <td className="py-2 px-2 text-center">
-                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-mono ${
-                  isPerfectSquare ? 'text-emerald-400 bg-emerald-950/40' : 'text-rose-400 bg-rose-950/40'
-                }`}>
-                  Δ {imbalance.toFixed(2)} €
-                </span>
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
+      <table className="w-full text-left border-collapse">
+        <thead>
+          <tr className="border-b border-[#1e222a] text-[10px] text-slate-500 uppercase tracking-wider">
+            <th className="py-1 px-2">Subcuenta</th>
+            <th className="py-1 px-2">Concepto Diario</th>
+            <th className="py-1 px-2">Documento</th>
+            <th className="py-1 px-2 text-right">Debe</th>
+            <th className="py-1 px-2 text-right">Haber</th>
+            <th className="py-1 px-2 text-right">Contrapartida</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[#181b22] font-mono text-[11px]">
+          {journal.lines.map((line, idx) => {
+            const code = String(line.accountCode || '');
+            return (
+              <tr key={idx}>
+                <td className="py-1.5 px-2 font-medium text-slate-200">{code}</td>
+                <td className="py-1.5 px-2 font-sans text-slate-300">{line.concept}</td>
+                <td className="py-1.5 px-2 text-slate-400">{line.documentNumber || '—'}</td>
+                <td className="py-1.5 px-2 text-right tabular-nums text-slate-200">
+                  {Number(line.debitEur) > 0 ? formatEuroNoSymbol(line.debitEur) : '—'}
+                </td>
+                <td className="py-1.5 px-2 text-right tabular-nums text-slate-200">
+                  {Number(line.creditEur) > 0 ? formatEuroNoSymbol(line.creditEur) : '—'}
+                </td>
+                <td className="py-1.5 px-2 text-right text-slate-500">
+                  {line.contrapartida || '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-[#2a303c] font-mono font-semibold text-[11px] text-slate-200">
+            <td colSpan={3} className="py-1.5 px-2 text-right text-slate-400 font-sans">
+              Total Asiento:
+            </td>
+            <td className="py-1.5 px-2 text-right tabular-nums">
+              {formatEuroNoSymbol(totalDebit)} €
+            </td>
+            <td className="py-1.5 px-2 text-right tabular-nums">
+              {formatEuroNoSymbol(totalCredit)} €
+            </td>
+            <td />
+          </tr>
+        </tfoot>
+      </table>
     </div>
   );
 }
@@ -4087,17 +4032,15 @@ FICHERO: frontend\src\components\HeaderNav.jsx
 
 /**
  * FICHERO: frontend/src/components/HeaderNav.jsx
- * Barra de Comando Superior Corporativa con Medidor Persistente de Cuota
+ * Cabecera ejecutiva de baja altura para software contable B2B
  */
 import React from 'react';
 import {
   Building2,
-  Database,
-  ShieldCheck,
   Plus,
   Trash2,
   LogOut,
-  CreditCard,
+  FileCheck2,
 } from 'lucide-react';
 
 export function HeaderNav({
@@ -4123,196 +4066,170 @@ export function HeaderNav({
   const usedTx = subscriptionInfo?.current_month_transactions ?? 0;
   const maxTx = subscriptionInfo?.max_monthly_transactions ?? 25;
   const usagePct = Math.min(100, Math.round((usedTx / Math.max(1, maxTx)) * 100));
-  const isNearLimit = usagePct >= 80;
 
   return (
-    <header className="border-b border-[#1e232d] bg-[#0f1218] sticky top-0 z-40">
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between min-h-13 py-2 gap-3">
-          {/* Izquierda: Identidad y Contexto Sociedad / ERP */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="h-6 w-6 rounded bg-blue-600 flex items-center justify-center text-white font-mono font-bold text-[11px]">
-                FA
-              </div>
-              <span className="font-semibold text-sm tracking-tight text-white">FINDAFINITY</span>
+    <header className="border-b border-[#1e222a] bg-[#0d0f14] sticky top-0 z-40">
+      <div className="max-w-[1640px] mx-auto px-4 sm:px-6 h-12 flex items-center justify-between gap-4">
+        {/* Izquierda: Marca + Selector de Sociedad + Selector ERP */}
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="h-5 w-5 rounded-xs bg-slate-100 text-[#090a0d] flex items-center justify-center font-mono font-bold text-[11px] tracking-tighter">
+              FA
             </div>
+            <span className="font-semibold text-xs tracking-wider uppercase text-slate-200">
+              Findafinity
+            </span>
+          </div>
 
-            {isSuperAdmin && onToggleView && (
-              <div className="flex items-center gap-1 bg-[#0b0d11] border border-[#222834] rounded p-0.5 ml-2">
-                <button
-                  type="button"
-                  onClick={() => onToggleView('radar')}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    !isAdminView ? 'bg-[#181c26] text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Mesa de Conciliación
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onToggleView('admin')}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                    isAdminView ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>Administración de Licencias</span>
-                </button>
-              </div>
-            )}
+          {isSuperAdmin && onToggleView && (
+            <div className="flex items-center bg-[#090a0d] border border-[#1e222a] rounded p-0.5 ml-1">
+              <button
+                type="button"
+                onClick={() => onToggleView('radar')}
+                className={`px-2.5 py-0.5 rounded-xs text-[11px] font-medium transition-colors ${
+                  !isAdminView ? 'bg-[#1a1e26] text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Diario de Conciliación
+              </button>
+              <button
+                type="button"
+                onClick={() => onToggleView('admin')}
+                className={`px-2.5 py-0.5 rounded-xs text-[11px] font-medium transition-colors ${
+                  isAdminView ? 'bg-[#1a1e26] text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Licencias
+              </button>
+            </div>
+          )}
 
-            {!isAdminView && (
-              <>
-                <div className="hidden sm:block h-4 w-px bg-[#1e232d]" />
+          {!isAdminView && (
+            <>
+              <span className="text-[#2a303c] select-none">/</span>
 
-                {/* Selector de Sociedad Cliente */}
-                <div className="flex items-center gap-2 bg-[#0b0d11] border border-[#222834] rounded px-2.5 py-1">
-                  <Building2 className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                  {companies && companies.length > 0 ? (
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={selectedCompany ? selectedCompany.id : ''}
-                        onChange={(e) => {
-                          const comp = companies.find((c) => c.id === e.target.value);
-                          if (comp && onSelectCompany) onSelectCompany(comp);
-                        }}
-                        className="bg-transparent text-xs text-slate-100 font-medium focus:outline-none cursor-pointer pr-2 max-w-[220px] truncate"
+              {/* Selector de Sociedad */}
+              <div className="flex items-center gap-1.5">
+                <Building2 className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                {companies && companies.length > 0 ? (
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={selectedCompany ? selectedCompany.id : ''}
+                      onChange={(e) => {
+                        const comp = companies.find((c) => c.id === e.target.value);
+                        if (comp && onSelectCompany) onSelectCompany(comp);
+                      }}
+                      className="bg-[#111318] hover:bg-[#161920] border border-[#1e222a] rounded px-2.5 py-1 text-xs text-slate-200 font-medium focus:outline-none focus:border-slate-600 cursor-pointer max-w-[260px] truncate"
+                    >
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id} className="bg-[#111318] text-slate-200">
+                          {c.name} {c.fiscalId ? `(${c.fiscalId})` : ''}
+                        </option>
+                      ))}
+                    </select>
+
+                    {onOpenAddClientModal && (
+                      <button
+                        type="button"
+                        onClick={onOpenAddClientModal}
+                        className="p-1 rounded hover:bg-[#1a1e26] text-slate-400 hover:text-slate-200 transition-colors"
+                        title="Nueva sociedad"
                       >
-                        {companies.map((c) => (
-                          <option key={c.id} value={c.id} className="bg-[#10131a] text-slate-200">
-                            {c.name} {c.fiscalId ? `— ${c.fiscalId}` : ''}
-                          </option>
-                        ))}
-                      </select>
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    )}
 
-                      {onOpenAddClientModal && (
-                        <button
-                          type="button"
-                          onClick={onOpenAddClientModal}
-                          className="p-1 rounded bg-[#161a23] hover:bg-[#1f2532] text-slate-300 hover:text-white border border-[#262c3a] transition-colors"
-                          title="Dar de alta nueva sociedad"
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
-                      )}
-
-                      {selectedCompany && onOpenDeleteClientModal && (
-                        <button
-                          type="button"
-                          onClick={() => onOpenDeleteClientModal(selectedCompany)}
-                          className="p-1 rounded bg-[#161a23] hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-[#262c3a] transition-colors"
-                          title={`Eliminar sociedad ${selectedCompany.name}`}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400">Sin sociedades activas</span>
-                      {onOpenAddClientModal && (
-                        <button
-                          type="button"
-                          onClick={onOpenAddClientModal}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium transition-colors"
-                        >
-                          <Plus className="h-3 w-3" />
-                          <span>Alta Sociedad</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Selector ERP */}
-                <div className="flex items-center gap-2 bg-[#0b0d11] border border-[#222834] rounded px-2.5 py-1">
-                  <Database className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                  <span className="text-[11px] text-slate-400">ERP:</span>
-                  <select
-                    value={selectedErp}
-                    onChange={(e) => onSelectErp && onSelectErp(e.target.value)}
-                    className="bg-transparent text-xs text-slate-100 font-medium focus:outline-none cursor-pointer"
+                    {selectedCompany && onOpenDeleteClientModal && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenDeleteClientModal(selectedCompany)}
+                        className="p-1 rounded hover:bg-rose-950/40 text-slate-500 hover:text-rose-400 transition-colors"
+                        title={`Eliminar ${selectedCompany.name}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onOpenAddClientModal}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-white text-slate-950 text-[11px] font-medium transition-colors"
                   >
-                    <option value="A3" className="bg-[#10131a] text-slate-200">
-                      Wolters Kluwer A3 (Suenlace)
-                    </option>
-                    <option value="SAGE" className="bg-[#10131a] text-slate-200">
-                      Sage 50 (XDIARIO)
-                    </option>
-                    <option value="CONTASOL" className="bg-[#10131a] text-slate-200">
-                      DELSOL Contasol (.xlsx)
-                    </option>
-                  </select>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Derecha: Cuota Mensual Persistente, Certificado SHA-256 y Usuario */}
-          <div className="flex items-center gap-2.5">
-            {!isAdminView && onOpenPaywall && (
-              <button
-                type="button"
-                onClick={onOpenPaywall}
-                className="flex items-center gap-2.5 px-3 py-1 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs transition-colors"
-                title="Consumo mensual acumulado del plan y ampliación de licencia"
-              >
-                <CreditCard className="h-3.5 w-3.5 text-blue-400" />
-                <div className="flex flex-col text-left">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-medium text-slate-200">
-                      {planCode === 'FREE' ? 'Licencia Evaluación' : `Licencia ${planCode}`}
-                    </span>
-                    <span className={`font-mono text-[11px] font-semibold ${isNearLimit ? 'text-amber-400' : 'text-slate-300'}`}>
-                      {usedTx} / {maxTx} partidas
-                    </span>
-                  </div>
-                  <div className="w-32 h-1 bg-[#1e232d] rounded-full overflow-hidden mt-0.5">
-                    <div
-                      className={`h-full transition-all ${
-                        usagePct >= 100 ? 'bg-rose-500' : isNearLimit ? 'bg-amber-400' : 'bg-blue-500'
-                      }`}
-                      style={{ width: `${usagePct}%` }}
-                    />
-                  </div>
-                </div>
-              </button>
-            )}
-
-            {!isAdminView && onOpenAuditModal && (
-              <button
-                type="button"
-                onClick={onOpenAuditModal}
-                className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs text-slate-300 transition-colors"
-              >
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Registro SHA-256</span>
-              </button>
-            )}
-
-            {currentUser && (
-              <div className="flex items-center gap-2.5 pl-2.5 border-l border-[#1e232d]">
-                <div className="hidden sm:flex flex-col text-right">
-                  <span className="text-xs font-medium text-slate-200 leading-tight">
-                    {currentUser.full_name || currentUser.email}
-                  </span>
-                  <span className="text-[10px] text-slate-500 leading-tight">
-                    {currentUser.company_name || 'Despacho Contable'}
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-[#161a23] transition-colors"
-                  title="Cerrar sesión"
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
+                    <Plus className="h-3 w-3" />
+                    <span>Alta Sociedad</span>
+                  </button>
+                )}
               </div>
-            )}
-          </div>
+
+              {/* Selector de Destino Contable */}
+              <div className="hidden md:flex items-center gap-1.5 pl-2 border-l border-[#1e222a]">
+                <span className="text-[11px] text-slate-500">Formato ERP:</span>
+                <select
+                  value={selectedErp}
+                  onChange={(e) => onSelectErp && onSelectErp(e.target.value)}
+                  className="bg-[#111318] border border-[#1e222a] rounded px-2 py-1 text-xs text-slate-300 font-medium focus:outline-none cursor-pointer"
+                >
+                  <option value="A3">Wolters Kluwer A3</option>
+                  <option value="SAGE">Sage 50</option>
+                  <option value="CONTASOL">DELSOL Contasol</option>
+                </select>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Derecha: Cuota, Trazabilidad y Usuario */}
+        <div className="flex items-center gap-3 shrink-0">
+          {!isAdminView && onOpenPaywall && (
+            <button
+              type="button"
+              onClick={onOpenPaywall}
+              className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded bg-[#111318] hover:bg-[#161920] border border-[#1e222a] text-[11px] transition-colors"
+              title="Capacidad mensual del despacho"
+            >
+              <span className="text-slate-400">{planCode}</span>
+              <span className="text-[#2a303c]">|</span>
+              <span className="font-mono text-slate-200">
+                {usedTx}/{maxTx}
+              </span>
+              <div className="w-12 h-1 bg-[#1e222a] rounded-full overflow-hidden">
+                <div
+                  className={`h-full ${
+                    usagePct >= 100 ? 'bg-rose-500' : usagePct >= 80 ? 'bg-amber-400' : 'bg-slate-300'
+                  }`}
+                  style={{ width: `${usagePct}%` }}
+                />
+              </div>
+            </button>
+          )}
+
+          {!isAdminView && onOpenAuditModal && (
+            <button
+              type="button"
+              onClick={onOpenAuditModal}
+              className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#111318] hover:bg-[#161920] border border-[#1e222a] text-[11px] text-slate-300 transition-colors"
+            >
+              <FileCheck2 className="h-3.5 w-3.5 text-slate-400" />
+              <span>Trazabilidad SHA-256</span>
+            </button>
+          )}
+
+          {currentUser && (
+            <div className="flex items-center gap-2 pl-2 border-l border-[#1e222a]">
+              <span className="hidden sm:inline text-xs text-slate-400 truncate max-w-[160px]">
+                {currentUser.full_name || currentUser.email}
+              </span>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-[#161920] transition-colors"
+                title="Cerrar sesión"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>
@@ -4326,11 +4243,11 @@ FICHERO: frontend\src\components\IngestionZone.jsx
 
 /**
  * FICHERO: frontend/src/components/IngestionZone.jsx
- * Soporta arrastrar múltiples PDFs a la vez, carpetas completas y selección de directorios
+ * Barra compacta de ingesta documental (soporta carpetas, N43, CSV, XLSX y múltiples PDFs)
  */
 import React, { useState, useRef } from 'react';
 import {
-  UploadCloud,
+  Upload,
   FolderOpen,
   FileSpreadsheet,
   CheckCircle2,
@@ -4338,17 +4255,13 @@ import {
   RefreshCw,
   FileCheck,
   X,
-  Zap,
+  ArrowUpRight,
   Play,
 } from 'lucide-react';
 
 const VALID_PORTFOLIO_EXTS = ['.pdf', '.xlsx', '.csv', '.json'];
 const VALID_STATEMENT_EXTS = ['.n43', '.txt', '.csv', '.xlsx', '.pdf', '.json'];
 
-/**
- * Extrae recursivamente todos los archivos cuando el usuario arrastra
- * múltiples ficheros sueltos o una carpeta completa desde su ordenador.
- */
 async function extractFilesFromDataTransfer(dataTransfer) {
   const files = [];
 
@@ -4432,7 +4345,7 @@ export function IngestionZone({
     if (valid.length === 0) {
       setFeedback({
         type: 'error',
-        text: 'No se encontraron archivos válidos (.pdf, .xlsx, .csv, .json) en la selección.',
+        text: 'Formatos admitidos: .pdf, .xlsx, .csv, .json',
       });
       return [];
     }
@@ -4450,7 +4363,7 @@ export function IngestionZone({
     });
     setFeedback({
       type: 'ok',
-      text: `${valid.length} archivo(s) cargados en Cartera de Facturas`,
+      text: `${valid.length} documento(s) en cartera`,
     });
     return valid;
   };
@@ -4480,17 +4393,12 @@ export function IngestionZone({
     }
   };
 
-  /**
-   * Clasifica inteligentemente lotes de archivos o carpetas:
-   * - Si sueltas 20 PDFs + 1 extracto (.n43/.csv), mete los 20 PDFs en cartera y los cruza con el extracto.
-   * - Si sueltas 20 PDFs sueltos (o una carpeta de PDFs), los carga todos en Cartera y los procesa en bloque.
-   */
   const handleSmartFilesExecution = async (fileList) => {
     const validFiles = fileList.filter((f) => VALID_STATEMENT_EXTS.includes(getExtension(f.name)));
     if (validFiles.length === 0) {
       setFeedback({
         type: 'error',
-        text: 'Formato no soportado. Usa .n43, .csv, .xlsx, .pdf o .json',
+        text: 'Archivo no compatible (.n43, .csv, .xlsx, .pdf, .json)',
       });
       return;
     }
@@ -4502,7 +4410,6 @@ export function IngestionZone({
       (f) => getExtension(f.name) !== '.pdf' && !f.name.toLowerCase().includes('cartera')
     );
 
-    // Caso 1: El usuario arrastró a la vez las facturas (PDFs/Cartera) y el extracto bancario (.n43/.csv)
     if (pdfOrPortfolioFiles.length > 0 && statementFiles.length > 0) {
       const updatedPortfolio = [...invoicesFiles, ...pdfOrPortfolioFiles];
       setInvoicesFiles(updatedPortfolio);
@@ -4510,7 +4417,6 @@ export function IngestionZone({
       return;
     }
 
-    // Caso 2: El usuario arrastró múltiples PDFs (ej. 20 facturas PDF de golpe o una carpeta de PDFs)
     if (pdfOrPortfolioFiles.length > 0 && statementFiles.length === 0) {
       const updatedPortfolio = [...invoicesFiles, ...pdfOrPortfolioFiles];
       setInvoicesFiles(updatedPortfolio);
@@ -4518,27 +4424,27 @@ export function IngestionZone({
       return;
     }
 
-    // Caso 3: El usuario arrastró uno o varios extractos (.n43 / .csv) y ya tenía o no cartera cargada
     await executeProcessing(statementFiles, invoicesFiles);
   };
 
   const executeProcessing = async (mainFiles, portfolioList) => {
     const countLabel =
-      mainFiles.length > 1 ? `${mainFiles.length} archivos` : mainFiles[0]?.name || 'lote';
+      mainFiles.length > 1 ? `${mainFiles.length} ficheros` : mainFiles[0]?.name || 'lote';
 
     setLocalProcessing(true);
     setFeedback({
       type: 'loading',
-      text: `Procesando ${countLabel}${portfolioList.length > 0 ? ` con ${portfolioList.length} factura(s) en cartera` : ''}...`,
+      text: `Conciliando ${countLabel}...`,
     });
 
     try {
       if (onFileProcessed) {
-        const result = await onFileProcessed(mainFiles, portfolioList, true);
+        // IMPORTANTE: ephemeralMode = false para persistir el lote en el servidor
+        const result = await onFileProcessed(mainFiles, portfolioList, false);
         if (result && result.total_movements !== undefined) {
           setFeedback({
             type: 'ok',
-            text: `${result.total_movements} partidas procesadas correctamente`,
+            text: `${result.total_movements} apuntes conciliados`,
           });
         } else {
           setFeedback(null);
@@ -4554,158 +4460,151 @@ export function IngestionZone({
     }
   };
 
+  const busy = localProcessing || isProcessing;
+
   return (
-    <section className="bg-[#10131a] border border-[#1e232d] rounded-xl p-5 shadow-lg">
-      {/* Barra superior de acciones: Cartera de Facturas (Archivos o Carpeta entera) + Stripe API */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2.5">
-          <h2 className="text-sm font-semibold text-white">Importar Extractos y Facturas</h2>
-          {feedback && (
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono ${
-                feedback.type === 'ok'
-                  ? 'bg-emerald-950/50 text-emerald-300 border border-emerald-800/60'
-                  : feedback.type === 'error'
-                  ? 'bg-rose-950/50 text-rose-300 border border-rose-800/60'
-                  : 'bg-blue-950/50 text-blue-300 border border-blue-800/60'
-              }`}
-            >
-              {feedback.type === 'ok' && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
-              {feedback.type === 'error' && <AlertCircle className="h-3 w-3 text-rose-400" />}
-              {feedback.type === 'loading' && <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />}
-              <span>{feedback.text}</span>
-            </span>
+    <section
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+      }}
+      onDrop={handleDrop}
+      className={`rounded-md border transition-colors px-4 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${
+        isDragOver
+          ? 'border-slate-400 bg-[#161920]'
+          : 'border-[#1e222a] bg-[#111318]'
+      }`}
+    >
+      {/* Inputs ocultos */}
+      <input
+        ref={bankInputRef}
+        type="file"
+        multiple
+        onChange={handleBankFileChange}
+        accept=".n43,.txt,.csv,.xlsx,.pdf,.json"
+        className="hidden"
+      />
+      <input
+        ref={portfolioFilesInputRef}
+        type="file"
+        multiple
+        onChange={handlePortfolioInputChange}
+        accept=".pdf,.xlsx,.csv,.json"
+        className="hidden"
+      />
+      <input
+        ref={portfolioFolderInputRef}
+        type="file"
+        webkitdirectory=""
+        directory=""
+        multiple
+        onChange={handlePortfolioInputChange}
+        className="hidden"
+      />
+
+      {/* Zona izquierda: Trigger de subida y feedback */}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => bankInputRef.current?.click()}
+          disabled={busy}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-slate-100 hover:bg-white text-slate-950 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+        >
+          {busy ? (
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Upload className="h-3.5 w-3.5" />
           )}
-        </div>
+          <span>Importar Extracto / Facturas</span>
+        </button>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Input oculto para múltiples archivos de cartera (.pdf, .xlsx, .csv, .json) */}
-          <input
-            ref={portfolioFilesInputRef}
-            type="file"
-            multiple
-            onChange={handlePortfolioInputChange}
-            accept=".pdf,.xlsx,.csv,.json"
-            className="hidden"
-          />
+        <span className="text-xs text-slate-400 hidden sm:inline">
+          Arrastre ficheros <span className="font-mono text-slate-300">.n43</span>, <span className="font-mono text-slate-300">.csv</span>, <span className="font-mono text-slate-300">.xlsx</span> o carpetas de <span className="font-mono text-slate-300">.pdf</span> directamente aquí
+        </span>
 
-          {/* Input oculto para seleccionar una CARPETA entera de facturas */}
-          <input
-            ref={portfolioFolderInputRef}
-            type="file"
-            webkitdirectory=""
-            directory=""
-            multiple
-            onChange={handlePortfolioInputChange}
-            className="hidden"
-          />
-
-          {invoicesFiles.length > 0 ? (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-xs text-emerald-300">
-              <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="font-mono text-[11px]">
-                {invoicesFiles.length === 1
-                  ? invoicesFiles[0].name
-                  : `${invoicesFiles.length} facturas en cartera`}
-              </span>
-              <button
-                type="button"
-                onClick={() => executeProcessing(invoicesFiles, invoicesFiles)}
-                disabled={isProcessing || localProcessing}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-semibold transition-colors"
-                title="Procesar directamente las facturas de la cartera"
-              >
-                <Play className="h-2.5 w-2.5" />
-                <span>Procesar</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setInvoicesFiles([])}
-                className="text-slate-400 hover:text-white ml-1"
-                title="Vaciar cartera de facturas"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={() => portfolioFolderInputRef.current?.click()}
-            disabled={isProcessing || localProcessing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-200 transition-colors"
-            title="Seleccionar una carpeta completa con facturas PDF, Excel o CSV"
+        {feedback && (
+          <span
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono ${
+              feedback.type === 'ok'
+                ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-900/60'
+                : feedback.type === 'error'
+                ? 'bg-rose-950/40 text-rose-300 border border-rose-900/60'
+                : 'bg-[#161920] text-slate-300 border border-[#2a303c]'
+            }`}
           >
-            <FolderOpen className="h-3.5 w-3.5 text-blue-400" />
-            <span>Subir Carpeta Facturas</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => portfolioFilesInputRef.current?.click()}
-            disabled={isProcessing || localProcessing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-300 transition-colors"
-            title="Seleccionar múltiples archivos de facturas (.pdf, .xlsx, .csv)"
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
-            <span>+ Facturas Sueltas</span>
-          </button>
-
-          {onOpenStripeSync && (
-            <button
-              type="button"
-              onClick={onOpenStripeSync}
-              disabled={isProcessing || localProcessing}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#161a23] hover:bg-[#1e2430] border border-[#283040] text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
-            >
-              <Zap className="h-3.5 w-3.5 text-blue-400" />
-              <span>Stripe API</span>
-            </button>
-          )}
-        </div>
+            {feedback.type === 'ok' && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
+            {feedback.type === 'error' && <AlertCircle className="h-3 w-3 text-rose-400" />}
+            {feedback.type === 'loading' && <RefreshCw className="h-3 w-3 animate-spin text-slate-300" />}
+            <span>{feedback.text}</span>
+          </span>
+        )}
       </div>
 
-      {/* Cuadro Grande Central: acepta múltiples archivos sueltos o carpetas completas arrastradas */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          setIsDragOver(false);
-        }}
-        onDrop={handleDrop}
-        onClick={() => bankInputRef.current?.click()}
-        className={`w-full rounded-xl border-2 border-dashed py-10 px-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
-          isDragOver
-            ? 'border-blue-500 bg-blue-950/20 scale-[0.998]'
-            : 'border-[#242b38] hover:border-blue-500/50 bg-[#0b0d11]/90 hover:bg-[#0f131a]'
-        }`}
-      >
-        <input
-          ref={bankInputRef}
-          type="file"
-          multiple
-          onChange={handleBankFileChange}
-          accept=".n43,.txt,.csv,.xlsx,.pdf,.json"
-          className="hidden"
-        />
+      {/* Zona derecha: Cartera auxiliar y conexión Stripe */}
+      <div className="flex flex-wrap items-center gap-2">
+        {invoicesFiles.length > 0 && (
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#161920] border border-[#2a303c] text-xs text-slate-200">
+            <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="font-mono text-[11px]">
+              {invoicesFiles.length === 1
+                ? invoicesFiles[0].name
+                : `${invoicesFiles.length} docs en cartera`}
+            </span>
+            <button
+              type="button"
+              onClick={() => executeProcessing(invoicesFiles, invoicesFiles)}
+              disabled={busy}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-medium ml-1"
+            >
+              <Play className="h-2.5 w-2.5" />
+              <span>Cruzar</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setInvoicesFiles([])}
+              className="text-slate-500 hover:text-slate-200 ml-0.5"
+              title="Limpiar cartera"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
-        <div className="h-12 w-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-3 shadow-inner">
-          {localProcessing || isProcessing ? (
-            <RefreshCw className="h-5 w-5 animate-spin" />
-          ) : (
-            <UploadCloud className="h-6 w-6" />
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => portfolioFolderInputRef.current?.click()}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#090a0d] hover:bg-[#161920] border border-[#1e222a] text-xs text-slate-300 transition-colors"
+        >
+          <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
+          <span>Carpeta Facturas</span>
+        </button>
 
-        <p className="text-sm font-semibold text-white">
-          Arrastra aquí tus archivos o carpetas enteras (Norma 43, CSV, Excel o múltiples PDFs)
-        </p>
-        <p className="text-xs text-slate-400 mt-1 font-mono">
-          Soporta subida simultánea de 20+ facturas PDF junto con el extracto bancario (.n43 / .csv)
-        </p>
+        <button
+          type="button"
+          onClick={() => portfolioFilesInputRef.current?.click()}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#090a0d] hover:bg-[#161920] border border-[#1e222a] text-xs text-slate-300 transition-colors"
+        >
+          <FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" />
+          <span>+ Cartera</span>
+        </button>
+
+        {onOpenStripeSync && (
+          <button
+            type="button"
+            onClick={onOpenStripeSync}
+            disabled={busy}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#090a0d] hover:bg-[#161920] border border-[#1e222a] text-xs text-slate-300 transition-colors"
+          >
+            <span>Stripe API</span>
+            <ArrowUpRight className="h-3 w-3 text-slate-500" />
+          </button>
+        )}
       </div>
     </section>
   );
@@ -5322,14 +5221,11 @@ FICHERO: frontend\src\components\StagingRadar.jsx
 
 /**
  * FICHERO: frontend/src/components/StagingRadar.jsx
- * Mesa de Conciliación Minimalista de Alta Densidad
+ * Mesa de Conciliación Contable de Alta Densidad
  */
 import React, { useState, useMemo } from 'react';
 import {
   Search,
-  CheckCircle2,
-  AlertCircle,
-  AlertOctagon,
   CheckCheck,
   Trash2,
   Plus,
@@ -5424,33 +5320,10 @@ export function StagingRadar({
   };
 
   return (
-    <div className="space-y-4">
-      {/* KPIs Directos sin texto sobrante */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
-          <span className="text-[11px] text-slate-400 font-medium">Partidas</span>
-          <div className="font-mono text-xl font-bold text-white mt-0.5">{summary.all}</div>
-        </div>
-
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
-          <span className="text-[11px] text-slate-400 font-medium">Neto Banco (572)</span>
-          <div className="font-mono text-xl font-bold text-white mt-0.5">{formatEuro(summary.netTotal)}</div>
-        </div>
-
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
-          <span className="text-[11px] text-slate-400 font-medium">Bruto Facturas (430)</span>
-          <div className="font-mono text-xl font-bold text-slate-200 mt-0.5">{formatEuro(summary.grossTotal)}</div>
-        </div>
-
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
-          <span className="text-[11px] text-slate-400 font-medium">Comisiones (626)</span>
-          <div className="font-mono text-xl font-bold text-amber-400 mt-0.5">{formatEuro(summary.feeTotal)}</div>
-        </div>
-      </div>
-
-      {/* Contenedor de Tabla */}
-      <div className="bg-[#10131a] border border-[#1e232d] rounded-xl overflow-hidden shadow-lg">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-[#1e232d] bg-[#0d1016]">
+    <div className="bg-[#111318] border border-[#1e222a] rounded-md overflow-hidden flex-1 flex flex-col">
+      {/* Barra superior: Filtro de Periodo + Totales Contables del Lote */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between border-b border-[#1e222a] bg-[#0d0f14]">
+        <div className="flex flex-wrap items-center">
           <PeriodFilter
             selectedYear={selectedYear}
             onSelectYear={onSelectYear}
@@ -5463,12 +5336,12 @@ export function StagingRadar({
           />
 
           {batches && batches.length > 1 && (
-            <div className="flex items-center gap-2 px-4 py-2 border-t lg:border-t-0 border-[#1e232d] text-xs">
-              <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
+            <div className="flex items-center gap-2 px-3 py-2 border-l border-[#1e222a] text-xs">
+              <FolderOpen className="h-3.5 w-3.5 text-slate-500" />
               <select
                 value={currentBatchId || ''}
                 onChange={(e) => onSelectBatch && onSelectBatch(e.target.value)}
-                className="bg-[#161a23] border border-[#262c3a] rounded px-2.5 py-1 text-xs text-slate-200 font-mono focus:outline-none"
+                className="bg-[#111318] border border-[#1e222a] rounded px-2 py-0.5 text-xs text-slate-200 font-mono focus:outline-none"
               >
                 {batches.map((b) => (
                   <option key={b.id} value={b.id}>
@@ -5480,183 +5353,193 @@ export function StagingRadar({
           )}
         </div>
 
-        {/* Barra de Pestañas y Búsqueda */}
-        <div className="p-3.5 border-b border-[#1e232d] bg-[#0f1218] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto">
-            <button
-              type="button"
-              onClick={() => setActiveTab('ALL')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                activeTab === 'ALL'
-                  ? 'bg-[#181c26] text-white border-[#2a3142]'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span>Todas</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#0b0d11] text-slate-300">
-                {summary.all}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('GREEN')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                activeTab === 'GREEN'
-                  ? 'bg-emerald-950/40 text-emerald-300 border-emerald-800/60'
-                  : 'border-transparent text-slate-400 hover:text-emerald-400'
-              }`}
-            >
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-              <span>Conciliadas</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300">
-                {summary.green}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('YELLOW')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                activeTab === 'YELLOW'
-                  ? 'bg-amber-950/40 text-amber-300 border-amber-800/60'
-                  : 'border-transparent text-slate-400 hover:text-amber-400'
-              }`}
-            >
-              <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
-              <span>Revisión</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300">
-                {summary.yellow}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('RED')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                activeTab === 'RED'
-                  ? 'bg-rose-950/40 text-rose-300 border-rose-800/60'
-                  : 'border-transparent text-slate-400 hover:text-rose-400'
-              }`}
-            >
-              <AlertOctagon className="h-3.5 w-3.5 text-rose-400" />
-              <span>Cuenta 555</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-300">
-                {summary.red}
-              </span>
-            </button>
+        {/* Cinta de saldos PGC compacta */}
+        <div className="flex flex-wrap items-center gap-5 px-4 py-2 border-t xl:border-t-0 border-[#1e222a] text-xs">
+          <div>
+            <span className="text-slate-500 mr-1.5">572 Tesorería:</span>
+            <span className="font-mono font-semibold text-slate-100">{formatEuro(summary.netTotal)}</span>
           </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative w-full sm:w-64">
-              <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar factura, NIF, importe..."
-                className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-              />
-            </div>
-
-            <select
-              value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value)}
-              className="bg-[#0b0d11] border border-[#222834] rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none cursor-pointer"
-            >
-              <option value="ALL">Todos los canales</option>
-              <option value="Stripe">Stripe</option>
-              <option value="Redsys">Redsys TPV</option>
-              <option value="Norma 43">Norma 43</option>
-            </select>
-
-            {summary.yellow > 0 && (
-              <button
-                type="button"
-                onClick={onBulkApproveYellows}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors"
-              >
-                <CheckCheck className="h-3.5 w-3.5" />
-                <span>Aprobar ({summary.yellow})</span>
-              </button>
-            )}
-
-            {transactions.length > 0 && onClearAllTransactions && (
-              <button
-                type="button"
-                onClick={handleClearAll}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-                  confirmClear
-                    ? 'bg-rose-600 text-white border-rose-500'
-                    : 'bg-[#0b0d11] hover:bg-rose-950/40 border-[#222834] text-slate-400 hover:text-rose-300'
-                }`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>{confirmClear ? 'Confirmar' : 'Limpiar'}</span>
-              </button>
-            )}
+          <div className="h-3 w-px bg-[#1e222a]" />
+          <div>
+            <span className="text-slate-500 mr-1.5">430 Clientes:</span>
+            <span className="font-mono font-semibold text-slate-200">{formatEuro(summary.grossTotal)}</span>
+          </div>
+          <div className="h-3 w-px bg-[#1e222a]" />
+          <div>
+            <span className="text-slate-500 mr-1.5">626 Gastos/Comisiones:</span>
+            <span className="font-mono font-semibold text-amber-400">{formatEuro(summary.feeTotal)}</span>
           </div>
         </div>
-
-        {/* Tabla o Estado Vacío */}
-        {transactions.length === 0 ? (
-          <div className="py-12 px-6 text-center bg-[#0b0d11]">
-            {!hasCompanies ? (
-              <button
-                type="button"
-                onClick={onOpenAddClientModal}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors"
-              >
-                <Plus className="h-4 w-4" />
-                <span>Crear Primera Empresa Cliente</span>
-              </button>
-            ) : (
-              <span className="text-xs text-slate-500">
-                Sin partidas cargadas. Sube un archivo arriba para conciliar.
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-[#1e232d] bg-[#0b0d11] text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                  <th className="py-2.5 px-2 w-8 text-center"></th>
-                  <th className="py-2.5 px-2">Origen</th>
-                  <th className="py-2.5 px-2">Fecha</th>
-                  <th className="py-2.5 px-2">Concepto</th>
-                  <th className="py-2.5 px-2 text-right">Neto (572)</th>
-                  <th className="py-2.5 px-2 text-right">Bruto (430)</th>
-                  <th className="py-2.5 px-2 text-right">Comisión (626)</th>
-                  <th className="py-2.5 px-2 text-center">Score</th>
-                  <th className="py-2.5 px-2 text-right">Acción</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#181c24]">
-                {filteredTransactions.length > 0 ? (
-                  filteredTransactions.map((tx) => (
-                    <TransactionRow
-                      key={tx.id}
-                      transaction={tx}
-                      isExpanded={expandedId === tx.id}
-                      onToggleExpand={() => setExpandedId((prev) => (prev === tx.id ? null : tx.id))}
-                      onOpenScoreModal={onOpenScoreModal}
-                      onApprove={onApproveTransaction}
-                      onDelete={onDeleteTransaction}
-                    />
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={9} className="py-8 text-center text-slate-500 text-xs">
-                      Sin coincidencias para el filtro actual.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
+
+      {/* Barra de Pestañas de Estado y Búsqueda */}
+      <div className="px-4 py-2.5 border-b border-[#1e222a] bg-[#111318] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="flex items-center gap-1 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setActiveTab('ALL')}
+            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'ALL'
+                ? 'bg-[#1a1e26] text-white'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span>Todos</span>
+            <span className="font-mono text-[11px] text-slate-400">{summary.all}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('GREEN')}
+            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'GREEN'
+                ? 'bg-[#1a1e26] text-emerald-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            <span>Conciliados</span>
+            <span className="font-mono text-[11px] text-slate-400">{summary.green}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('YELLOW')}
+            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'YELLOW'
+                ? 'bg-[#1a1e26] text-amber-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+            <span>Pendientes de revisión</span>
+            <span className="font-mono text-[11px] text-slate-400">{summary.yellow}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('RED')}
+            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'RED'
+                ? 'bg-[#1a1e26] text-rose-300'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+            <span>Cuenta 555</span>
+            <span className="font-mono text-[11px] text-slate-400">{summary.red}</span>
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-64">
+            <Search className="h-3.5 w-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Filtrar por concepto, factura, importe..."
+              className="w-full bg-[#090a0d] border border-[#1e222a] rounded pl-8 pr-3 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-600"
+            />
+          </div>
+
+          <select
+            value={selectedSource}
+            onChange={(e) => setSelectedSource(e.target.value)}
+            className="bg-[#090a0d] border border-[#1e222a] rounded px-2.5 py-1 text-xs text-slate-300 focus:outline-none cursor-pointer"
+          >
+            <option value="ALL">Todos los orígenes</option>
+            <option value="Stripe">Stripe</option>
+            <option value="Redsys">Redsys TPV</option>
+            <option value="Norma 43">Norma 43</option>
+          </select>
+
+          {summary.yellow > 0 && (
+            <button
+              type="button"
+              onClick={onBulkApproveYellows}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-medium transition-colors"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              <span>Conformar {summary.yellow} en revisión</span>
+            </button>
+          )}
+
+          {transactions.length > 0 && onClearAllTransactions && (
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors border ${
+                confirmClear
+                  ? 'bg-rose-700 text-white border-rose-600'
+                  : 'bg-[#090a0d] hover:bg-rose-950/30 border-[#1e222a] text-slate-400 hover:text-rose-300'
+              }`}
+            >
+              <Trash2 className="h-3 w-3" />
+              <span>{confirmClear ? 'Confirmar vaciado' : 'Vaciar lote'}</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tabla de Apuntes Contables */}
+      {transactions.length === 0 ? (
+        <div className="py-16 px-6 text-center bg-[#090a0d] flex-1 flex flex-col items-center justify-center">
+          {!hasCompanies ? (
+            <button
+              type="button"
+              onClick={onOpenAddClientModal}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded bg-slate-100 hover:bg-white text-xs font-semibold text-slate-950 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Dar de alta primera sociedad cliente</span>
+            </button>
+          ) : (
+            <p className="text-xs text-slate-500">
+              No hay apuntes contables cargados en este periodo. Importe un extracto Norma 43, CSV o conjunto de facturas en la barra superior.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="overflow-x-auto flex-1">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-[#1e222a] bg-[#0d0f14] text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                <th className="py-2 px-2 w-8 text-center"></th>
+                <th className="py-2 px-3">Referencia / Canal</th>
+                <th className="py-2 px-3">Fecha</th>
+                <th className="py-2 px-3">Concepto Bancario y Regla</th>
+                <th className="py-2 px-3 text-right">Neto (572)</th>
+                <th className="py-2 px-3 text-right">Bruto (430)</th>
+                <th className="py-2 px-3 text-right">Gastos (626)</th>
+                <th className="py-2 px-3 text-center">Afinidad</th>
+                <th className="py-2 px-3 text-right">Estado / Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#181b22]">
+              {filteredTransactions.length > 0 ? (
+                filteredTransactions.map((tx) => (
+                  <TransactionRow
+                    key={tx.id}
+                    transaction={tx}
+                    isExpanded={expandedId === tx.id}
+                    onToggleExpand={() => setExpandedId((prev) => (prev === tx.id ? null : tx.id))}
+                    onOpenScoreModal={onOpenScoreModal}
+                    onApprove={onApproveTransaction}
+                    onDelete={onDeleteTransaction}
+                  />
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={9} className="py-10 text-center text-slate-500 text-xs">
+                    Ningún apunte coincide con los criterios de búsqueda.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -5778,23 +5661,18 @@ export function StripeSyncModal({
 FICHERO: frontend\src\components\TransactionRow.jsx
 ================================================================================
 
+/**
+ * FICHERO: frontend/src/components/TransactionRow.jsx
+ */
 import React, { useState } from 'react';
-import { 
-  ChevronDown, 
-  ChevronRight, 
-  CheckCircle2, 
-  AlertCircle, 
-  AlertOctagon, 
-  Layers, 
-  ArrowRightLeft, 
-  CreditCard,
+import {
+  ChevronDown,
+  ChevronRight,
   Check,
-  BarChart2,
-  Lock,
-  Trash2
+  Trash2,
 } from 'lucide-react';
 import { DoubleEntryViewer } from './DoubleEntryViewer';
-import { formatEuro, formatEuroNoSymbol, formatDateSpanish, formatPercent } from '../utils/formatters';
+import { formatEuroNoSymbol, formatDateSpanish, formatPercent } from '../utils/formatters';
 
 export function TransactionRow({
   transaction,
@@ -5812,180 +5690,127 @@ export function TransactionRow({
     setTimeout(() => {
       onApprove(transaction.id);
       setApproving(false);
-    }, 250);
+    }, 150);
   };
 
-  const getStatusBadge = () => {
-    switch (transaction.status) {
-      case 'GREEN':
-        return (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenScoreModal(transaction);
-            }}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-emerald-950/40 border border-emerald-800/50 text-emerald-400 hover:bg-emerald-900/40 transition-colors"
-            title="Ver radar dimensional de coincidencia"
-          >
-            <CheckCircle2 className="h-3 w-3" />
-            <span>{formatPercent(transaction.confidenceScore)}</span>
-          </button>
-        );
-      case 'YELLOW':
-        return (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenScoreModal(transaction);
-            }}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-amber-950/40 border border-amber-800/50 text-amber-400 hover:bg-amber-900/40 transition-colors"
-            title="Revisión requerida - Clic para ver desglose"
-          >
-            <AlertCircle className="h-3 w-3" />
-            <span>{formatPercent(transaction.confidenceScore)}</span>
-          </button>
-        );
-      case 'RED':
-      default:
-        return (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenScoreModal(transaction);
-            }}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-rose-950/40 border border-rose-800/50 text-rose-400 hover:bg-rose-900/40 transition-colors"
-            title="Excepción de auditoría - Clic para ver desglose"
-          >
-            <AlertOctagon className="h-3 w-3" />
-            <span>{formatPercent(transaction.confidenceScore)}</span>
-          </button>
-        );
-    }
+  const renderAffinityBadge = () => {
+    const dotColor =
+      transaction.status === 'GREEN'
+        ? 'bg-emerald-400'
+        : transaction.status === 'YELLOW'
+        ? 'bg-amber-400'
+        : 'bg-rose-400';
+
+    const textColor =
+      transaction.status === 'GREEN'
+        ? 'text-emerald-300'
+        : transaction.status === 'YELLOW'
+        ? 'text-amber-300'
+        : 'text-rose-300';
+
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenScoreModal(transaction);
+        }}
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#090a0d] hover:bg-[#1a1e26] border border-[#1e222a] text-[11px] font-mono ${textColor} transition-colors`}
+        title="Ver desglose de puntuación"
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
+        <span>{formatPercent(transaction.confidenceScore)}</span>
+      </button>
+    );
   };
 
-  const getTypeIcon = () => {
-    if (transaction.type === 'BATCH_PAYOUT') {
-      return <Layers className="h-3.5 w-3.5 text-zinc-400" title="Liquidación agrupada (Batch Payout)" />;
-    }
-    if (transaction.type === 'TRANSFER') {
-      return <ArrowRightLeft className="h-3.5 w-3.5 text-zinc-400" title="Transferencia bancaria directa" />;
-    }
-    return <CreditCard className="h-3.5 w-3.5 text-zinc-400" title="Excepción / Movimiento no conciliado" />;
-  };
+  const matchedCount = transaction.matchedCount ?? 1;
 
   return (
     <>
-      <tr 
+      <tr
         onClick={onToggleExpand}
-        className={`group border-b border-zinc-800/60 hover:bg-zinc-900/40 cursor-pointer transition-colors text-xs ${
-          isExpanded ? 'bg-zinc-900/60' : ''
+        className={`group hover:bg-[#161920] cursor-pointer transition-colors text-xs ${
+          isExpanded ? 'bg-[#161920]' : ''
         }`}
       >
-        {/* Expand Toggle */}
-        <td className="py-2.5 px-2 text-center text-zinc-400">
-          <button 
-            type="button"
-            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
-          >
-            {isExpanded ? (
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-300" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-zinc-400 group-hover:text-zinc-300" />
-            )}
-          </button>
+        <td className="py-2 px-2 text-center text-slate-500">
+          {isExpanded ? (
+            <ChevronDown className="h-3.5 w-3.5 text-slate-300 mx-auto" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-slate-300 mx-auto" />
+          )}
         </td>
 
-        {/* Source & Type */}
-        <td className="py-2.5 px-2">
-          <div className="flex items-center gap-1.5">
-            {getTypeIcon()}
-            <div>
-              <div className="font-mono text-[11px] font-semibold text-zinc-200">
-                {transaction.id}
-              </div>
-              <div className="text-[10px] text-zinc-400 truncate max-w-[130px]" title={transaction.source}>
-                {transaction.source}
-              </div>
-            </div>
+        <td className="py-2 px-3">
+          <div className="font-mono text-[11px] font-medium text-slate-200">
+            {transaction.id}
+          </div>
+          <div className="text-[10px] text-slate-500 truncate max-w-[140px]">
+            {transaction.source}
           </div>
         </td>
 
-        {/* Operation & Value Date */}
-        <td className="py-2.5 px-2 font-mono text-[11px] text-zinc-300 whitespace-nowrap">
+        <td className="py-2 px-3 font-mono text-[11px] text-slate-300 whitespace-nowrap">
           <div>{formatDateSpanish(transaction.date)}</div>
-          <div className="text-[10px] text-zinc-400">V: {formatDateSpanish(transaction.valueDate)}</div>
         </td>
 
-        {/* Bank Concept & Match Note */}
-        <td className="py-2.5 px-2 max-w-[280px]">
-          <div className="text-zinc-200 font-sans text-xs truncate" title={transaction.concept}>
+        <td className="py-2 px-3 max-w-[320px]">
+          <div className="text-slate-200 text-xs truncate" title={transaction.concept}>
             {transaction.concept}
           </div>
-          <div className="text-[10px] text-zinc-400 font-mono mt-0.5 truncate">
+          <div className="text-[10px] text-slate-500 font-mono truncate">
             {transaction.solverUsed}
           </div>
         </td>
 
-        {/* Net Bank Amount */}
-        <td className="py-2.5 px-2 text-right font-mono tabular-nums whitespace-nowrap">
-          <span className="text-zinc-100 font-semibold text-xs">
+        <td className="py-2 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+          <span className="text-slate-100 font-medium">
             {formatEuroNoSymbol(transaction.netAmountEur)} €
           </span>
-          <div className="text-[10px] text-zinc-400">
+          <div className="text-[10px] text-slate-500">
             {transaction.bankAccountCode}
           </div>
         </td>
 
-        {/* Gross Invoices Amount */}
-        <td className="py-2.5 px-2 text-right font-mono tabular-nums whitespace-nowrap">
-          <span className="text-zinc-300 text-xs">
+        <td className="py-2 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+          <span className="text-slate-300">
             {formatEuroNoSymbol(transaction.grossAmountEur)} €
           </span>
-          <div className="text-[10px] text-zinc-400">
-            {transaction.matchedCount} {transaction.matchedCount === 1 ? 'partida' : 'partidas'}
+          <div className="text-[10px] text-slate-500">
+            {matchedCount} {matchedCount === 1 ? 'fra.' : 'fras.'}
           </div>
         </td>
 
-        {/* Fees Amount */}
-        <td className="py-2.5 px-2 text-right font-mono tabular-nums whitespace-nowrap">
+        <td className="py-2 px-3 text-right font-mono tabular-nums whitespace-nowrap">
           {transaction.feeAmountEur > 0 ? (
-            <span className="text-amber-400 text-xs font-medium">
+            <span className="text-amber-400">
               -{formatEuroNoSymbol(transaction.feeAmountEur)} €
             </span>
           ) : (
-            <span className="text-zinc-400 text-xs">0,00 €</span>
+            <span className="text-slate-600">0,00 €</span>
           )}
-          <div className="text-[10px] text-zinc-400">
-            {transaction.feeAmountEur > 0 ? 'Cuenta 626' : '—'}
-          </div>
         </td>
 
-        {/* Confidence Score Badge */}
-        <td className="py-2.5 px-2 text-center whitespace-nowrap">
-          {getStatusBadge()}
+        <td className="py-2 px-3 text-center whitespace-nowrap">
+          {renderAffinityBadge()}
         </td>
 
-        {/* Action Button */}
-        <td className="py-2.5 px-2 text-right whitespace-nowrap">
-          <div className="flex items-center justify-end gap-1.5">
+        <td className="py-2 px-3 text-right whitespace-nowrap">
+          <div className="flex items-center justify-end gap-2">
             {transaction.status === 'YELLOW' ? (
               <button
                 type="button"
                 onClick={handleQuickApprove}
                 disabled={approving}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600/90 hover:bg-emerald-600 active:bg-emerald-700 text-white font-medium text-[11px] transition-colors shadow-sm"
-                title="Aprobar asiento contable y certificar conciliación"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-medium text-[11px] transition-colors"
               >
                 <Check className="h-3 w-3" />
-                <span>Aprobar Asiento</span>
+                <span>Conformar</span>
               </button>
             ) : transaction.status === 'GREEN' ? (
-              <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
-                <CheckCircle2 className="h-3 w-3" />
-                <span>Conciliado</span>
+              <span className="text-[11px] text-slate-400 font-mono">
+                Cuadrado
               </span>
             ) : (
               <button
@@ -5994,13 +5819,12 @@ export function TransactionRow({
                   e.stopPropagation();
                   onOpenScoreModal(transaction);
                 }}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 text-[10px] transition-colors"
+                className="px-2 py-0.5 rounded bg-[#090a0d] hover:bg-[#1a1e26] border border-[#2a303c] text-slate-300 text-[11px] transition-colors"
               >
-                <span>Inspeccionar</span>
+                Revisar 555
               </button>
             )}
 
-            {/* Botón para Eliminar Partida */}
             {onDelete && (
               <button
                 type="button"
@@ -6008,8 +5832,8 @@ export function TransactionRow({
                   e.stopPropagation();
                   onDelete(transaction.id);
                 }}
-                className="p-1 rounded text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 transition-colors"
-                title="Eliminar partida"
+                className="p-1 rounded text-slate-500 hover:text-rose-400 transition-colors"
+                title="Descartar apunte"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -6018,12 +5842,11 @@ export function TransactionRow({
         </td>
       </tr>
 
-      {/* Expanded Double-Entry Section */}
       {isExpanded && (
-        <tr className="bg-zinc-950/80 border-b border-zinc-800/80">
-          <td colSpan={9} className="p-3 pl-8">
-            <DoubleEntryViewer 
-              journal={transaction.journal} 
+        <tr className="bg-[#090a0d] border-b border-[#1e222a]">
+          <td colSpan={9} className="p-3 pl-10">
+            <DoubleEntryViewer
+              journal={transaction.journal}
               transactionId={transaction.id}
             />
           </td>
@@ -6526,16 +6349,27 @@ FICHERO: frontend\src\index.css
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    --bg-canvas: #090a0d;
+    --bg-surface: #111318;
+    --bg-elevated: #161920;
+    --bg-hover: #1a1e26;
+    --border-subtle: #1e222a;
+    --border-strong: #2a303c;
+  }
+
   body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #0b0d11;
+    background-color: var(--bg-canvas);
     color: #e2e8f0;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  .font-mono {
-    font-family: 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  .font-mono,
+  .tabular-nums {
+    font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1, "zero" 1;
   }
@@ -6546,14 +6380,14 @@ FICHERO: frontend\src\index.css
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0b0d11;
+  background: #090a0d;
 }
 ::-webkit-scrollbar-thumb {
-  background: #262b36;
+  background: #222630;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #374151;
+  background: #323846;
 }
 
 
@@ -6579,7 +6413,7 @@ FICHERO: frontend\src\services\api.js
 
 /**
  * FICHERO: frontend/src/services/api.js
- * Cliente API de Producción para FINDAFINITY (Sin datos fantasma ni credenciales expuestas)
+ * Cliente API de Producción con normalización estricta de esquemas contables
  */
 
 const getBaseUrl = () => {
@@ -6641,6 +6475,80 @@ export function getCurrentActorEmail() {
   return session?.user?.email || 'auditor@despacho.es';
 }
 
+/**
+ * Normaliza cualquier objeto de transacción proveniente del backend (snake_case o camelCase)
+ * evitando errores de propiedades indefinidas en TransactionRow y DoubleEntryViewer.
+ */
+export function normalizeTransaction(tx) {
+  if (!tx) return null;
+
+  const rawJournal = tx.journal || null;
+  const normalizedLines = rawJournal
+    ? (rawJournal.lines || []).map((l) => ({
+        accountCode: l.accountCode || l.account_code || '555000000',
+        accountName: l.accountName || l.account_name || '',
+        concept: l.concept || '',
+        documentNumber: l.documentNumber || l.document_number || '',
+        debitEur:
+          l.debitEur !== undefined
+            ? Number(l.debitEur)
+            : Number(l.debit_cents || 0) / 100.0,
+        creditEur:
+          l.creditEur !== undefined
+            ? Number(l.creditEur)
+            : Number(l.credit_cents || 0) / 100.0,
+        contrapartida: l.contrapartida || '',
+      }))
+    : [];
+
+  const bankLine = normalizedLines.find((l) => l.accountCode.startsWith('572'));
+  const customerLines = normalizedLines.filter((l) => l.accountCode.startsWith('430'));
+
+  return {
+    id: tx.id,
+    externalId: tx.externalId ?? tx.external_id ?? tx.id,
+    type:
+      tx.type ||
+      (customerLines.length > 1
+        ? 'BATCH_PAYOUT'
+        : tx.status === 'RED'
+        ? 'EXCEPTION'
+        : 'TRANSFER'),
+    source: tx.source || 'Extracto Bancario',
+    date: tx.date || '',
+    valueDate: tx.valueDate || tx.value_date || tx.date || '',
+    bankAccountCode: tx.bankAccountCode || tx.bank_account_code || bankLine?.accountCode || '572000001',
+    concept: tx.concept || '',
+    netAmountEur: Number(tx.netAmountEur ?? tx.net_amount_eur ?? 0),
+    grossAmountEur: Number(tx.grossAmountEur ?? tx.gross_amount_eur ?? 0),
+    feeAmountEur: Number(tx.feeAmountEur ?? tx.fee_amount_eur ?? 0),
+    status: tx.status || 'RED',
+    confidenceScore: Number(tx.confidenceScore ?? tx.confidence_score ?? 0),
+    dimensions: tx.dimensions || {
+      s_importe: 1.0,
+      s_fecha: 0.9,
+      s_texto: 0.85,
+      s_fiscal: 0.9,
+    },
+    solverUsed: tx.solverUsed ?? tx.solver_used ?? 'Conciliación directa',
+    matchedCount:
+      tx.matchedCount ??
+      tx.matched_count ??
+      (customerLines.length > 0 ? customerLines.length : tx.status === 'RED' ? 0 : 1),
+    auditExplanation: tx.auditExplanation ?? tx.audit_explanation ?? '',
+    isApproved: Boolean(tx.isApproved ?? tx.is_approved ?? false),
+    journal: rawJournal
+      ? {
+          entryNumber: rawJournal.entryNumber ?? rawJournal.entry_number ?? 1,
+          date: rawJournal.date || tx.date || '',
+          isBalanced: Boolean(rawJournal.isBalanced ?? rawJournal.is_balanced ?? true),
+          entryHashSha256: rawJournal.entryHashSha256 ?? rawJournal.entry_hash_sha256 ?? '',
+          lines: normalizedLines,
+        }
+      : null,
+  };
+}
+
 async function safeJsonFetch(url, options = {}) {
   try {
     const res = await fetch(url, options);
@@ -6677,13 +6585,13 @@ export async function loginApi(email, password) {
 }
 
 export async function fetchMeApi() {
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/me`, {
+  const { ok, status, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/me`, {
     headers: getAuthHeaders(),
   });
   if (ok && data && data.id) {
-    return { success: true, user: data };
+    return { success: true, status, user: data };
   }
-  return { success: false, error: data?.detail || 'Sesión no válida o expirada' };
+  return { success: false, status, error: data?.detail || 'Sesión no válida o expirada' };
 }
 
 export async function registerApi({
@@ -6781,8 +6689,12 @@ export async function syncStripePayoutsApi({
     }),
   });
 
-  if (ok) {
-    return { success: true, data };
+  if (ok && data) {
+    const normalizedData = {
+      ...data,
+      transactions: (data.transactions || []).map(normalizeTransaction).filter(Boolean),
+    };
+    return { success: true, data: normalizedData };
   }
   return {
     success: false,
@@ -6960,40 +6872,7 @@ export async function fetchBatchDetails(batchId) {
   if (ok && data) {
     return {
       ...data,
-      transactions: (data.transactions || []).map((tx) => ({
-        id: tx.id,
-        externalId: tx.external_id,
-        source: tx.source,
-        date: tx.date,
-        valueDate: tx.value_date,
-        concept: tx.concept,
-        netAmountEur: tx.net_amount_eur,
-        grossAmountEur: tx.gross_amount_eur,
-        feeAmountEur: tx.fee_amount_eur,
-        status: tx.status,
-        confidenceScore: tx.confidence_score,
-        dimensions: tx.dimensions,
-        solverUsed: tx.solver_used,
-        auditExplanation: tx.audit_explanation,
-        isApproved: tx.is_approved,
-        journal: tx.journal
-          ? {
-              entryNumber: tx.journal.entry_number,
-              date: tx.journal.date,
-              isBalanced: tx.journal.is_balanced,
-              entryHashSha256: tx.journal.entry_hash_sha256,
-              lines: (tx.journal.lines || []).map((l) => ({
-                accountCode: l.account_code,
-                accountName: l.account_name,
-                concept: l.concept,
-                documentNumber: l.document_number,
-                debitEur: l.debit_cents / 100.0,
-                creditEur: l.credit_cents / 100.0,
-                contrapartida: l.contrapartida,
-              })),
-            }
-          : null,
-      })),
+      transactions: (data.transactions || []).map(normalizeTransaction).filter(Boolean),
     };
   }
   return null;
@@ -7009,7 +6888,7 @@ export async function uploadBatchFile({
   file,
   invoicesFile = null,
   gatewayName = 'Stripe',
-  ephemeralMode = true,
+  ephemeralMode = false,
 }) {
   try {
     const formData = new FormData();
@@ -7020,7 +6899,6 @@ export async function uploadBatchFile({
     formData.append('start_month', startMonth);
     formData.append('end_month', endMonth);
 
-    // Soportar tanto un único File como un array de múltiples Files (ej. 20 PDFs)
     const mainFilesList = Array.isArray(file) ? file : file ? [file] : [];
     if (mainFilesList.length > 0) {
       formData.append('file', mainFilesList[0]);
@@ -7029,7 +6907,6 @@ export async function uploadBatchFile({
       });
     }
 
-    // Soportar una carpeta entera o lista de múltiples archivos en Cartera de Facturas
     const portfolioList = Array.isArray(invoicesFile)
       ? invoicesFile
       : invoicesFile
@@ -7059,6 +6936,9 @@ export async function uploadBatchFile({
         data = JSON.parse(rawText);
       } catch {
         data = {};
+      }
+      if (data.transactions) {
+        data.transactions = data.transactions.map(normalizeTransaction).filter(Boolean);
       }
       return { success: true, fromBackend: true, data };
     } else {
@@ -7137,17 +7017,10 @@ FICHERO: frontend\src\utils\exporters.js
 /**
  * FICHERO: frontend/src/utils/exporters.js
  * Generadores oficiales de ficheros de intercambio contable para ERPs españoles
- * - Wolters Kluwer A3 (Suenlace / a3conv)
- * - Sage 50 / Sage Despachos (XDIARIO.csv)
- * - DELSOL Contasol (XLSX nativo / CSV)
  */
 import * as XLSX from 'xlsx';
 import { formatAccountCode } from './formatters';
 
-/**
- * Genera fichero Suenlace para Wolters Kluwer A3.
- * Estructura: Asiento;Fecha;Cuenta;Signo;Importe;Concepto;Documento;Contrapartida
- */
 export function generateA3Suenlace(journals, accountLength = 9) {
   const lines = [];
 
@@ -7178,10 +7051,6 @@ export function generateA3Suenlace(journals, accountLength = 9) {
   return lines.join('\r\n') + (lines.length > 0 ? '\r\n' : '');
 }
 
-/**
- * Genera fichero XDIARIO.csv para Sage 50 y Sage Despachos.
- * Cabecera oficial de 9 columnas: Asiento;Fecha;Cuenta;Concepto;Documento;Debe;Haber;Factura;Contrapartida
- */
 export function generateSageXdiario(journals, accountLength = 9) {
   const lines = ['Asiento;Fecha;Cuenta;Concepto;Documento;Debe;Haber;Factura;Contrapartida'];
 
@@ -7209,9 +7078,6 @@ export function generateSageXdiario(journals, accountLength = 9) {
   return lines.join('\r\n') + '\r\n';
 }
 
-/**
- * Genera filas de diario para DELSOL Contasol con las 9 columnas oficiales
- */
 export function getContasolRows(journals, accountLength = 9) {
   const rows = [];
   journals.forEach((journal, idx) => {
@@ -7221,7 +7087,7 @@ export function getContasolRows(journals, accountLength = 9) {
 
     (journal.lines || []).forEach((line) => {
       rows.push({
-        Diario: 1, // Diario 1 General en Contasol
+        Diario: 1,
         Fecha: dateFormatted,
         Asiento: entryNum,
         Subcuenta: formatAccountCode(line.accountCode, accountLength),
@@ -7238,23 +7104,20 @@ export function getContasolRows(journals, accountLength = 9) {
   return rows;
 }
 
-/**
- * Genera fichero Excel .xlsx nativo para Contasol
- */
 export function generateContasolXlsx(journals, accountLength = 9) {
   const rows = getContasolRows(journals, accountLength);
   const worksheet = XLSX.utils.json_to_sheet(rows);
 
   worksheet['!cols'] = [
-    { wch: 8 },  // Diario
-    { wch: 12 }, // Fecha
-    { wch: 10 }, // Asiento
-    { wch: 14 }, // Subcuenta
-    { wch: 40 }, // Concepto
-    { wch: 16 }, // Documento
-    { wch: 14 }, // Debe
-    { wch: 14 }, // Haber
-    { wch: 14 }, // Contrapartida
+    { wch: 8 },
+    { wch: 12 },
+    { wch: 10 },
+    { wch: 14 },
+    { wch: 40 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
   ];
 
   const workbook = XLSX.utils.book_new();
@@ -7262,8 +7125,29 @@ export function generateContasolXlsx(journals, accountLength = 9) {
   return XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
 }
 
-export function downloadTextFile(content, filename, mimeType = 'text/plain;charset=utf-8') {
-  const blob = new Blob([content], { type: mimeType });
+/**
+ * Codifica un string JS a bytes Windows-1252 reales para que A3 y Sage 50
+ * lean correctamente tildes y la letra Ñ sin depender de UTF-8.
+ */
+function encodeWindows1252(str) {
+  const bytes = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 0xff) {
+      bytes[i] = code;
+    } else if (code === 0x20ac) {
+      bytes[i] = 0x80; // Símbolo € en Windows-1252
+    } else {
+      bytes[i] = 0x3f; // '?'
+    }
+  }
+  return bytes;
+}
+
+export function downloadTextFile(content, filename, mimeType = 'text/plain;charset=windows-1252') {
+  const isWin1252 = mimeType.toLowerCase().includes('windows-1252');
+  const payload = isWin1252 ? encodeWindows1252(content) : new TextEncoder().encode('\uFEFF' + content);
+  const blob = new Blob([payload], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -7398,32 +7282,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "9a813c3f-dcb3-4d6e-a066-54cf8c897c2f",
+  "tenant_id": "70b6ae07-1670-4b2e-bde7-7b1df41b1b21",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-16",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "c743aec77849330671b09087c98f8423f1708d6ccca4fde789045099ee9d822a",
+  "head_hash_sha256": "5182a1337d5a0ef1edad038f768533d1463004ab7c0668b529b0b3a334022374",
   "audit_events": [
     {
-      "event_id": "fc5e2599-9d62-40de-b6ba-5471d8658238",
+      "event_id": "895567bf-bf95-4b9f-987f-b4fe651cd640",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T20:16:59.165724",
-      "sha256_hash": "2766a90480884d1b02013d21cb8ba99434985f4f49ed999199a760f03834c2c7",
+      "timestamp": "2026-10-16T21:43:22.065928",
+      "sha256_hash": "68cc47f474544ef4adbd89fbbf870912fc02f95c4579ba102d931254028d8676",
       "details": {
-        "batch_id": "b7826dcb-9723-4e7c-99cd-d32b2bb1fe9d",
+        "batch_id": "308c26b9-0fdd-4cf1-9f9c-90756f395c26",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "9856552c-9af5-4a42-a1c6-743078511320",
+      "event_id": "817f7a27-ae84-4777-9e0f-cd0a0dc0bf3b",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T20:16:59.177737",
-      "sha256_hash": "5919adca64e8644f82e4469796a1863d041641a4d7c3eea5d8ceb57775ba64f5",
+      "timestamp": "2026-10-16T21:43:22.082449",
+      "sha256_hash": "58f7c7209b5603e00814437b0b126c48d7965b56dfb3833eb799b59518983ff9",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7431,23 +7315,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "fbb088a6-deb0-4d3e-bbd4-e2a8e6948154",
+      "event_id": "244edb6b-5446-4f8f-9da5-f1cb30a08ed0",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T20:16:59.184527",
-      "sha256_hash": "b9b84ff39b733b48966b314c3d425811a7c110b59d9d95cfe16227c93710f100",
+      "timestamp": "2026-10-16T21:43:22.089121",
+      "sha256_hash": "3c0f3993e6f7693c0c6bb68a1706831946be50bdafd4f18b0a75453bd7313698",
       "details": {
-        "batch_id": "e0be8a37-589b-4799-846f-9d28d51f1ae1",
+        "batch_id": "c5fe1093-87e2-4ee9-98ba-a7cff1936e6a",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "dd49404e-6511-4477-90b3-44376055ecc8",
+      "event_id": "4ea94d6c-7eaa-442d-baa1-d0be8f9b6f11",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T20:16:59.191222",
-      "sha256_hash": "196626b4ea125aedf2ddfbf2b1b3e0a8372b074fab9893a3000e13ca6d12c36c",
+      "timestamp": "2026-10-16T21:43:22.095370",
+      "sha256_hash": "8e724a225b87a55bf4d8c54141208f428235c94055873ef110cde0e9d2b49a6e",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7455,23 +7339,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "d6f9384d-9613-41af-9754-cd60ddad4c09",
+      "event_id": "000b4898-f099-4b3c-9aa7-98852ee23409",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T20:16:59.196554",
-      "sha256_hash": "995fe953eb504017d8539f09d01ac6bf6c39a8072a448bf0c3e4bae9884cf27a",
+      "timestamp": "2026-10-16T21:43:22.100614",
+      "sha256_hash": "da52f67e0b4d9270e8b2429847e3d1ac0dd5fddc8917d9657316c6cbe5949b96",
       "details": {
-        "batch_id": "28c91101-4e57-4c35-90c2-03f1f28f6e8c",
+        "batch_id": "9e40828d-2201-4b3a-b8ae-49a4f2a2627b",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "46f68630-ce6c-46fb-a9c0-806aefcd50c7",
+      "event_id": "72d7d4d0-54ec-4e09-96c2-c85b7767523f",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T20:16:59.220994",
-      "sha256_hash": "c743aec77849330671b09087c98f8423f1708d6ccca4fde789045099ee9d822a",
+      "timestamp": "2026-10-16T21:43:22.121918",
+      "sha256_hash": "5182a1337d5a0ef1edad038f768533d1463004ab7c0668b529b0b3a334022374",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7485,7 +7369,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Archivo binario (.XLSX) de 5336 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+# [Archivo binario (.XLSX) de 5335 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json

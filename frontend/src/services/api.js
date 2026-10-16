@@ -1,6 +1,6 @@
 /**
  * FICHERO: frontend/src/services/api.js
- * Cliente API de Producción para FINDAFINITY (Sin datos fantasma ni credenciales expuestas)
+ * Cliente API de Producción con normalización estricta de esquemas contables
  */
 
 const getBaseUrl = () => {
@@ -62,6 +62,80 @@ export function getCurrentActorEmail() {
   return session?.user?.email || 'auditor@despacho.es';
 }
 
+/**
+ * Normaliza cualquier objeto de transacción proveniente del backend (snake_case o camelCase)
+ * evitando errores de propiedades indefinidas en TransactionRow y DoubleEntryViewer.
+ */
+export function normalizeTransaction(tx) {
+  if (!tx) return null;
+
+  const rawJournal = tx.journal || null;
+  const normalizedLines = rawJournal
+    ? (rawJournal.lines || []).map((l) => ({
+        accountCode: l.accountCode || l.account_code || '555000000',
+        accountName: l.accountName || l.account_name || '',
+        concept: l.concept || '',
+        documentNumber: l.documentNumber || l.document_number || '',
+        debitEur:
+          l.debitEur !== undefined
+            ? Number(l.debitEur)
+            : Number(l.debit_cents || 0) / 100.0,
+        creditEur:
+          l.creditEur !== undefined
+            ? Number(l.creditEur)
+            : Number(l.credit_cents || 0) / 100.0,
+        contrapartida: l.contrapartida || '',
+      }))
+    : [];
+
+  const bankLine = normalizedLines.find((l) => l.accountCode.startsWith('572'));
+  const customerLines = normalizedLines.filter((l) => l.accountCode.startsWith('430'));
+
+  return {
+    id: tx.id,
+    externalId: tx.externalId ?? tx.external_id ?? tx.id,
+    type:
+      tx.type ||
+      (customerLines.length > 1
+        ? 'BATCH_PAYOUT'
+        : tx.status === 'RED'
+        ? 'EXCEPTION'
+        : 'TRANSFER'),
+    source: tx.source || 'Extracto Bancario',
+    date: tx.date || '',
+    valueDate: tx.valueDate || tx.value_date || tx.date || '',
+    bankAccountCode: tx.bankAccountCode || tx.bank_account_code || bankLine?.accountCode || '572000001',
+    concept: tx.concept || '',
+    netAmountEur: Number(tx.netAmountEur ?? tx.net_amount_eur ?? 0),
+    grossAmountEur: Number(tx.grossAmountEur ?? tx.gross_amount_eur ?? 0),
+    feeAmountEur: Number(tx.feeAmountEur ?? tx.fee_amount_eur ?? 0),
+    status: tx.status || 'RED',
+    confidenceScore: Number(tx.confidenceScore ?? tx.confidence_score ?? 0),
+    dimensions: tx.dimensions || {
+      s_importe: 1.0,
+      s_fecha: 0.9,
+      s_texto: 0.85,
+      s_fiscal: 0.9,
+    },
+    solverUsed: tx.solverUsed ?? tx.solver_used ?? 'Conciliación directa',
+    matchedCount:
+      tx.matchedCount ??
+      tx.matched_count ??
+      (customerLines.length > 0 ? customerLines.length : tx.status === 'RED' ? 0 : 1),
+    auditExplanation: tx.auditExplanation ?? tx.audit_explanation ?? '',
+    isApproved: Boolean(tx.isApproved ?? tx.is_approved ?? false),
+    journal: rawJournal
+      ? {
+          entryNumber: rawJournal.entryNumber ?? rawJournal.entry_number ?? 1,
+          date: rawJournal.date || tx.date || '',
+          isBalanced: Boolean(rawJournal.isBalanced ?? rawJournal.is_balanced ?? true),
+          entryHashSha256: rawJournal.entryHashSha256 ?? rawJournal.entry_hash_sha256 ?? '',
+          lines: normalizedLines,
+        }
+      : null,
+  };
+}
+
 async function safeJsonFetch(url, options = {}) {
   try {
     const res = await fetch(url, options);
@@ -98,13 +172,13 @@ export async function loginApi(email, password) {
 }
 
 export async function fetchMeApi() {
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/me`, {
+  const { ok, status, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/me`, {
     headers: getAuthHeaders(),
   });
   if (ok && data && data.id) {
-    return { success: true, user: data };
+    return { success: true, status, user: data };
   }
-  return { success: false, error: data?.detail || 'Sesión no válida o expirada' };
+  return { success: false, status, error: data?.detail || 'Sesión no válida o expirada' };
 }
 
 export async function registerApi({
@@ -202,8 +276,12 @@ export async function syncStripePayoutsApi({
     }),
   });
 
-  if (ok) {
-    return { success: true, data };
+  if (ok && data) {
+    const normalizedData = {
+      ...data,
+      transactions: (data.transactions || []).map(normalizeTransaction).filter(Boolean),
+    };
+    return { success: true, data: normalizedData };
   }
   return {
     success: false,
@@ -381,40 +459,7 @@ export async function fetchBatchDetails(batchId) {
   if (ok && data) {
     return {
       ...data,
-      transactions: (data.transactions || []).map((tx) => ({
-        id: tx.id,
-        externalId: tx.external_id,
-        source: tx.source,
-        date: tx.date,
-        valueDate: tx.value_date,
-        concept: tx.concept,
-        netAmountEur: tx.net_amount_eur,
-        grossAmountEur: tx.gross_amount_eur,
-        feeAmountEur: tx.fee_amount_eur,
-        status: tx.status,
-        confidenceScore: tx.confidence_score,
-        dimensions: tx.dimensions,
-        solverUsed: tx.solver_used,
-        auditExplanation: tx.audit_explanation,
-        isApproved: tx.is_approved,
-        journal: tx.journal
-          ? {
-              entryNumber: tx.journal.entry_number,
-              date: tx.journal.date,
-              isBalanced: tx.journal.is_balanced,
-              entryHashSha256: tx.journal.entry_hash_sha256,
-              lines: (tx.journal.lines || []).map((l) => ({
-                accountCode: l.account_code,
-                accountName: l.account_name,
-                concept: l.concept,
-                documentNumber: l.document_number,
-                debitEur: l.debit_cents / 100.0,
-                creditEur: l.credit_cents / 100.0,
-                contrapartida: l.contrapartida,
-              })),
-            }
-          : null,
-      })),
+      transactions: (data.transactions || []).map(normalizeTransaction).filter(Boolean),
     };
   }
   return null;
@@ -430,7 +475,7 @@ export async function uploadBatchFile({
   file,
   invoicesFile = null,
   gatewayName = 'Stripe',
-  ephemeralMode = true,
+  ephemeralMode = false,
 }) {
   try {
     const formData = new FormData();
@@ -441,7 +486,6 @@ export async function uploadBatchFile({
     formData.append('start_month', startMonth);
     formData.append('end_month', endMonth);
 
-    // Soportar tanto un único File como un array de múltiples Files (ej. 20 PDFs)
     const mainFilesList = Array.isArray(file) ? file : file ? [file] : [];
     if (mainFilesList.length > 0) {
       formData.append('file', mainFilesList[0]);
@@ -450,7 +494,6 @@ export async function uploadBatchFile({
       });
     }
 
-    // Soportar una carpeta entera o lista de múltiples archivos en Cartera de Facturas
     const portfolioList = Array.isArray(invoicesFile)
       ? invoicesFile
       : invoicesFile
@@ -480,6 +523,9 @@ export async function uploadBatchFile({
         data = JSON.parse(rawText);
       } catch {
         data = {};
+      }
+      if (data.transactions) {
+        data.transactions = data.transactions.map(normalizeTransaction).filter(Boolean);
       }
       return { success: true, fromBackend: true, data };
     } else {

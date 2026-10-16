@@ -22,8 +22,6 @@ import {
 } from '../services/api';
 
 export default function AuthModal({ isOpen, onClose, initialView = 'login', onAuthSuccess }) {
-  if (!isOpen) return null;
-
   const [view, setView] = useState(initialView); // 'login' | 'register' | 'forgot' | 'reset'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -38,6 +36,8 @@ export default function AuthModal({ isOpen, onClose, initialView = 'login', onAu
   const [role, setRole] = useState('ADMIN');
   const [resetToken, setResetToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
+
+  if (!isOpen) return null;
 
   const clearMessages = () => {
     setError(null);
