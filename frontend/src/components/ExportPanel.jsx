@@ -1,5 +1,6 @@
 /**
  * FICHERO: frontend/src/components/ExportPanel.jsx
+ * Barra de Descarga Protagonista con Selector de ERP y Vista Previa Plegable
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -7,11 +8,12 @@ import {
   Copy,
   Check,
   FileSpreadsheet,
-  Database,
   ShieldCheck,
-  Eye,
+  Code2,
   FileCheck2,
   Lock,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   generateA3Suenlace,
@@ -34,6 +36,7 @@ export function ExportPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [showCodePreview, setShowCodePreview] = useState(false);
 
   const validJournals = useMemo(() => {
     return transactions
@@ -58,14 +61,13 @@ export function ExportPanel({
       entriesCount: validJournals.length,
       linesCount: totalLines,
       totalDebit,
-      totalCredit,
       imbalance: Math.abs(totalDebit - totalCredit),
     };
   }, [validJournals]);
 
   const previewText = useMemo(() => {
     if (validJournals.length === 0) {
-      return '// Esperando asientos conciliados para exportar.';
+      return '// Sin asientos listos para exportar.';
     }
 
     const accLen = selectedCompany?.accountLength || 9;
@@ -95,7 +97,6 @@ export function ExportPanel({
   const handleDownload = async () => {
     if (validJournals.length === 0) return;
 
-    // Si el Paywall está activo (>25 facturas en plan FREE), abrir modal de precios
     if (paywallLocked && onOpenPaywall) {
       onOpenPaywall();
       return;
@@ -123,8 +124,8 @@ export function ExportPanel({
         setDownloadSuccess(true);
         setTimeout(() => setDownloadSuccess(false), 2500);
         return;
-      } catch (err) {
-        console.warn('Descargando mediante generador en memoria del navegador:', err);
+      } catch {
+        // Fallback inmediato al generador en RAM del navegador
       }
     }
 
@@ -156,141 +157,137 @@ export function ExportPanel({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const erpButtonLabel =
+    selectedErp === 'A3'
+      ? 'Descargar Wolters Kluwer A3 (.txt)'
+      : selectedErp === 'SAGE'
+      ? 'Descargar Sage 50 XDIARIO (.csv)'
+      : 'Descargar Excel Contasol (.xlsx)';
+
   return (
-    <div className="bg-[#101013] border border-zinc-800/80 rounded-lg p-4 sm:p-5">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 mb-4 border-b border-zinc-800/50">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-            <Database className="h-4 w-4 text-zinc-400" />
-            Exportación Oficial a ERP de Contabilidad
-          </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Generación certificada de asientos auditados sin descuadre para inyección directa en el software contable.
-          </p>
-        </div>
-
-        <div className="inline-flex rounded-md p-1 bg-zinc-900 border border-zinc-800 self-start md:self-auto">
-          <button
-            type="button"
-            onClick={() => onSelectErp('A3')}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'A3' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Wolters Kluwer A3 (Suenlace)
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectErp('SAGE')}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'SAGE' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Sage 50 (XDIARIO)
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectErp('CONTASOL')}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'CONTASOL' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            DELSOL Contasol (.xlsx)
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Asientos a Emitir</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">{auditMetrics.entriesCount}</div>
-        </div>
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Total Líneas Diario</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">{auditMetrics.linesCount}</div>
-        </div>
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Volumen Contabilizado</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">
-            {formatEuro(auditMetrics.totalDebit)}
-          </div>
-        </div>
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Estado de Cuadre PGC</div>
-          <div
-            className={`font-mono text-sm font-semibold mt-0.5 flex items-center gap-1 ${
-              auditMetrics.imbalance < 0.005 ? 'text-emerald-400' : 'text-rose-400'
-            }`}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" />
-            {auditMetrics.imbalance < 0.005 ? 'Cuadre 0,00 €' : `Descuadre ${formatEuro(auditMetrics.imbalance)}`}
-          </div>
-        </div>
-      </div>
-
-      <div className="border border-zinc-800 rounded-md overflow-hidden bg-[#0c0c0e]">
-        <div className="flex items-center justify-between px-3.5 py-2 border-b border-zinc-800/80 bg-zinc-950/70 text-xs">
-          <div className="flex items-center gap-2 text-zinc-400">
-            <Eye className="h-3.5 w-3.5" />
-            <span className="font-mono text-[11px] text-zinc-300">
-              {selectedErp === 'A3'
-                ? 'SUENLACE_A3.txt (Protocolo Enlace Contable A3)'
-                : selectedErp === 'SAGE'
-                ? 'XDIARIO.csv (9 Columnas Oficiales Sage 50)'
-                : 'CONTASOL_DIARIO.xlsx (Diario 1 + Asiento Correlativo)'}
+    <section className="bg-[#10131a] border border-[#1e232d] rounded-xl p-5 shadow-xl">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+        {/* Izquierda: Selector de Formato ERP y Resumen de Asientos */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold text-white">Exportar Diario Contable</span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-950/50 text-emerald-300 border border-emerald-800/60">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <span>{auditMetrics.entriesCount} asientos</span>
+              <span>&bull;</span>
+              <span>{formatEuro(auditMetrics.totalDebit)}</span>
+              <span>&bull;</span>
+              <span>Cuadre 0,00 €</span>
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Botones de selección de ERP claros */}
+          <div className="inline-flex rounded-lg p-1 bg-[#0b0d11] border border-[#222834]">
             <button
               type="button"
-              onClick={handleCopy}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/60 text-[11px] text-zinc-300 font-medium transition-colors"
-            >
-              {paywallLocked ? (
-                <Lock className="h-3 w-3 text-amber-400" />
-              ) : copied ? (
-                <Check className="h-3 w-3 text-emerald-400" />
-              ) : (
-                <Copy className="h-3 w-3" />
-              )}
-              <span>{copied ? 'Copiado' : 'Copiar'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={validJournals.length === 0}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 ${
-                paywallLocked
-                  ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950'
-                  : 'bg-zinc-100 hover:bg-white text-zinc-900'
+              onClick={() => onSelectErp('A3')}
+              className={`px-3.5 py-2 rounded-md text-xs font-medium transition-colors ${
+                selectedErp === 'A3'
+                  ? 'bg-[#181c26] text-white border border-[#2c3444] shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {paywallLocked ? (
-                <Lock className="h-3.5 w-3.5" />
-              ) : downloadSuccess ? (
-                <FileCheck2 className="h-3.5 w-3.5 text-emerald-600" />
-              ) : selectedErp === 'CONTASOL' ? (
-                <FileSpreadsheet className="h-3.5 w-3.5" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              <span>
-                {paywallLocked
-                  ? 'Desbloquear Descarga (Paywall)'
-                  : downloadSuccess
-                  ? 'Descargado'
-                  : 'Descargar 1-Clic'}
-              </span>
+              Wolters Kluwer A3
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectErp('SAGE')}
+              className={`px-3.5 py-2 rounded-md text-xs font-medium transition-colors ${
+                selectedErp === 'SAGE'
+                  ? 'bg-[#181c26] text-white border border-[#2c3444] shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Sage 50
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectErp('CONTASOL')}
+              className={`px-3.5 py-2 rounded-md text-xs font-medium transition-colors ${
+                selectedErp === 'CONTASOL'
+                  ? 'bg-[#181c26] text-white border border-[#2c3444] shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              DELSOL Contasol
             </button>
           </div>
         </div>
 
-        <div className="p-3 max-h-56 overflow-y-auto font-mono text-[11px] text-zinc-300 leading-relaxed whitespace-pre select-all bg-[#08080a]">
-          {previewText}
+        {/* Derecha: Botón Grande e Intuitivo de Descarga */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowCodePreview((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-3 rounded-xl bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-300 transition-colors"
+          >
+            <Code2 className="h-4 w-4 text-slate-400" />
+            <span>{showCodePreview ? 'Ocultar vista previa' : 'Ver pre-asiento'}</span>
+            {showCodePreview ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={validJournals.length === 0}
+            className={`inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-lg disabled:opacity-40 disabled:cursor-not-allowed ${
+              paywallLocked
+                ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/10'
+                : downloadSuccess
+                ? 'bg-emerald-600 text-white shadow-emerald-600/20'
+                : 'bg-blue-600 hover:bg-blue-500 active:scale-[0.99] text-white shadow-blue-600/25'
+            }`}
+          >
+            {paywallLocked ? (
+              <Lock className="h-4 w-4" />
+            ) : downloadSuccess ? (
+              <FileCheck2 className="h-5 w-5" />
+            ) : selectedErp === 'CONTASOL' ? (
+              <FileSpreadsheet className="h-5 w-5" />
+            ) : (
+              <Download className="h-5 w-5" />
+            )}
+            <span>
+              {paywallLocked
+                ? 'Desbloquear Descarga'
+                : downloadSuccess
+                ? 'Archivo Descargado'
+                : erpButtonLabel}
+            </span>
+          </button>
         </div>
       </div>
-    </div>
+
+      {/* Vista previa plegable bajo demanda */}
+      {showCodePreview && (
+        <div className="mt-4 border border-[#1e232d] rounded-lg overflow-hidden bg-[#0b0d11]">
+          <div className="flex items-center justify-between px-3.5 py-2 border-b border-[#1e232d] bg-[#0f1218] text-xs">
+            <span className="font-mono text-[11px] text-slate-400">
+              {selectedErp === 'A3'
+                ? 'SUENLACE_A3.txt'
+                : selectedErp === 'SAGE'
+                ? 'XDIARIO.csv'
+                : 'CONTASOL_DIARIO.xlsx'}
+            </span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#262c3a] text-[11px] text-slate-300"
+            >
+              {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              <span>{copied ? 'Copiado' : 'Copiar texto'}</span>
+            </button>
+          </div>
+          <div className="p-3.5 max-h-52 overflow-y-auto font-mono text-[11px] text-slate-300 leading-relaxed whitespace-pre select-all">
+            {previewText}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

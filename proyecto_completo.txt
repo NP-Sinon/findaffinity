@@ -2975,11 +2975,10 @@ FICHERO: frontend\src\components\AuthScreen.jsx
 
 /**
  * FICHERO: frontend/src/components/AuthScreen.jsx
- * Portal Corporativo de Acceso y Alta de Despacho B2B
+ * Acceso Corporativo Minimalista (Estilo Linear / Mercury)
  */
 import React, { useState } from 'react';
 import {
-  ShieldCheck,
   Lock,
   Mail,
   User,
@@ -2987,37 +2986,14 @@ import {
   ArrowRight,
   CheckCircle2,
   AlertCircle,
-  FileCheck2,
-  Database,
-  Scale,
 } from 'lucide-react';
 import { loginApi, registerApi, forgotPasswordApi, resetPasswordApi } from '../services/api';
 
 const INITIAL_PLANS = [
-  {
-    code: 'FREE',
-    name: 'Evaluación Técnica',
-    price: '0 €',
-    desc: '25 partidas mensuales • 1 sociedad',
-  },
-  {
-    code: 'PYME_DIRECTO',
-    name: 'Pyme Directo',
-    price: '39 €/mes',
-    desc: '2.000 partidas/mes • 1 sociedad',
-  },
-  {
-    code: 'STARTER',
-    name: 'Despacho Starter',
-    price: '49 €/mes',
-    desc: '2.500 partidas/mes • 10 sociedades',
-  },
-  {
-    code: 'PROFESSIONAL',
-    name: 'Despacho Profesional',
-    price: '119 €/mes',
-    desc: '12.000 partidas/mes • 30 sociedades',
-  },
+  { code: 'FREE', name: 'Evaluación', price: '0 €', desc: '25 partidas/mes' },
+  { code: 'PYME_DIRECTO', name: 'Pyme', price: '39 €', desc: '2.000 partidas/mes' },
+  { code: 'STARTER', name: 'Starter', price: '49 €', desc: '10 empresas' },
+  { code: 'PROFESSIONAL', name: 'Pro', price: '119 €', desc: '30 empresas' },
 ];
 
 export function AuthScreen({ onAuthSuccess, backendOnline }) {
@@ -3056,7 +3032,6 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     setLoading(true);
     const res = await loginApi(loginEmail, loginPassword);
     setLoading(false);
-
     if (res.success) {
       onAuthSuccess(res.user);
     } else {
@@ -3068,7 +3043,6 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     e.preventDefault();
     clearMessages();
     setLoading(true);
-
     const res = await registerApi({
       email: regEmail,
       password: regPassword,
@@ -3079,11 +3053,10 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
       plan: regPlan,
     });
     setLoading(false);
-
     if (res.success) {
       onAuthSuccess(res.user, regPlan !== 'FREE');
     } else {
-      setErrorMessage(res.error || 'Error al completar el alta del despacho.');
+      setErrorMessage(res.error || 'Error al crear la cuenta.');
     }
   };
 
@@ -3093,15 +3066,14 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     setLoading(true);
     const res = await forgotPasswordApi(forgotEmail);
     setLoading(false);
-
     if (res.success) {
-      setInfoMessage(res.message || 'Instrucciones enviadas.');
+      setInfoMessage('Código enviado.');
       if (res.demoToken) {
         setResetToken(res.demoToken);
         setActiveTab('reset');
       }
     } else {
-      setErrorMessage(res.error || 'No se pudo procesar la solicitud.');
+      setErrorMessage(res.error || 'Error en la solicitud.');
     }
   };
 
@@ -3111,395 +3083,305 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     setLoading(true);
     const res = await resetPasswordApi(resetToken, resetNewPassword);
     setLoading(false);
-
     if (res.success) {
-      setInfoMessage('Contraseña actualizada correctamente.');
+      setInfoMessage('Contraseña actualizada.');
       setActiveTab('login');
     } else {
-      setErrorMessage(res.error || 'Código inválido o expirado.');
+      setErrorMessage(res.error || 'Código inválido.');
     }
   };
 
   return (
     <div className="min-h-screen bg-[#0b0d11] text-slate-100 flex flex-col justify-between font-sans">
-      {/* Barra Institucional Superior */}
       <header className="h-14 border-b border-[#1e232d] bg-[#0f1218] px-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-7 w-7 rounded bg-blue-600 flex items-center justify-center text-white font-mono font-bold text-xs tracking-tighter">
+        <div className="flex items-center gap-2.5">
+          <div className="h-6 w-6 rounded bg-blue-600 flex items-center justify-center text-white font-mono font-bold text-xs">
             FA
           </div>
           <span className="font-semibold text-sm tracking-tight text-white">FINDAFINITY</span>
-          <span className="text-[11px] text-slate-500 font-mono hidden sm:inline border-l border-[#1e232d] pl-3">
-            SISTEMA DE CONCILIACIÓN Y DESAMBIGUACIÓN CONTABLE PGC
-          </span>
         </div>
 
         <div className="flex items-center gap-2 text-xs">
           <span className={`h-2 w-2 rounded-full ${backendOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
           <span className="text-slate-400 font-mono text-[11px]">
-            {backendOnline ? 'SERVICIO OPERATIVO' : 'CONECTANDO'}
+            {backendOnline ? 'ONLINE' : 'CONECTANDO'}
           </span>
         </div>
       </header>
 
-      {/* Cuerpo Principal a Dos Columnas */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-        {/* Columna Izquierda: Especificaciones Técnicas B2B */}
-        <div className="lg:col-span-6 space-y-6">
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#131720] border border-[#222834] text-[11px] font-mono text-slate-300">
-            <span>NORMA 43 AEB</span>
-            <span>&bull;</span>
-            <span>STRIPE & REDSYS TPV</span>
-            <span>&bull;</span>
-            <span>PGC ESPAÑA</span>
+      <main className="flex-1 flex items-center justify-center p-4">
+        <div className="w-full max-w-[420px] bg-[#10131a] border border-[#1e232d] rounded-xl p-6 sm:p-7 shadow-2xl">
+          <div className="mb-6 text-center">
+            <h1 className="text-lg font-semibold text-white tracking-tight">
+              {activeTab === 'register' ? 'Crear Cuenta Corporativa' : 'Iniciar Sesión'}
+            </h1>
           </div>
 
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white leading-snug">
-            Conciliación algorítmica de liquidaciones agrupadas y generación de diario contable.
-          </h1>
-
-          <p className="text-sm text-slate-400 leading-relaxed">
-            Entorno intermedio de preparación contable en modo de solo lectura para asesorías fiscales y departamentos de administración. Desglosa remesas netas de pasarelas de pago, contabiliza gastos bancarios en origen y exporta pre-asientos cerrados a céntimo cero.
-          </p>
-
-          <div className="space-y-4 pt-2 border-t border-[#1e232d]">
-            <div className="flex items-start gap-3">
-              <Scale className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
-              <div>
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Descomposición Combinatoria de Liquidaciones (Batch Payouts)
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
-                  Cruza abonos netos bancarios frente a múltiples facturas emitidas deduciendo comisiones en la subcuenta 626 y cuadrando las cuentas 572 y 430.
-                </p>
-              </div>
+          {(activeTab === 'login' || activeTab === 'register') && (
+            <div className="grid grid-cols-2 p-1 bg-[#0b0d11] border border-[#1e232d] rounded-lg mb-5 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => handleTabChange('login')}
+                className={`py-2 rounded-md transition-colors ${
+                  activeTab === 'login'
+                    ? 'bg-[#181c26] text-white border border-[#282f3d]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Acceder
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTabChange('register')}
+                className={`py-2 rounded-md transition-colors ${
+                  activeTab === 'register'
+                    ? 'bg-[#181c26] text-white border border-[#282f3d]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Registrarse
+              </button>
             </div>
+          )}
 
-            <div className="flex items-start gap-3">
-              <Database className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
-              <div>
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Exportación Nativa sin Alteración de Libros Oficiales
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
-                  Generación directa de ficheros con estructura oficial para Wolters Kluwer A3 (Suenlace), Sage 50 (XDIARIO.csv) y DELSOL Contasol (.xlsx).
-                </p>
-              </div>
+          {errorMessage && (
+            <div className="mb-4 p-3 rounded-lg bg-rose-950/30 border border-rose-800/60 text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+              <span>{errorMessage}</span>
             </div>
+          )}
 
-            <div className="flex items-start gap-3">
-              <FileCheck2 className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
-              <div>
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Trazabilidad y Cadena de Custodia SHA-256
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
-                  Cada lote procesado y aprobado queda registrado mediante firma criptográfica verificable para soporte documental ante auditoría.
-                </p>
-              </div>
+          {infoMessage && (
+            <div className="mb-4 p-3 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-emerald-300 text-xs flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+              <span>{infoMessage}</span>
             </div>
-          </div>
-        </div>
+          )}
 
-        {/* Columna Derecha: Formulario de Acceso / Registro */}
-        <div className="lg:col-span-6">
-          <div className="bg-[#10131a] border border-[#1e232d] rounded-lg p-6 sm:p-8 shadow-xl">
-            {(activeTab === 'login' || activeTab === 'register') && (
-              <div className="grid grid-cols-2 p-1 bg-[#0b0d11] border border-[#1e232d] rounded mb-6 text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('login')}
-                  className={`py-2 rounded transition-colors ${
-                    activeTab === 'login'
-                      ? 'bg-[#181c26] text-white border border-[#282f3d]'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Acceso Clientes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('register')}
-                  className={`py-2 rounded transition-colors ${
-                    activeTab === 'register'
-                      ? 'bg-[#181c26] text-white border border-[#282f3d]'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Alta de Despacho / Empresa
-                </button>
+          {activeTab === 'login' && (
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[11px] text-slate-400 font-medium mb-1">Email</label>
+                <div className="relative">
+                  <Mail className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="email"
+                    required
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="nombre@empresa.es"
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg pl-9 pr-3 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
               </div>
-            )}
 
-            {errorMessage && (
-              <div className="mb-5 p-3 rounded bg-rose-950/30 border border-rose-800/60 text-rose-300 text-xs flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-                <span>{errorMessage}</span>
-              </div>
-            )}
-
-            {infoMessage && (
-              <div className="mb-5 p-3 rounded bg-emerald-950/30 border border-emerald-800/60 text-emerald-300 text-xs flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-                <span>{infoMessage}</span>
-              </div>
-            )}
-
-            {activeTab === 'login' && (
-              <form onSubmit={handleLoginSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1.5">
-                    Correo Electrónico Profesional
-                  </label>
-                  <div className="relative">
-                    <Mail className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder="usuario@despacho.es"
-                      className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-[11px] uppercase tracking-wider text-slate-400 font-medium">
-                      Contraseña
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => handleTabChange('forgot')}
-                      className="text-[11px] text-slate-400 hover:text-blue-400 transition-colors"
-                    >
-                      Recuperar contraseña
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <Lock className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="password"
-                      required
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full mt-2 py-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <span>{loading ? 'Autenticando...' : 'Iniciar Sesión'}</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </form>
-            )}
-
-            {activeTab === 'register' && (
-              <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
-                    Responsable / Titular de la Cuenta
-                  </label>
-                  <div className="relative">
-                    <User className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      required
-                      value={regFullName}
-                      onChange={(e) => setRegFullName(e.target.value)}
-                      placeholder="Nombre y Apellidos"
-                      className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
-                      Razón Social / Despacho
-                    </label>
-                    <div className="relative">
-                      <Building2 className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        required
-                        value={regCompanyName}
-                        onChange={(e) => setRegCompanyName(e.target.value)}
-                        placeholder="Asesoría Fiscal S.L.P."
-                        className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
-                      NIF / CIF
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={regFiscalId}
-                      onChange={(e) => setRegFiscalId(e.target.value.toUpperCase())}
-                      placeholder="B12345678"
-                      className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
-                      Correo Corporativo
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="direccion@despacho.es"
-                      className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
-                      Contraseña
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      minLength={6}
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="Mínimo 6 caracteres"
-                      className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-1">
-                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-2">
-                    Modalidad de Suscripción Inicial
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {INITIAL_PLANS.map((p) => {
-                      const active = regPlan === p.code;
-                      return (
-                        <div
-                          key={p.code}
-                          onClick={() => setRegPlan(p.code)}
-                          className={`p-2.5 rounded border cursor-pointer transition-colors ${
-                            active
-                              ? 'bg-blue-950/30 border-blue-500 text-white'
-                              : 'bg-[#0b0d11] border-[#222834] text-slate-400 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between text-xs font-semibold">
-                            <span className={active ? 'text-blue-300' : 'text-slate-200'}>{p.name}</span>
-                            <span className="font-mono text-white">{p.price}</span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">{p.desc}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full mt-3 py-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <span>{loading ? 'Registrando entidad...' : 'Completar Alta y Acceder'}</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </form>
-            )}
-
-            {activeTab === 'forgot' && (
-              <form onSubmit={handleForgotSubmit} className="space-y-4">
-                <p className="text-xs text-slate-400">
-                  Introduzca su dirección de correo electrónico para generar un código de restablecimiento.
-                </p>
-                <input
-                  type="email"
-                  required
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  placeholder="usuario@despacho.es"
-                  className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100"
-                />
-                <div className="flex items-center gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] text-slate-400 font-medium">Contraseña</label>
                   <button
                     type="button"
-                    onClick={() => handleTabChange('login')}
-                    className="w-1/3 py-2 rounded bg-[#161a23] border border-[#222834] text-xs text-slate-300"
+                    onClick={() => handleTabChange('forgot')}
+                    className="text-[11px] text-slate-500 hover:text-blue-400"
                   >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-2/3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
-                  >
-                    {loading ? 'Enviando...' : 'Solicitar Código'}
+                    ¿Olvidaste tu clave?
                   </button>
                 </div>
-              </form>
-            )}
+                <div className="relative">
+                  <Lock className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    required
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg pl-9 pr-3 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
 
-            {activeTab === 'reset' && (
-              <form onSubmit={handleResetSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
-                    Código de Verificación
-                  </label>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <span>{loading ? 'Entrando...' : 'Entrar'}</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          )}
+
+          {activeTab === 'register' && (
+            <form onSubmit={handleRegisterSubmit} className="space-y-3">
+              <div>
+                <label className="block text-[11px] text-slate-400 font-medium mb-1">Nombre</label>
+                <div className="relative">
+                  <User className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     required
-                    value={resetToken}
-                    onChange={(e) => setResetToken(e.target.value)}
-                    className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 font-mono"
+                    value={regFullName}
+                    onChange={(e) => setRegFullName(e.target.value)}
+                    placeholder="Tu nombre"
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
-                    Nueva Contraseña
-                  </label>
+                  <label className="block text-[11px] text-slate-400 font-medium mb-1">Despacho / Empresa</label>
+                  <div className="relative">
+                    <Building2 className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      required
+                      value={regCompanyName}
+                      onChange={(e) => setRegCompanyName(e.target.value)}
+                      placeholder="Empresa S.L."
+                      className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-medium mb-1">NIF / CIF</label>
+                  <input
+                    type="text"
+                    required
+                    value={regFiscalId}
+                    onChange={(e) => setRegFiscalId(e.target.value.toUpperCase())}
+                    placeholder="B12345678"
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg px-3 py-2 text-xs text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-medium mb-1">Email</label>
+                  <input
+                    type="email"
+                    required
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    placeholder="email@empresa.es"
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-medium mb-1">Contraseña</label>
                   <input
                     type="password"
                     required
                     minLength={6}
-                    value={resetNewPassword}
-                    onChange={(e) => setResetNewPassword(e.target.value)}
-                    className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="Mín. 6 caracteres"
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
                   />
                 </div>
+              </div>
+
+              <div className="pt-1">
+                <label className="block text-[11px] text-slate-400 font-medium mb-1.5">Plan</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {INITIAL_PLANS.map((p) => {
+                    const active = regPlan === p.code;
+                    return (
+                      <div
+                        key={p.code}
+                        onClick={() => setRegPlan(p.code)}
+                        className={`p-2 rounded-lg border cursor-pointer transition-colors ${
+                          active
+                            ? 'bg-blue-950/30 border-blue-500 text-white'
+                            : 'bg-[#0b0d11] border-[#222834] text-slate-400 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-xs font-semibold">
+                          <span className={active ? 'text-blue-300' : 'text-slate-200'}>{p.name}</span>
+                          <span className="font-mono text-white">{p.price}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">{p.desc}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full mt-2 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <span>{loading ? 'Creando cuenta...' : 'Crear Cuenta'}</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          )}
+
+          {activeTab === 'forgot' && (
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
+              <input
+                type="email"
+                required
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                placeholder="Tu correo electrónico"
+                className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg px-3 py-2.5 text-xs text-slate-100"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('login')}
+                  className="w-1/3 py-2.5 rounded-lg bg-[#161a23] border border-[#222834] text-xs text-slate-300"
+                >
+                  Volver
+                </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+                  className="w-2/3 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
                 >
-                  {loading ? 'Actualizando...' : 'Confirmar Contraseña'}
+                  {loading ? 'Enviando...' : 'Enviar Código'}
                 </button>
-              </form>
-            )}
-          </div>
+              </div>
+            </form>
+          )}
+
+          {activeTab === 'reset' && (
+            <form onSubmit={handleResetSubmit} className="space-y-3.5">
+              <input
+                type="text"
+                required
+                placeholder="Código de verificación"
+                value={resetToken}
+                onChange={(e) => setResetToken(e.target.value)}
+                className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg px-3 py-2.5 text-xs text-slate-100 font-mono"
+              />
+              <input
+                type="password"
+                required
+                minLength={6}
+                placeholder="Nueva contraseña"
+                value={resetNewPassword}
+                onChange={(e) => setResetNewPassword(e.target.value)}
+                className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg px-3 py-2.5 text-xs text-slate-100"
+              />
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+              >
+                {loading ? 'Guardando...' : 'Actualizar Contraseña'}
+              </button>
+            </form>
+          )}
         </div>
       </main>
 
-      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3.5 px-6 text-xs text-slate-500">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px]">
-          <span>FINDAFINITY &bull; Entorno de Conciliación Contable &bull; Plan General de Contabilidad</span>
-          <span>Formatos Soportados: Wolters Kluwer A3 &bull; Sage 50 &bull; DELSOL Contasol</span>
-        </div>
+      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3 px-6 text-center text-[11px] text-slate-500">
+        FINDAFINITY &bull; A3 &bull; Sage 50 &bull; Contasol
       </footer>
     </div>
   );
@@ -3906,6 +3788,7 @@ FICHERO: frontend\src\components\ExportPanel.jsx
 
 /**
  * FICHERO: frontend/src/components/ExportPanel.jsx
+ * Barra de Descarga Protagonista con Selector de ERP y Vista Previa Plegable
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -3913,11 +3796,12 @@ import {
   Copy,
   Check,
   FileSpreadsheet,
-  Database,
   ShieldCheck,
-  Eye,
+  Code2,
   FileCheck2,
   Lock,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   generateA3Suenlace,
@@ -3940,6 +3824,7 @@ export function ExportPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [showCodePreview, setShowCodePreview] = useState(false);
 
   const validJournals = useMemo(() => {
     return transactions
@@ -3964,14 +3849,13 @@ export function ExportPanel({
       entriesCount: validJournals.length,
       linesCount: totalLines,
       totalDebit,
-      totalCredit,
       imbalance: Math.abs(totalDebit - totalCredit),
     };
   }, [validJournals]);
 
   const previewText = useMemo(() => {
     if (validJournals.length === 0) {
-      return '// Esperando asientos conciliados para exportar.';
+      return '// Sin asientos listos para exportar.';
     }
 
     const accLen = selectedCompany?.accountLength || 9;
@@ -4001,7 +3885,6 @@ export function ExportPanel({
   const handleDownload = async () => {
     if (validJournals.length === 0) return;
 
-    // Si el Paywall está activo (>25 facturas en plan FREE), abrir modal de precios
     if (paywallLocked && onOpenPaywall) {
       onOpenPaywall();
       return;
@@ -4029,8 +3912,8 @@ export function ExportPanel({
         setDownloadSuccess(true);
         setTimeout(() => setDownloadSuccess(false), 2500);
         return;
-      } catch (err) {
-        console.warn('Descargando mediante generador en memoria del navegador:', err);
+      } catch {
+        // Fallback inmediato al generador en RAM del navegador
       }
     }
 
@@ -4062,142 +3945,138 @@ export function ExportPanel({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const erpButtonLabel =
+    selectedErp === 'A3'
+      ? 'Descargar Wolters Kluwer A3 (.txt)'
+      : selectedErp === 'SAGE'
+      ? 'Descargar Sage 50 XDIARIO (.csv)'
+      : 'Descargar Excel Contasol (.xlsx)';
+
   return (
-    <div className="bg-[#101013] border border-zinc-800/80 rounded-lg p-4 sm:p-5">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 mb-4 border-b border-zinc-800/50">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-            <Database className="h-4 w-4 text-zinc-400" />
-            Exportación Oficial a ERP de Contabilidad
-          </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Generación certificada de asientos auditados sin descuadre para inyección directa en el software contable.
-          </p>
-        </div>
-
-        <div className="inline-flex rounded-md p-1 bg-zinc-900 border border-zinc-800 self-start md:self-auto">
-          <button
-            type="button"
-            onClick={() => onSelectErp('A3')}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'A3' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Wolters Kluwer A3 (Suenlace)
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectErp('SAGE')}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'SAGE' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Sage 50 (XDIARIO)
-          </button>
-          <button
-            type="button"
-            onClick={() => onSelectErp('CONTASOL')}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              selectedErp === 'CONTASOL' ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            DELSOL Contasol (.xlsx)
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Asientos a Emitir</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">{auditMetrics.entriesCount}</div>
-        </div>
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Total Líneas Diario</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">{auditMetrics.linesCount}</div>
-        </div>
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Volumen Contabilizado</div>
-          <div className="font-mono text-sm font-semibold text-zinc-100 mt-0.5">
-            {formatEuro(auditMetrics.totalDebit)}
-          </div>
-        </div>
-        <div className="bg-zinc-900/60 border border-zinc-800/60 rounded p-2.5">
-          <div className="text-[10px] text-zinc-400 uppercase tracking-wider">Estado de Cuadre PGC</div>
-          <div
-            className={`font-mono text-sm font-semibold mt-0.5 flex items-center gap-1 ${
-              auditMetrics.imbalance < 0.005 ? 'text-emerald-400' : 'text-rose-400'
-            }`}
-          >
-            <ShieldCheck className="h-3.5 w-3.5" />
-            {auditMetrics.imbalance < 0.005 ? 'Cuadre 0,00 €' : `Descuadre ${formatEuro(auditMetrics.imbalance)}`}
-          </div>
-        </div>
-      </div>
-
-      <div className="border border-zinc-800 rounded-md overflow-hidden bg-[#0c0c0e]">
-        <div className="flex items-center justify-between px-3.5 py-2 border-b border-zinc-800/80 bg-zinc-950/70 text-xs">
-          <div className="flex items-center gap-2 text-zinc-400">
-            <Eye className="h-3.5 w-3.5" />
-            <span className="font-mono text-[11px] text-zinc-300">
-              {selectedErp === 'A3'
-                ? 'SUENLACE_A3.txt (Protocolo Enlace Contable A3)'
-                : selectedErp === 'SAGE'
-                ? 'XDIARIO.csv (9 Columnas Oficiales Sage 50)'
-                : 'CONTASOL_DIARIO.xlsx (Diario 1 + Asiento Correlativo)'}
+    <section className="bg-[#10131a] border border-[#1e232d] rounded-xl p-5 shadow-xl">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+        {/* Izquierda: Selector de Formato ERP y Resumen de Asientos */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-semibold text-white">Exportar Diario Contable</span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono bg-emerald-950/50 text-emerald-300 border border-emerald-800/60">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <span>{auditMetrics.entriesCount} asientos</span>
+              <span>&bull;</span>
+              <span>{formatEuro(auditMetrics.totalDebit)}</span>
+              <span>&bull;</span>
+              <span>Cuadre 0,00 €</span>
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Botones de selección de ERP claros */}
+          <div className="inline-flex rounded-lg p-1 bg-[#0b0d11] border border-[#222834]">
             <button
               type="button"
-              onClick={handleCopy}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/60 text-[11px] text-zinc-300 font-medium transition-colors"
-            >
-              {paywallLocked ? (
-                <Lock className="h-3 w-3 text-amber-400" />
-              ) : copied ? (
-                <Check className="h-3 w-3 text-emerald-400" />
-              ) : (
-                <Copy className="h-3 w-3" />
-              )}
-              <span>{copied ? 'Copiado' : 'Copiar'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={validJournals.length === 0}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-colors disabled:opacity-40 ${
-                paywallLocked
-                  ? 'bg-amber-500 hover:bg-amber-400 text-zinc-950'
-                  : 'bg-zinc-100 hover:bg-white text-zinc-900'
+              onClick={() => onSelectErp('A3')}
+              className={`px-3.5 py-2 rounded-md text-xs font-medium transition-colors ${
+                selectedErp === 'A3'
+                  ? 'bg-[#181c26] text-white border border-[#2c3444] shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              {paywallLocked ? (
-                <Lock className="h-3.5 w-3.5" />
-              ) : downloadSuccess ? (
-                <FileCheck2 className="h-3.5 w-3.5 text-emerald-600" />
-              ) : selectedErp === 'CONTASOL' ? (
-                <FileSpreadsheet className="h-3.5 w-3.5" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-              <span>
-                {paywallLocked
-                  ? 'Desbloquear Descarga (Paywall)'
-                  : downloadSuccess
-                  ? 'Descargado'
-                  : 'Descargar 1-Clic'}
-              </span>
+              Wolters Kluwer A3
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectErp('SAGE')}
+              className={`px-3.5 py-2 rounded-md text-xs font-medium transition-colors ${
+                selectedErp === 'SAGE'
+                  ? 'bg-[#181c26] text-white border border-[#2c3444] shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Sage 50
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectErp('CONTASOL')}
+              className={`px-3.5 py-2 rounded-md text-xs font-medium transition-colors ${
+                selectedErp === 'CONTASOL'
+                  ? 'bg-[#181c26] text-white border border-[#2c3444] shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              DELSOL Contasol
             </button>
           </div>
         </div>
 
-        <div className="p-3 max-h-56 overflow-y-auto font-mono text-[11px] text-zinc-300 leading-relaxed whitespace-pre select-all bg-[#08080a]">
-          {previewText}
+        {/* Derecha: Botón Grande e Intuitivo de Descarga */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowCodePreview((prev) => !prev)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-3 rounded-xl bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-300 transition-colors"
+          >
+            <Code2 className="h-4 w-4 text-slate-400" />
+            <span>{showCodePreview ? 'Ocultar vista previa' : 'Ver pre-asiento'}</span>
+            {showCodePreview ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={validJournals.length === 0}
+            className={`inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-xl text-sm font-semibold transition-all shadow-lg disabled:opacity-40 disabled:cursor-not-allowed ${
+              paywallLocked
+                ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/10'
+                : downloadSuccess
+                ? 'bg-emerald-600 text-white shadow-emerald-600/20'
+                : 'bg-blue-600 hover:bg-blue-500 active:scale-[0.99] text-white shadow-blue-600/25'
+            }`}
+          >
+            {paywallLocked ? (
+              <Lock className="h-4 w-4" />
+            ) : downloadSuccess ? (
+              <FileCheck2 className="h-5 w-5" />
+            ) : selectedErp === 'CONTASOL' ? (
+              <FileSpreadsheet className="h-5 w-5" />
+            ) : (
+              <Download className="h-5 w-5" />
+            )}
+            <span>
+              {paywallLocked
+                ? 'Desbloquear Descarga'
+                : downloadSuccess
+                ? 'Archivo Descargado'
+                : erpButtonLabel}
+            </span>
+          </button>
         </div>
       </div>
-    </div>
+
+      {/* Vista previa plegable bajo demanda */}
+      {showCodePreview && (
+        <div className="mt-4 border border-[#1e232d] rounded-lg overflow-hidden bg-[#0b0d11]">
+          <div className="flex items-center justify-between px-3.5 py-2 border-b border-[#1e232d] bg-[#0f1218] text-xs">
+            <span className="font-mono text-[11px] text-slate-400">
+              {selectedErp === 'A3'
+                ? 'SUENLACE_A3.txt'
+                : selectedErp === 'SAGE'
+                ? 'XDIARIO.csv'
+                : 'CONTASOL_DIARIO.xlsx'}
+            </span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#262c3a] text-[11px] text-slate-300"
+            >
+              {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              <span>{copied ? 'Copiado' : 'Copiar texto'}</span>
+            </button>
+          </div>
+          <div className="p-3.5 max-h-52 overflow-y-auto font-mono text-[11px] text-slate-300 leading-relaxed whitespace-pre select-all">
+            {previewText}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -4447,18 +4326,18 @@ FICHERO: frontend\src\components\IngestionZone.jsx
 
 /**
  * FICHERO: frontend/src/components/IngestionZone.jsx
- * Barra de Ingesta Operativa de Doble Ranura (Cartera de Facturas + Extracto Bancario / Pasarela)
+ * Dropzone Grande e Intuitivo (RAM Efímera Activa Siempre por Defecto)
  */
 import React, { useState, useRef } from 'react';
 import {
-  Upload,
+  UploadCloud,
   FileSpreadsheet,
-  Check,
+  CheckCircle2,
   AlertCircle,
   RefreshCw,
   FileCheck,
   X,
-  Link2,
+  Zap,
 } from 'lucide-react';
 
 export function IngestionZone({
@@ -4468,8 +4347,7 @@ export function IngestionZone({
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [invoicesFile, setInvoicesFile] = useState(null);
-  const [ephemeralMode, setEphemeralMode] = useState(false);
-  const [telemetry, setTelemetry] = useState(null);
+  const [feedback, setFeedback] = useState(null);
   const [localProcessing, setLocalProcessing] = useState(false);
 
   const bankInputRef = useRef(null);
@@ -4498,33 +4376,28 @@ export function IngestionZone({
 
   const processSelectedFile = async (file) => {
     setLocalProcessing(true);
-    setTelemetry({
-      filename: file.name,
-      sizeKb: (file.size / 1024).toFixed(1),
-      statusText: 'Conciliando partidas...',
-      isValid: true,
+    setFeedback({
+      type: 'loading',
+      text: `Procesando ${file.name}...`,
     });
 
     try {
       if (onFileProcessed) {
-        const result = await onFileProcessed(file, invoicesFile, ephemeralMode);
+        // RAM Efímera siempre activa (true)
+        const result = await onFileProcessed(file, invoicesFile, true);
         if (result && result.total_movements !== undefined) {
-          setTelemetry({
-            filename: file.name,
-            sizeKb: (file.size / 1024).toFixed(1),
-            statusText: `${result.total_movements} apuntes generados`,
-            isValid: true,
+          setFeedback({
+            type: 'ok',
+            text: `${file.name} • ${result.total_movements} partidas conciliadas`,
           });
         } else {
-          setTelemetry(null);
+          setFeedback(null);
         }
       }
     } catch (err) {
-      setTelemetry({
-        filename: file.name,
-        sizeKb: (file.size / 1024).toFixed(1),
-        statusText: err.message || 'Error de formato en el fichero',
-        isValid: false,
+      setFeedback({
+        type: 'error',
+        text: err.message || 'Error al procesar el archivo',
       });
     } finally {
       setLocalProcessing(false);
@@ -4532,17 +4405,31 @@ export function IngestionZone({
   };
 
   return (
-    <section className="bg-[#10131a] border border-[#1e232d] rounded-md p-4">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-        {/* Ranura 1: Cartera de Facturas Emitidas (3 columnas) */}
-        <div className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
-              1. Cartera de Facturas (430)
+    <section className="bg-[#10131a] border border-[#1e232d] rounded-xl p-5 shadow-lg">
+      {/* Cabecera compacta con acciones secundarias */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-sm font-semibold text-white">Importar Extracto o Liquidación</h2>
+          {feedback && (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono ${
+                feedback.type === 'ok'
+                  ? 'bg-emerald-950/50 text-emerald-300 border border-emerald-800/60'
+                  : feedback.type === 'error'
+                  ? 'bg-rose-950/50 text-rose-300 border border-rose-800/60'
+                  : 'bg-blue-950/50 text-blue-300 border border-blue-800/60'
+              }`}
+            >
+              {feedback.type === 'ok' && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
+              {feedback.type === 'error' && <AlertCircle className="h-3 w-3 text-rose-400" />}
+              {feedback.type === 'loading' && <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />}
+              <span>{feedback.text}</span>
             </span>
-            <span className="text-[10px] font-mono text-slate-500">.xlsx, .csv, .json</span>
-          </div>
+          )}
+        </div>
 
+        <div className="flex items-center gap-2">
+          {/* Botón para adjuntar Cartera de Facturas */}
           <input
             ref={portfolioInputRef}
             type="file"
@@ -4552,16 +4439,14 @@ export function IngestionZone({
           />
 
           {invoicesFile ? (
-            <div className="flex items-center justify-between px-3 py-2 rounded bg-emerald-950/20 border border-emerald-800/50 text-xs text-emerald-300">
-              <div className="flex items-center gap-2 truncate">
-                <FileCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                <span className="truncate font-mono text-[11px]">{invoicesFile.name}</span>
-              </div>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-xs text-emerald-300">
+              <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="truncate max-w-[160px] font-mono text-[11px]">{invoicesFile.name}</span>
               <button
                 type="button"
                 onClick={() => setInvoicesFile(null)}
-                className="p-0.5 text-slate-400 hover:text-white"
-                title="Retirar archivo de cartera"
+                className="text-slate-400 hover:text-white"
+                title="Quitar cartera"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -4570,97 +4455,68 @@ export function IngestionZone({
             <button
               type="button"
               onClick={() => portfolioInputRef.current?.click()}
-              className="w-full flex items-center justify-between px-3 py-2 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs text-slate-300 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-300 transition-colors"
             >
-              <span className="flex items-center gap-2">
-                <FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" />
-                <span>Cargar libro de facturas emitidas</span>
-              </span>
-              <span className="text-[11px] text-blue-400 font-medium">Examinar</span>
+              <FileSpreadsheet className="h-3.5 w-3.5 text-blue-400" />
+              <span>+ Cartera Facturas (Opcional)</span>
             </button>
           )}
-        </div>
 
-        {/* Ranura 2: Extracto Bancario / Liquidación de Pasarela (5 columnas) */}
-        <div className="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
-              2. Extracto Bancario o Liquidación Pasarela
-            </span>
-            <span className="text-[10px] font-mono text-slate-500">Norma 43 (.n43) / Stripe / Redsys (.csv)</span>
-          </div>
-
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragOver(true);
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              setIsDragOver(false);
-            }}
-            onDrop={handleDrop}
-            onClick={() => bankInputRef.current?.click()}
-            className={`flex items-center justify-between px-3 py-2 rounded border border-dashed cursor-pointer transition-colors ${
-              isDragOver
-                ? 'border-blue-500 bg-blue-950/20'
-                : 'border-[#283040] bg-[#0b0d11] hover:bg-[#161a23]'
-            }`}
-          >
-            <input
-              ref={bankInputRef}
-              type="file"
-              onChange={handleBankFileChange}
-              accept=".n43,.txt,.csv,.xlsx,.json"
-              className="hidden"
-            />
-            <div className="flex items-center gap-2 truncate text-xs text-slate-200">
-              {localProcessing || isProcessing ? (
-                <RefreshCw className="h-3.5 w-3.5 text-blue-400 animate-spin shrink-0" />
-              ) : (
-                <Upload className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              )}
-              <span className="truncate">
-                {telemetry ? `${telemetry.filename} (${telemetry.statusText})` : 'Arrastrar fichero .n43 / .csv o hacer clic para procesar'}
-              </span>
-            </div>
-            <span className="text-[11px] font-medium text-blue-400 shrink-0 ml-2">Subir Fichero</span>
-          </div>
-        </div>
-
-        {/* Ranura 3: Sincronización Directa API y Privacidad RAM (3 columnas) */}
-        <div className="lg:col-span-3 flex flex-col justify-between gap-2">
-          <div className="flex items-center justify-between">
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={ephemeralMode}
-                onChange={(e) => setEphemeralMode(e.target.checked)}
-                className="rounded border-slate-700 bg-[#0b0d11] text-blue-600 focus:ring-0"
-              />
-              <span>Procesamiento efímero en RAM</span>
-            </label>
-
-            {telemetry && (
-              <span className={`inline-flex items-center gap-1 text-[10px] font-mono ${telemetry.isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {telemetry.isValid ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                {telemetry.isValid ? 'OK' : 'Error'}
-              </span>
-            )}
-          </div>
-
+          {/* Botón Stripe API */}
           {onOpenStripeSync && (
             <button
               type="button"
               onClick={onOpenStripeSync}
               disabled={isProcessing || localProcessing}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#283040] text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#161a23] hover:bg-[#1e2430] border border-[#283040] text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
             >
-              <Link2 className="h-3.5 w-3.5 text-blue-400" />
-              <span>Importar Liquidaciones vía Stripe API</span>
+              <Zap className="h-3.5 w-3.5 text-blue-400" />
+              <span>Stripe API</span>
             </button>
           )}
         </div>
+      </div>
+
+      {/* Cuadro Grande e Intuitivo de Subida (Dropzone) */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+        }}
+        onDrop={handleDrop}
+        onClick={() => bankInputRef.current?.click()}
+        className={`w-full rounded-xl border-2 border-dashed py-10 px-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+          isDragOver
+            ? 'border-blue-500 bg-blue-950/20 scale-[0.998]'
+            : 'border-[#242b38] hover:border-blue-500/50 bg-[#0b0d11]/90 hover:bg-[#0f131a]'
+        }`}
+      >
+        <input
+          ref={bankInputRef}
+          type="file"
+          onChange={handleBankFileChange}
+          accept=".n43,.txt,.csv,.xlsx,.json"
+          className="hidden"
+        />
+
+        <div className="h-12 w-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-3 shadow-inner">
+          {localProcessing || isProcessing ? (
+            <RefreshCw className="h-5 w-5 animate-spin" />
+          ) : (
+            <UploadCloud className="h-6 w-6" />
+          )}
+        </div>
+
+        <p className="text-sm font-semibold text-white">
+          Arrastra aquí tu archivo o haz clic para seleccionarlo
+        </p>
+        <p className="text-xs text-slate-400 mt-1 font-mono">
+          Norma 43 (.n43) &bull; Stripe (.csv) &bull; Redsys TPV (.csv) &bull; Excel (.xlsx)
+        </p>
       </div>
     </section>
   );
@@ -5277,7 +5133,7 @@ FICHERO: frontend\src\components\StagingRadar.jsx
 
 /**
  * FICHERO: frontend/src/components/StagingRadar.jsx
- * Mesa de Conciliación Contable de Alta Densidad con KPIs Financieros y Selector de Lotes
+ * Mesa de Conciliación Minimalista de Alta Densidad
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -5380,59 +5236,31 @@ export function StagingRadar({
 
   return (
     <div className="space-y-4">
-      {/* Tira Ejecutiva de Indicadores Contables */}
+      {/* KPIs Directos sin texto sobrante */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Partidas en Mesa de Trabajo
-          </div>
-          <div className="font-mono text-xl font-bold text-white mt-1">
-            {summary.all}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
-            {summary.green} verdes &bull; {summary.yellow} revisión &bull; {summary.red} cuenta 555
-          </div>
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
+          <span className="text-[11px] text-slate-400 font-medium">Partidas</span>
+          <div className="font-mono text-xl font-bold text-white mt-0.5">{summary.all}</div>
         </div>
 
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Tesorería Neta Conciliada (572)
-          </div>
-          <div className="font-mono text-xl font-bold text-white mt-1">
-            {formatEuro(summary.netTotal)}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            Saldo líquido abonado en banco
-          </div>
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
+          <span className="text-[11px] text-slate-400 font-medium">Neto Banco (572)</span>
+          <div className="font-mono text-xl font-bold text-white mt-0.5">{formatEuro(summary.netTotal)}</div>
         </div>
 
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Facturación Bruta Imputada (430)
-          </div>
-          <div className="font-mono text-xl font-bold text-slate-200 mt-1">
-            {formatEuro(summary.grossTotal)}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            Cancelación de deuda comercial
-          </div>
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
+          <span className="text-[11px] text-slate-400 font-medium">Bruto Facturas (430)</span>
+          <div className="font-mono text-xl font-bold text-slate-200 mt-0.5">{formatEuro(summary.grossTotal)}</div>
         </div>
 
-        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            Gastos de Pasarela Deducidos (626)
-          </div>
-          <div className="font-mono text-xl font-bold text-amber-400 mt-1">
-            {formatEuro(summary.feeTotal)}
-          </div>
-          <div className="text-[11px] text-emerald-400 mt-0.5 font-mono">
-            Descuadre Diario PGC: 0,00 €
-          </div>
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-xl px-4 py-3">
+          <span className="text-[11px] text-slate-400 font-medium">Comisiones (626)</span>
+          <div className="font-mono text-xl font-bold text-amber-400 mt-0.5">{formatEuro(summary.feeTotal)}</div>
         </div>
       </div>
 
-      {/* Tabla Principal de Conciliación */}
-      <div className="bg-[#10131a] border border-[#1e232d] rounded-md overflow-hidden">
+      {/* Contenedor de Tabla */}
+      <div className="bg-[#10131a] border border-[#1e232d] rounded-xl overflow-hidden shadow-lg">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-[#1e232d] bg-[#0d1016]">
           <PeriodFilter
             selectedYear={selectedYear}
@@ -5445,11 +5273,9 @@ export function StagingRadar({
             onSelectEndMonth={onSelectEndMonth}
           />
 
-          {/* Selector de Lotes Procesados si existen varios */}
           {batches && batches.length > 1 && (
             <div className="flex items-center gap-2 px-4 py-2 border-t lg:border-t-0 border-[#1e232d] text-xs">
               <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
-              <span className="text-[11px] text-slate-400">Lote activo:</span>
               <select
                 value={currentBatchId || ''}
                 onChange={(e) => onSelectBatch && onSelectBatch(e.target.value)}
@@ -5457,7 +5283,7 @@ export function StagingRadar({
               >
                 {batches.map((b) => (
                   <option key={b.id} value={b.id}>
-                    {b.filename} ({b.total_movements} apuntes)
+                    {b.filename} ({b.total_movements})
                   </option>
                 ))}
               </select>
@@ -5465,219 +5291,181 @@ export function StagingRadar({
           )}
         </div>
 
-        {/* Barra de Filtros de Estado y Búsqueda */}
-        <div className="p-3.5 border-b border-[#1e232d] bg-[#0f1218] flex flex-col gap-3">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5 overflow-x-auto">
-              <button
-                type="button"
-                onClick={() => setActiveTab('ALL')}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                  activeTab === 'ALL'
-                    ? 'bg-[#181c26] text-white border-[#2a3142]'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <span>Todas</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#0b0d11] text-slate-300">
-                  {summary.all}
-                </span>
-              </button>
+        {/* Barra de Pestañas y Búsqueda */}
+        <div className="p-3.5 border-b border-[#1e232d] bg-[#0f1218] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => setActiveTab('ALL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                activeTab === 'ALL'
+                  ? 'bg-[#181c26] text-white border-[#2a3142]'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <span>Todas</span>
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#0b0d11] text-slate-300">
+                {summary.all}
+              </span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('GREEN')}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                  activeTab === 'GREEN'
-                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-800/60'
-                    : 'border-transparent text-slate-400 hover:text-emerald-400'
-                }`}
-              >
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Conciliadas</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300">
-                  {summary.green}
-                </span>
-              </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('GREEN')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                activeTab === 'GREEN'
+                  ? 'bg-emerald-950/40 text-emerald-300 border-emerald-800/60'
+                  : 'border-transparent text-slate-400 hover:text-emerald-400'
+              }`}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Conciliadas</span>
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300">
+                {summary.green}
+              </span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('YELLOW')}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                  activeTab === 'YELLOW'
-                    ? 'bg-amber-950/40 text-amber-300 border-amber-800/60'
-                    : 'border-transparent text-slate-400 hover:text-amber-400'
-                }`}
-              >
-                <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
-                <span>Revisión Requerida</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300">
-                  {summary.yellow}
-                </span>
-              </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('YELLOW')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                activeTab === 'YELLOW'
+                  ? 'bg-amber-950/40 text-amber-300 border-amber-800/60'
+                  : 'border-transparent text-slate-400 hover:text-amber-400'
+              }`}
+            >
+              <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+              <span>Revisión</span>
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300">
+                {summary.yellow}
+              </span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('RED')}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
-                  activeTab === 'RED'
-                    ? 'bg-rose-950/40 text-rose-300 border-rose-800/60'
-                    : 'border-transparent text-slate-400 hover:text-rose-400'
-                }`}
-              >
-                <AlertOctagon className="h-3.5 w-3.5 text-rose-400" />
-                <span>Partidas Pendientes (555)</span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-300">
-                  {summary.red}
-                </span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {summary.yellow > 0 && (
-                <button
-                  type="button"
-                  onClick={onBulkApproveYellows}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors"
-                >
-                  <CheckCheck className="h-3.5 w-3.5" />
-                  <span>Conformar En Revisión ({summary.yellow})</span>
-                </button>
-              )}
-
-              {transactions.length > 0 && onClearAllTransactions && (
-                <button
-                  type="button"
-                  onClick={handleClearAll}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors border ${
-                    confirmClear
-                      ? 'bg-rose-600 text-white border-rose-500'
-                      : 'bg-[#0b0d11] hover:bg-rose-950/40 border-[#222834] text-slate-400 hover:text-rose-300'
-                  }`}
-                  title="Limpia las partidas de la vista actual (no reinicia el consumo mensual del plan)"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  <span>{confirmClear ? 'Confirmar limpieza de vista' : 'Limpiar Mesa'}</span>
-                </button>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('RED')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                activeTab === 'RED'
+                  ? 'bg-rose-950/40 text-rose-300 border-rose-800/60'
+                  : 'border-transparent text-slate-400 hover:text-rose-400'
+              }`}
+            >
+              <AlertOctagon className="h-3.5 w-3.5 text-rose-400" />
+              <span>Cuenta 555</span>
+              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-300">
+                {summary.red}
+              </span>
+            </button>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="relative flex-1 max-w-md">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full sm:w-64">
               <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar por concepto bancario, nº documento, NIF o importe..."
-                className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                placeholder="Buscar factura, NIF, importe..."
+                className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
               />
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-400 uppercase tracking-wider">Canal:</span>
-              <select
-                value={selectedSource}
-                onChange={(e) => setSelectedSource(e.target.value)}
-                className="bg-[#0b0d11] border border-[#222834] rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none cursor-pointer"
+            <select
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value)}
+              className="bg-[#0b0d11] border border-[#222834] rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">Todos los canales</option>
+              <option value="Stripe">Stripe</option>
+              <option value="Redsys">Redsys TPV</option>
+              <option value="Norma 43">Norma 43</option>
+            </select>
+
+            {summary.yellow > 0 && (
+              <button
+                type="button"
+                onClick={onBulkApproveYellows}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors"
               >
-                <option value="ALL">Todos los Orígenes</option>
-                <option value="Stripe">Pasarela Stripe</option>
-                <option value="Redsys">TPV Redsys</option>
-                <option value="Norma 43">Cuaderno 43 AEB</option>
-              </select>
-            </div>
+                <CheckCheck className="h-3.5 w-3.5" />
+                <span>Aprobar ({summary.yellow})</span>
+              </button>
+            )}
+
+            {transactions.length > 0 && onClearAllTransactions && (
+              <button
+                type="button"
+                onClick={handleClearAll}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  confirmClear
+                    ? 'bg-rose-600 text-white border-rose-500'
+                    : 'bg-[#0b0d11] hover:bg-rose-950/40 border-[#222834] text-slate-400 hover:text-rose-300'
+                }`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>{confirmClear ? 'Confirmar' : 'Limpiar'}</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Estado Vacío o Tabla de Movimientos */}
+        {/* Tabla o Estado Vacío */}
         {transactions.length === 0 ? (
-          <div className="py-14 px-6 text-center bg-[#0b0d11]">
+          <div className="py-12 px-6 text-center bg-[#0b0d11]">
             {!hasCompanies ? (
-              <div className="max-w-md mx-auto">
-                <h3 className="text-sm font-semibold text-white mb-1">
-                  Ninguna sociedad seleccionada
-                </h3>
-                <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-                  Dé de alta la primera sociedad cliente indicando su NIF/CIF, longitud de subcuenta y software contable de destino.
-                </p>
-                {onOpenAddClientModal && (
-                  <button
-                    type="button"
-                    onClick={onOpenAddClientModal}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>Alta de Sociedad Cliente</span>
-                  </button>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={onOpenAddClientModal}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Crear Primera Empresa Cliente</span>
+              </button>
             ) : (
-              <div className="max-w-md mx-auto">
-                <h3 className="text-sm font-semibold text-slate-200 mb-1">
-                  Mesa de conciliación sin apuntes en el periodo seleccionado
-                </h3>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  Utilice la barra superior para adjuntar la cartera de facturas emitidas y procesar un extracto Norma 43 (.n43) o fichero de liquidación (.csv).
-                </p>
-              </div>
+              <span className="text-xs text-slate-500">
+                Sin partidas cargadas. Sube un archivo arriba para conciliar.
+              </span>
             )}
           </div>
         ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[#1e232d] bg-[#0b0d11] text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                    <th className="py-2.5 px-2 w-8 text-center"></th>
-                    <th className="py-2.5 px-2">Referencia & Canal</th>
-                    <th className="py-2.5 px-2">Fecha Valor</th>
-                    <th className="py-2.5 px-2">Concepto Bancario / Regla Aplicada</th>
-                    <th className="py-2.5 px-2 text-right">Abono Banco (572)</th>
-                    <th className="py-2.5 px-2 text-right">Bruto Factura (430)</th>
-                    <th className="py-2.5 px-2 text-right">Gasto TPV/Pasarela (626)</th>
-                    <th className="py-2.5 px-2 text-center">Afinidad</th>
-                    <th className="py-2.5 px-2 text-right">Dictamen</th>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#1e232d] bg-[#0b0d11] text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                  <th className="py-2.5 px-2 w-8 text-center"></th>
+                  <th className="py-2.5 px-2">Origen</th>
+                  <th className="py-2.5 px-2">Fecha</th>
+                  <th className="py-2.5 px-2">Concepto</th>
+                  <th className="py-2.5 px-2 text-right">Neto (572)</th>
+                  <th className="py-2.5 px-2 text-right">Bruto (430)</th>
+                  <th className="py-2.5 px-2 text-right">Comisión (626)</th>
+                  <th className="py-2.5 px-2 text-center">Score</th>
+                  <th className="py-2.5 px-2 text-right">Acción</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#181c24]">
+                {filteredTransactions.length > 0 ? (
+                  filteredTransactions.map((tx) => (
+                    <TransactionRow
+                      key={tx.id}
+                      transaction={tx}
+                      isExpanded={expandedId === tx.id}
+                      onToggleExpand={() => setExpandedId((prev) => (prev === tx.id ? null : tx.id))}
+                      onOpenScoreModal={onOpenScoreModal}
+                      onApprove={onApproveTransaction}
+                      onDelete={onDeleteTransaction}
+                    />
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-slate-500 text-xs">
+                      Sin coincidencias para el filtro actual.
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-[#181c24]">
-                  {filteredTransactions.length > 0 ? (
-                    filteredTransactions.map((tx) => (
-                      <TransactionRow
-                        key={tx.id}
-                        transaction={tx}
-                        isExpanded={expandedId === tx.id}
-                        onToggleExpand={() => setExpandedId((prev) => (prev === tx.id ? null : tx.id))}
-                        onOpenScoreModal={onOpenScoreModal}
-                        onApprove={onApproveTransaction}
-                        onDelete={onDeleteTransaction}
-                      />
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={9} className="py-8 text-center text-slate-500 text-xs">
-                        Sin resultados para los criterios de filtrado activos.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="px-4 py-2.5 border-t border-[#1e232d] bg-[#0b0d11] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-400 gap-2">
-              <div>
-                Mostrando <span className="font-mono text-slate-200">{filteredTransactions.length}</span> de{' '}
-                <span className="font-mono text-slate-200">{transactions.length}</span> apuntes
-              </div>
-              <div className="font-mono text-xs">
-                Total Tesorería Filtrada:{' '}
-                <strong className="text-white">
-                  {formatEuro(filteredTransactions.reduce((acc, t) => acc + (Number(t.netAmountEur) || 0), 0))}
-                </strong>
-              </div>
-            </div>
-          </>
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
@@ -5691,22 +5479,17 @@ FICHERO: frontend\src\components\StripeSyncModal.jsx
 
 /**
  * FICHERO: frontend/src/components/StripeSyncModal.jsx
- * Modal para sincronizar liquidaciones agrupadas (Payouts) directamente desde la API de Stripe
+ * Conexión Directa con Stripe API (RAM Efímera Siempre Activa)
  */
 import React, { useState } from 'react';
-import { Zap, Lock, ShieldCheck, CheckCircle2, AlertCircle, X, KeyRound, ArrowRight } from 'lucide-react';
+import { Zap, AlertCircle, X, KeyRound, ArrowRight } from 'lucide-react';
 
 export function StripeSyncModal({
   isOpen,
   onClose,
   onSyncStripe,
-  selectedCompany,
-  selectedYear,
-  startMonth,
-  endMonth,
 }) {
   const [restrictedKey, setRestrictedKey] = useState('');
-  const [ephemeralMode, setEphemeralMode] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -5717,60 +5500,40 @@ export function StripeSyncModal({
     setError(null);
     const cleanKey = restrictedKey.trim();
     if (!cleanKey.startsWith('rk_') && !cleanKey.startsWith('sk_')) {
-      setError('Introduce una clave restringida válida de Stripe (empieza por rk_live_ o rk_test_).');
+      setError('Introduce una clave válida de Stripe (rk_live_... o rk_test_...).');
       return;
     }
     setLoading(true);
     try {
       await onSyncStripe({
         stripeRestrictedKey: cleanKey,
-        ephemeralMode,
+        ephemeralMode: true,
       });
       setRestrictedKey('');
       onClose();
     } catch (err) {
-      setError(err.message || 'No se pudo sincronizar con la API de Stripe');
+      setError(err.message || 'No se pudo conectar con Stripe.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#121215] border border-zinc-800 rounded-xl max-w-lg w-full p-6 shadow-2xl relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs">
+      <div className="bg-[#10131a] border border-[#222834] rounded-xl max-w-md w-full p-6 shadow-2xl relative">
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 right-4 p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+          className="absolute top-4 right-4 p-1 rounded text-slate-400 hover:text-white"
         >
           <X className="h-4 w-4" />
         </button>
 
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-9 w-9 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-            <Zap className="h-5 w-5" />
+        <div className="flex items-center gap-2.5 mb-4">
+          <div className="h-8 w-8 rounded-lg bg-blue-600/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
+            <Zap className="h-4 w-4" />
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-white">
-              Conectar API de Stripe (100% Determinista)
-            </h3>
-            <p className="text-[11px] text-zinc-400">
-              Extrae transferencias bancarias (<code className="text-indigo-300">/v1/payouts</code>), ventas y comisiones exactas al céntimo
-            </p>
-          </div>
-        </div>
-
-        {/* Tutorial de 3 pasos para crear Restricted Key de Solo Lectura */}
-        <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3.5 mb-4 text-xs space-y-1.5">
-          <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
-            <ShieldCheck className="h-4 w-4 text-emerald-400" />
-            <span>Cómo obtener una Clave de Solo Lectura Segura (30 seg):</span>
-          </div>
-          <ol className="list-decimal list-inside text-[11px] text-zinc-400 space-y-1 pl-1">
-            <li>Entra en tu panel de Stripe: <strong>Desarrolladores &rarr; Claves API</strong>.</li>
-            <li>Pulsa en <strong>"Crear clave restringida"</strong> y activa permiso <strong>Read (Lectura)</strong> solo en <em>Balance</em>, <em>Payouts</em> y <em>Charges</em>.</li>
-            <li>Pega la clave <code className="text-emerald-300">rk_live_...</code> abajo. Con ella es imposible realizar cargos ni mover fondos.</li>
-          </ol>
+          <h3 className="text-sm font-semibold text-white">Importar desde Stripe API</h3>
         </div>
 
         {error && (
@@ -5782,57 +5545,36 @@ export function StripeSyncModal({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
-              Clave Restringida de Solo Lectura (Stripe API)
+            <label className="block text-[11px] text-slate-400 font-medium mb-1.5">
+              Clave Restringida de Lectura (rk_live_... / rk_test_...)
             </label>
             <div className="relative">
-              <KeyRound className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <KeyRound className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="password"
                 required
                 value={restrictedKey}
                 onChange={(e) => setRestrictedKey(e.target.value)}
-                placeholder="rk_live_51Ox98aK2..."
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-indigo-500"
+                placeholder="rk_live_..."
+                className="w-full bg-[#0b0d11] border border-[#222834] rounded-lg pl-9 pr-3 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-blue-500"
               />
             </div>
-            <p className="text-[10px] text-zinc-500 mt-1">
-              La clave se usa únicamente en memoria durante esta petición y jamás se guarda en base de datos.
-            </p>
           </div>
 
-          <label className="flex items-start gap-2.5 p-3 rounded-lg bg-emerald-950/20 border border-emerald-900/40 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={ephemeralMode}
-              onChange={(e) => setEphemeralMode(e.target.checked)}
-              className="mt-0.5 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-0"
-            />
-            <div className="text-xs">
-              <span className="font-semibold text-emerald-300 block">
-                Modo Efímero en RAM (Privacidad Zero-Storage)
-              </span>
-              <span className="text-[11px] text-zinc-400">
-                Procesa los cobros en la memoria volátil y destruye los datos al descargar tu fichero contable para {selectedCompany?.name || 'el cliente'}.
-              </span>
-            </div>
-          </label>
-
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+          <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-3.5 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300"
+              className="px-4 py-2 rounded-lg bg-[#161a23] hover:bg-[#1e2430] border border-[#262c3a] text-xs text-slate-300"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
             >
-              <Zap className="h-3.5 w-3.5" />
-              <span>{loading ? 'Sincronizando Payouts...' : 'Importar y Conciliar desde Stripe'}</span>
+              <span>{loading ? 'Importando...' : 'Sincronizar'}</span>
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -7445,32 +7187,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "fe40f60e-31e2-4a7a-8d16-88c88254ff23",
+  "tenant_id": "91593bdf-48d4-4f2f-8cdc-b16839bc1529",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-16",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "f4003a8f3701c8e0a7d7b08a21ce8d7935e038522bec74716bc496d3d58d3665",
+  "head_hash_sha256": "ad161ce33a836d7a2636dd65e3428d183270d82fb4f159b5f22d1471083de7ef",
   "audit_events": [
     {
-      "event_id": "1c10436b-5cf1-443a-a407-45ff6e81150f",
+      "event_id": "53f40940-fe45-43fe-a5be-a919cbb7e842",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:56:47.440378",
-      "sha256_hash": "9d6ca1f6e69f59e63bff214adba0026a411d8e10a86d71a0daa4a779d8752075",
+      "timestamp": "2026-10-16T19:21:05.339155",
+      "sha256_hash": "cd402bcb4ec8b3dfc9f30ad78b96e789ca915662a150cd4f2fab34b94829a13e",
       "details": {
-        "batch_id": "b76992c0-1909-4b05-bcee-43a20b2d9e49",
+        "batch_id": "16c1d07d-17a9-48c8-b487-ec787e29c94e",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "79175d52-990c-47ea-98fb-eeb95d165257",
+      "event_id": "3ac8619d-a75f-49b0-81d5-9e5d6bdf27c9",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:56:47.452673",
-      "sha256_hash": "8b4c22a627fe794b8a54c3e7ed64ab218f049376936cbffaaaec46f6780b8c1f",
+      "timestamp": "2026-10-16T19:21:05.349676",
+      "sha256_hash": "ef692a84ce8150125126a1b2ffc0e444ba29397370d7bb0acf566bf2ab519cc6",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7478,23 +7220,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "35515abb-d591-46d0-af89-0b895c44f97e",
+      "event_id": "af1be55e-4a5d-41b7-aed9-542f6b84b51a",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:56:47.459384",
-      "sha256_hash": "8179585056050ca33263a99347bfe03e9d138faf353301df7089b656772a8ae9",
+      "timestamp": "2026-10-16T19:21:05.356069",
+      "sha256_hash": "ef8f7439b15bbdd86b4d0705f7bb13f55e89146a88bb01bb93288125be9e6380",
       "details": {
-        "batch_id": "198be192-15fc-4b53-be64-af37979e238d",
+        "batch_id": "9169afb3-ed90-4a0a-87e3-6039518eeb86",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "81186ec3-346a-48fa-ac26-40c731ac2785",
+      "event_id": "19321342-6973-4f58-98c9-dceff1852659",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:56:47.466094",
-      "sha256_hash": "56691a25c3bf20370a801aced68dcf8f3546dbabc163a74eec1fd7178294a009",
+      "timestamp": "2026-10-16T19:21:05.361774",
+      "sha256_hash": "f1f7310d45b7f050bb888e44110c3ff886a9f5016acb0dc664d0fcbdad73695c",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7502,23 +7244,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "8e5b4962-6b0b-4215-833a-b5752550b7e2",
+      "event_id": "6950f205-b31a-4723-866c-99492c0c6ae6",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:56:47.472257",
-      "sha256_hash": "ac0118719f6848e171adda80066bc5e707bc6ead38703c12c560035f404e705c",
+      "timestamp": "2026-10-16T19:21:05.366505",
+      "sha256_hash": "1cefdf26cd97f7bcaaf29aca006a44c77afa7a28b5e851af1b03c83693fcd8c8",
       "details": {
-        "batch_id": "e74b7e66-12f6-4664-bd0e-9366d980b7ea",
+        "batch_id": "1378a406-ff7e-4042-8b47-f704d130bc08",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "b91fa14b-04ac-4fb3-a0f3-068f8ebbc2a5",
+      "event_id": "9d73d281-be06-456c-9edd-1b1c333b73fe",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:56:47.492278",
-      "sha256_hash": "f4003a8f3701c8e0a7d7b08a21ce8d7935e038522bec74716bc496d3d58d3665",
+      "timestamp": "2026-10-16T19:21:05.383325",
+      "sha256_hash": "ad161ce33a836d7a2636dd65e3428d183270d82fb4f159b5f22d1471083de7ef",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7532,7 +7274,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Archivo binario (.XLSX) de 5337 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+# [Archivo binario (.XLSX) de 5336 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -11587,6 +11329,17 @@ def reconcile_batch_payout(
 
 
 ================================================================================
+FICHERO: src\api\v1\reconciliation_api.py
+================================================================================
+
+"""
+Alias de compatibilidad: src/api/v1/reconciliation_api.py -> tenant_batch_api.py
+Proporciona acceso transparente a los endpoints de batches y reconciliación contable.
+"""
+from src.api.v1.tenant_batch_api import *
+
+
+================================================================================
 FICHERO: src\api\v1\subscription_api.py
 ================================================================================
 
@@ -12525,6 +12278,8 @@ async def upload_and_process_batch(
             return {
                 "id": "BATCH-EPHEMERAL-RAM",
                 "ephemeral": True,
+                "filename": file_name,
+                "file_name": file_name,
                 "tenant_id": tenant_id,
                 "client_id": client_id,
                 "period_year": period_year,
@@ -12537,7 +12292,6 @@ async def upload_and_process_batch(
                 "green_count": sum(1 for t in response_txs if t["status"] == "GREEN"),
                 "yellow_count": sum(1 for t in response_txs if t["status"] == "YELLOW"),
                 "red_count": sum(1 for t in response_txs if t["status"] == "RED"),
-                "file_name": file_name,
                 "file_hash_sha256": "EPHEMERAL_RAM_ZERO_STORAGE",
                 "transactions": response_txs,
             }

@@ -1,17 +1,17 @@
 /**
  * FICHERO: frontend/src/components/IngestionZone.jsx
- * Barra de Ingesta Operativa de Doble Ranura (Cartera de Facturas + Extracto Bancario / Pasarela)
+ * Dropzone Grande e Intuitivo (RAM Efímera Activa Siempre por Defecto)
  */
 import React, { useState, useRef } from 'react';
 import {
-  Upload,
+  UploadCloud,
   FileSpreadsheet,
-  Check,
+  CheckCircle2,
   AlertCircle,
   RefreshCw,
   FileCheck,
   X,
-  Link2,
+  Zap,
 } from 'lucide-react';
 
 export function IngestionZone({
@@ -21,8 +21,7 @@ export function IngestionZone({
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [invoicesFile, setInvoicesFile] = useState(null);
-  const [ephemeralMode, setEphemeralMode] = useState(false);
-  const [telemetry, setTelemetry] = useState(null);
+  const [feedback, setFeedback] = useState(null);
   const [localProcessing, setLocalProcessing] = useState(false);
 
   const bankInputRef = useRef(null);
@@ -51,33 +50,28 @@ export function IngestionZone({
 
   const processSelectedFile = async (file) => {
     setLocalProcessing(true);
-    setTelemetry({
-      filename: file.name,
-      sizeKb: (file.size / 1024).toFixed(1),
-      statusText: 'Conciliando partidas...',
-      isValid: true,
+    setFeedback({
+      type: 'loading',
+      text: `Procesando ${file.name}...`,
     });
 
     try {
       if (onFileProcessed) {
-        const result = await onFileProcessed(file, invoicesFile, ephemeralMode);
+        // RAM Efímera siempre activa (true)
+        const result = await onFileProcessed(file, invoicesFile, true);
         if (result && result.total_movements !== undefined) {
-          setTelemetry({
-            filename: file.name,
-            sizeKb: (file.size / 1024).toFixed(1),
-            statusText: `${result.total_movements} apuntes generados`,
-            isValid: true,
+          setFeedback({
+            type: 'ok',
+            text: `${file.name} • ${result.total_movements} partidas conciliadas`,
           });
         } else {
-          setTelemetry(null);
+          setFeedback(null);
         }
       }
     } catch (err) {
-      setTelemetry({
-        filename: file.name,
-        sizeKb: (file.size / 1024).toFixed(1),
-        statusText: err.message || 'Error de formato en el fichero',
-        isValid: false,
+      setFeedback({
+        type: 'error',
+        text: err.message || 'Error al procesar el archivo',
       });
     } finally {
       setLocalProcessing(false);
@@ -85,17 +79,31 @@ export function IngestionZone({
   };
 
   return (
-    <section className="bg-[#10131a] border border-[#1e232d] rounded-md p-4">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-        {/* Ranura 1: Cartera de Facturas Emitidas (3 columnas) */}
-        <div className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
-              1. Cartera de Facturas (430)
+    <section className="bg-[#10131a] border border-[#1e232d] rounded-xl p-5 shadow-lg">
+      {/* Cabecera compacta con acciones secundarias */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-sm font-semibold text-white">Importar Extracto o Liquidación</h2>
+          {feedback && (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono ${
+                feedback.type === 'ok'
+                  ? 'bg-emerald-950/50 text-emerald-300 border border-emerald-800/60'
+                  : feedback.type === 'error'
+                  ? 'bg-rose-950/50 text-rose-300 border border-rose-800/60'
+                  : 'bg-blue-950/50 text-blue-300 border border-blue-800/60'
+              }`}
+            >
+              {feedback.type === 'ok' && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
+              {feedback.type === 'error' && <AlertCircle className="h-3 w-3 text-rose-400" />}
+              {feedback.type === 'loading' && <RefreshCw className="h-3 w-3 animate-spin text-blue-400" />}
+              <span>{feedback.text}</span>
             </span>
-            <span className="text-[10px] font-mono text-slate-500">.xlsx, .csv, .json</span>
-          </div>
+          )}
+        </div>
 
+        <div className="flex items-center gap-2">
+          {/* Botón para adjuntar Cartera de Facturas */}
           <input
             ref={portfolioInputRef}
             type="file"
@@ -105,16 +113,14 @@ export function IngestionZone({
           />
 
           {invoicesFile ? (
-            <div className="flex items-center justify-between px-3 py-2 rounded bg-emerald-950/20 border border-emerald-800/50 text-xs text-emerald-300">
-              <div className="flex items-center gap-2 truncate">
-                <FileCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                <span className="truncate font-mono text-[11px]">{invoicesFile.name}</span>
-              </div>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-800/60 text-xs text-emerald-300">
+              <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="truncate max-w-[160px] font-mono text-[11px]">{invoicesFile.name}</span>
               <button
                 type="button"
                 onClick={() => setInvoicesFile(null)}
-                className="p-0.5 text-slate-400 hover:text-white"
-                title="Retirar archivo de cartera"
+                className="text-slate-400 hover:text-white"
+                title="Quitar cartera"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -123,97 +129,68 @@ export function IngestionZone({
             <button
               type="button"
               onClick={() => portfolioInputRef.current?.click()}
-              className="w-full flex items-center justify-between px-3 py-2 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs text-slate-300 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs font-medium text-slate-300 transition-colors"
             >
-              <span className="flex items-center gap-2">
-                <FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" />
-                <span>Cargar libro de facturas emitidas</span>
-              </span>
-              <span className="text-[11px] text-blue-400 font-medium">Examinar</span>
+              <FileSpreadsheet className="h-3.5 w-3.5 text-blue-400" />
+              <span>+ Cartera Facturas (Opcional)</span>
             </button>
           )}
-        </div>
 
-        {/* Ranura 2: Extracto Bancario / Liquidación de Pasarela (5 columnas) */}
-        <div className="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
-              2. Extracto Bancario o Liquidación Pasarela
-            </span>
-            <span className="text-[10px] font-mono text-slate-500">Norma 43 (.n43) / Stripe / Redsys (.csv)</span>
-          </div>
-
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragOver(true);
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              setIsDragOver(false);
-            }}
-            onDrop={handleDrop}
-            onClick={() => bankInputRef.current?.click()}
-            className={`flex items-center justify-between px-3 py-2 rounded border border-dashed cursor-pointer transition-colors ${
-              isDragOver
-                ? 'border-blue-500 bg-blue-950/20'
-                : 'border-[#283040] bg-[#0b0d11] hover:bg-[#161a23]'
-            }`}
-          >
-            <input
-              ref={bankInputRef}
-              type="file"
-              onChange={handleBankFileChange}
-              accept=".n43,.txt,.csv,.xlsx,.json"
-              className="hidden"
-            />
-            <div className="flex items-center gap-2 truncate text-xs text-slate-200">
-              {localProcessing || isProcessing ? (
-                <RefreshCw className="h-3.5 w-3.5 text-blue-400 animate-spin shrink-0" />
-              ) : (
-                <Upload className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              )}
-              <span className="truncate">
-                {telemetry ? `${telemetry.filename} (${telemetry.statusText})` : 'Arrastrar fichero .n43 / .csv o hacer clic para procesar'}
-              </span>
-            </div>
-            <span className="text-[11px] font-medium text-blue-400 shrink-0 ml-2">Subir Fichero</span>
-          </div>
-        </div>
-
-        {/* Ranura 3: Sincronización Directa API y Privacidad RAM (3 columnas) */}
-        <div className="lg:col-span-3 flex flex-col justify-between gap-2">
-          <div className="flex items-center justify-between">
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={ephemeralMode}
-                onChange={(e) => setEphemeralMode(e.target.checked)}
-                className="rounded border-slate-700 bg-[#0b0d11] text-blue-600 focus:ring-0"
-              />
-              <span>Procesamiento efímero en RAM</span>
-            </label>
-
-            {telemetry && (
-              <span className={`inline-flex items-center gap-1 text-[10px] font-mono ${telemetry.isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {telemetry.isValid ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                {telemetry.isValid ? 'OK' : 'Error'}
-              </span>
-            )}
-          </div>
-
+          {/* Botón Stripe API */}
           {onOpenStripeSync && (
             <button
               type="button"
               onClick={onOpenStripeSync}
               disabled={isProcessing || localProcessing}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#283040] text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#161a23] hover:bg-[#1e2430] border border-[#283040] text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
             >
-              <Link2 className="h-3.5 w-3.5 text-blue-400" />
-              <span>Importar Liquidaciones vía Stripe API</span>
+              <Zap className="h-3.5 w-3.5 text-blue-400" />
+              <span>Stripe API</span>
             </button>
           )}
         </div>
+      </div>
+
+      {/* Cuadro Grande e Intuitivo de Subida (Dropzone) */}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+        }}
+        onDrop={handleDrop}
+        onClick={() => bankInputRef.current?.click()}
+        className={`w-full rounded-xl border-2 border-dashed py-10 px-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+          isDragOver
+            ? 'border-blue-500 bg-blue-950/20 scale-[0.998]'
+            : 'border-[#242b38] hover:border-blue-500/50 bg-[#0b0d11]/90 hover:bg-[#0f131a]'
+        }`}
+      >
+        <input
+          ref={bankInputRef}
+          type="file"
+          onChange={handleBankFileChange}
+          accept=".n43,.txt,.csv,.xlsx,.json"
+          className="hidden"
+        />
+
+        <div className="h-12 w-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-3 shadow-inner">
+          {localProcessing || isProcessing ? (
+            <RefreshCw className="h-5 w-5 animate-spin" />
+          ) : (
+            <UploadCloud className="h-6 w-6" />
+          )}
+        </div>
+
+        <p className="text-sm font-semibold text-white">
+          Arrastra aquí tu archivo o haz clic para seleccionarlo
+        </p>
+        <p className="text-xs text-slate-400 mt-1 font-mono">
+          Norma 43 (.n43) &bull; Stripe (.csv) &bull; Redsys TPV (.csv) &bull; Excel (.xlsx)
+        </p>
       </div>
     </section>
   );

@@ -790,6 +790,8 @@ async def upload_and_process_batch(
             return {
                 "id": "BATCH-EPHEMERAL-RAM",
                 "ephemeral": True,
+                "filename": file_name,
+                "file_name": file_name,
                 "tenant_id": tenant_id,
                 "client_id": client_id,
                 "period_year": period_year,
@@ -802,7 +804,6 @@ async def upload_and_process_batch(
                 "green_count": sum(1 for t in response_txs if t["status"] == "GREEN"),
                 "yellow_count": sum(1 for t in response_txs if t["status"] == "YELLOW"),
                 "red_count": sum(1 for t in response_txs if t["status"] == "RED"),
-                "file_name": file_name,
                 "file_hash_sha256": "EPHEMERAL_RAM_ZERO_STORAGE",
                 "transactions": response_txs,
             }
