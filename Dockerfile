@@ -1,7 +1,14 @@
 # ==============================================================================
 # FICHERO: Dockerfile
-# Build Ultrarrápido de Producción para Render: Python 3.12 (FastAPI) + SPA Dist
+# Build Multi-Stage de Producción: Compila React 19 (Vite) + Sirve en FastAPI
 # ==============================================================================
+FROM node:22-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,7 +17,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Instalar dependencias del sistema mínimas para scipy/psycopg2/psycopg y curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc curl && \
     rm -rf /var/lib/apt/lists/*
@@ -20,7 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY data/ ./data/
-COPY frontend/dist ./frontend/dist
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 RUN mkdir -p /app/data /app/output_pilot
 

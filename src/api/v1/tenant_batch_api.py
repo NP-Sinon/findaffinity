@@ -18,6 +18,7 @@ from src.database.models import (
 )
 from src.database.repository import ReconciliationRepository
 from src.services.batch_service import BatchReconciliationService
+from src.billing.quota_manager import get_and_sync_tenant_consumed_tx, increment_tenant_consumed_tx
 
 router = APIRouter(prefix="/v1", tags=["Multi-Tenancy & Batches"])
 
@@ -283,9 +284,8 @@ def sync_stripe_payouts_endpoint(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Error al conectar con Stripe API: {str(exc)}")
 
-    # Verificar cuota del Paywall antes de procesar
-    existing_batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant.id).all()
-    current_tx = sum(b.total_movements or 0 for b in existing_batches)
+    # Verificar cuota del Paywall antes de procesar con contador inmutable
+    current_tx = get_and_sync_tenant_consumed_tx(db, tenant)
     quota = QuotaManager.evaluate_tenant_quota(
         plan_code=tenant.plan or "FREE",
         extra_blocks=tenant.extra_blocks or 0,
@@ -375,6 +375,9 @@ def sync_stripe_payouts_endpoint(
                 ],
             },
         })
+
+    if tenant and response_transactions:
+        increment_tenant_consumed_tx(db, tenant, len(response_transactions))
 
     return {
         "ephemeral": payload.ephemeral_mode,
@@ -558,7 +561,7 @@ async def upload_and_process_batch(
 
         tenant = ReconciliationRepository.get_tenant(db, tenant_id)
         if tenant:
-            current_tx = sum(b.total_movements or 0 for b in tenant.batches) if tenant.batches else 0
+            current_tx = get_and_sync_tenant_consumed_tx(db, tenant)
             quota = QuotaManager.evaluate_tenant_quota(
                 plan_code=tenant.plan or "FREE",
                 extra_blocks=tenant.extra_blocks or 0,
@@ -781,6 +784,9 @@ async def upload_and_process_batch(
                     "journal": journal_dict,
                 })
 
+            if tenant and response_txs:
+                increment_tenant_consumed_tx(db, tenant, len(response_txs))
+
             return {
                 "id": "BATCH-EPHEMERAL-RAM",
                 "ephemeral": True,
@@ -816,6 +822,9 @@ async def upload_and_process_batch(
             gateway_name=resolved_gw,
             gateway_transactions=gw_txs,
         )
+
+        if tenant and batch.total_movements:
+            increment_tenant_consumed_tx(db, tenant, batch.total_movements)
 
         return {
             "id": batch.id,
@@ -1017,6 +1026,11 @@ def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     if not batch:
         raise HTTPException(status_code=404, detail="Lote no encontrado.")
 
+    # Asegurar que el consumo mensual quede consolidado en el Tenant ANTES de borrar el lote
+    tenant = db.query(Tenant).filter(Tenant.id == batch.tenant_id).first()
+    if tenant:
+        get_and_sync_tenant_consumed_tx(db, tenant)
+
     try:
         db.query(AuditLog).filter(AuditLog.batch_id == batch_id).delete(synchronize_session=False)
         db.query(JournalEntryRecord).filter(JournalEntryRecord.batch_id == batch_id).delete(synchronize_session=False)
@@ -1047,7 +1061,12 @@ def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(ge
 
     batch = db.query(ReconciliationBatch).filter(ReconciliationBatch.id == batch_id).first()
     if batch:
+        tenant = db.query(Tenant).filter(Tenant.id == batch.tenant_id).first()
+        if tenant:
+            get_and_sync_tenant_consumed_tx(db, tenant)
+
         batch.total_movements = max(0, (batch.total_movements or 1) - 1)
+        batch.total_volume_cents = max(0, (batch.total_volume_cents or 0) - (tx.net_amount_cents or 0))
         if tx.status == "GREEN":
             batch.green_count = max(0, (batch.green_count or 1) - 1)
         elif tx.status == "YELLOW":

@@ -26,6 +26,10 @@ def generate_uuid() -> str:
     return str(uuid.uuid4())
 
 
+def current_ym_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
 class Tenant(Base):
     """Despacho Profesional / Gestoría Contable (Inquilino Principal)."""
     __tablename__ = "tenants"
@@ -36,6 +40,11 @@ class Tenant(Base):
     email = Column(String(120), nullable=False)
     plan = Column(String(50), default="PROFESSIONAL", nullable=False)
     extra_blocks = Column(Integer, default=0, nullable=False)
+
+    # Contador inmutable de consumo mensual (no baja a 0 si el usuario borra lotes del radar)
+    consumed_transactions_month = Column(Integer, default=0, nullable=False)
+    quota_period_ym = Column(String(7), default=current_ym_str, nullable=False)
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relaciones
@@ -215,3 +224,9 @@ class AuditLog(Base):
 
     def __repr__(self):
         return f"<AuditLog id={self.id} action='{self.action}' actor='{self.actor}' ts={self.timestamp}>"
+
+
+# Alias de compatibilidad
+StagedTransaction = BatchTransaction
+StagedJournalEntry = JournalEntryRecord
+

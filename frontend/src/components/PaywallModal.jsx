@@ -1,54 +1,51 @@
 /**
  * FICHERO: frontend/src/components/PaywallModal.jsx
- * Modal de Paywall Freemium (Límite de 25 facturas/transacciones gratis alcanzado)
+ * Gestión de Licencias Corporativas y Ampliación de Cuota Mensual
  */
 import React, { useState } from 'react';
-import { ShieldCheck, Check, Sparkles, Lock, X, CreditCard, Building2, Zap } from 'lucide-react';
+import { ShieldCheck, Check, Lock, X, CreditCard } from 'lucide-react';
 
 const PLANS = [
   {
     code: 'PYME_DIRECTO',
     name: 'Pyme Directo',
     price: 39,
-    subtitle: 'Ideal para tiendas online y comercios individuales',
-    maxClients: '1 empresa',
-    maxTx: '2.000 facturas / mes',
-    badge: null,
+    subtitle: 'Para departamentos de administración de una única sociedad mercantil',
+    maxClients: '1 sociedad',
+    maxTx: '2.000 partidas / mes',
     features: [
-      'Hasta 2.000 transacciones conciliadas/mes',
-      'Sincronización directa con API de Stripe',
-      'Exportación oficial a A3, Sage 50 y Contasol',
-      'Modo Efímero RAM (Cero retención de archivos)',
+      'Hasta 2.000 partidas conciliadas al mes',
+      '1 sociedad mercantil activa',
+      'Importación directa desde API de Stripe',
+      'Exportación a Wolters Kluwer A3, Sage 50 y Contasol',
     ],
   },
   {
     code: 'STARTER',
-    name: 'Gestoría Starter',
+    name: 'Despacho Starter',
     price: 49,
-    subtitle: 'Para despachos pequeños con clientes e-commerce y TPV',
-    maxClients: 'Hasta 10 empresas',
-    maxTx: '2.500 facturas / mes',
-    badge: 'POPULAR DESPACHOS',
+    subtitle: 'Para despachos contables y asesorías con cartera inicial de comercios',
+    maxClients: 'Hasta 10 sociedades',
+    maxTx: '2.500 partidas / mes',
     features: [
-      'Hasta 10 empresas cliente activas',
-      'Hasta 2.500 transacciones agregadas/mes',
-      'Descomposición algorítmica de Stripe y Redsys',
-      'Exportación 1-Clic (Suenlace, XDIARIO, Contasol)',
+      'Hasta 10 sociedades cliente activas',
+      'Hasta 2.500 partidas agregadas al mes',
+      'Desglose automático de comisiones (626) y devoluciones',
+      'Exportación nativa Suenlace, XDIARIO y Contasol',
     ],
   },
   {
     code: 'PROFESSIONAL',
-    name: 'Gestoría Professional',
+    name: 'Despacho Profesional',
     price: 119,
-    subtitle: 'Para asesorías con alto volumen transaccional y auditoría',
-    maxClients: 'Hasta 30 empresas',
-    maxTx: '12.000 facturas / mes',
-    badge: 'MÁXIMO RETORNO (ROI 30x)',
+    subtitle: 'Para firmas de auditoría y asesorías con alto volumen transaccional',
+    maxClients: 'Hasta 30 sociedades',
+    maxTx: '12.000 partidas / mes',
     features: [
-      'Hasta 30 empresas cliente activas',
-      'Hasta 12.000 transacciones agregadas/mes',
-      'Certificado Legal de Auditoría SHA-256 para AEAT',
-      'Sincronización API Stripe multi-empresa',
+      'Hasta 30 sociedades cliente activas',
+      'Hasta 12.000 partidas agregadas al mes',
+      'Certificado de cadena de custodia SHA-256 exportable',
+      'Sincronización multi-cuenta con API de Stripe',
     ],
   },
 ];
@@ -56,12 +53,12 @@ const PLANS = [
 export function PaywallModal({
   isOpen,
   onClose,
-  usedTransactions = 25,
+  usedTransactions = 0,
   freeLimit = 25,
   currentPlan = 'FREE',
   onSelectPlanUpgrade,
 }) {
-  const [selectedPlan, setSelectedPlan] = useState('STARTER');
+  const [selectedPlan, setSelectedPlan] = useState(currentPlan === 'FREE' ? 'STARTER' : currentPlan);
   const [extraBlocks, setExtraBlocks] = useState(0);
   const [processing, setProcessing] = useState(false);
 
@@ -80,25 +77,24 @@ export function PaywallModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#101013] border border-zinc-800 rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl">
-        {/* Cabecera */}
-        <div className="px-6 py-5 border-b border-zinc-800 bg-gradient-to-r from-emerald-950/40 via-zinc-950 to-blue-950/40 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs">
+      <div className="bg-[#10131a] border border-[#222834] rounded-lg max-w-4xl w-full overflow-hidden shadow-2xl">
+        <div className="px-6 py-4 border-b border-[#1e232d] bg-[#0d1016] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Lock className="h-5 w-5" />
+            <div className="h-9 w-9 rounded bg-blue-600/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
+              <Lock className="h-4 w-4" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">
-                  Desbloquea la Exportación Ilimitada a tu ERP
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-sm font-semibold text-white">
+                  Licencias de Uso y Capacidad Mensual de Conciliación
                 </h3>
-                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/60 text-amber-300">
-                  {usedTransactions} / {freeLimit} Facturas Gratis Usadas
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#161a23] border border-[#283040] text-slate-300">
+                  Consumo acumulado: {usedTransactions} / {freeLimit} partidas
                 </span>
               </div>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Con solo 24 transacciones complejas al mes ya recuperas más de 1,5 horas de punteo manual. Elige una tarifa plana predecible sin cobros variables sorpresa.
+              <p className="text-xs text-slate-400 mt-0.5">
+                El cómputo mensual registra todas las partidas procesadas en el periodo en curso con independencia de las limpiezas de pantalla.
               </p>
             </div>
           </div>
@@ -106,13 +102,12 @@ export function PaywallModal({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-[#161a23] transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Tarjetas de Planes */}
         <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
           {PLANS.map((plan) => {
             const isSelected = selectedPlan === plan.code;
@@ -120,62 +115,58 @@ export function PaywallModal({
               <div
                 key={plan.code}
                 onClick={() => setSelectedPlan(plan.code)}
-                className={`relative rounded-xl p-5 border cursor-pointer transition-all flex flex-col justify-between ${
+                className={`rounded-md p-5 border cursor-pointer transition-colors flex flex-col justify-between ${
                   isSelected
-                    ? 'bg-zinc-900/90 border-emerald-500 ring-1 ring-emerald-500/50 shadow-lg'
-                    : 'bg-[#0c0c0e] border-zinc-800 hover:border-zinc-700'
+                    ? 'bg-[#141923] border-blue-500'
+                    : 'bg-[#0b0d11] border-[#1e232d] hover:border-[#2c3444]'
                 }`}
               >
-                {plan.badge && (
-                  <span className="absolute -top-2.5 right-4 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-600 text-white shadow">
-                    {plan.badge}
-                  </span>
-                )}
-
                 <div>
                   <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-zinc-100">{plan.name}</h4>
+                    <h4 className="text-sm font-semibold text-white">{plan.name}</h4>
                     {currentPlan === plan.code && (
-                      <span className="text-[10px] font-mono text-emerald-400">Plan Actual</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">
+                        Activo
+                      </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-zinc-400 mt-1 min-h-[32px]">{plan.subtitle}</p>
+                  <p className="text-[11px] text-slate-400 mt-1 min-h-[32px]">{plan.subtitle}</p>
 
-                  <div className="my-4 flex items-baseline gap-1">
-                    <span className="text-3xl font-mono font-bold text-white">{plan.price} €</span>
-                    <span className="text-xs text-zinc-400">/ mes (IVA no incl.)</span>
+                  <div className="my-4 flex items-baseline gap-1 border-y border-[#1e232d] py-3">
+                    <span className="text-2xl font-mono font-bold text-white">{plan.price} €</span>
+                    <span className="text-xs text-slate-400">/ mes (IVA no incl.)</span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-zinc-950 border border-zinc-800/80 mb-4 text-[11px]">
+                  <div className="grid grid-cols-2 gap-2 p-2 rounded bg-[#10131a] border border-[#1e232d] mb-4 text-[11px]">
                     <div>
-                      <span className="text-zinc-500 block text-[10px]">Capacidad</span>
-                      <strong className="text-zinc-200 font-mono">{plan.maxClients}</strong>
+                      <span className="text-slate-500 block text-[10px]">Sociedades</span>
+                      <strong className="text-slate-200 font-mono">{plan.maxClients}</strong>
                     </div>
                     <div>
-                      <span className="text-zinc-500 block text-[10px]">Volumen</span>
-                      <strong className="text-emerald-400 font-mono">{plan.maxTx}</strong>
+                      <span className="text-slate-500 block text-[10px]">Cuota Mensual</span>
+                      <strong className="text-blue-400 font-mono">{plan.maxTx}</strong>
                     </div>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-zinc-300">
+                  <ul className="space-y-2 text-xs text-slate-300">
                     {plan.features.map((feat, i) => (
                       <li key={i} className="flex items-start gap-2">
-                        <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                        <Check className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
                         <span>{feat}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
 
-                <div className="mt-5 pt-3 border-t border-zinc-800/80">
+                <div className="mt-5 pt-3 border-t border-[#1e232d]">
                   <div
-                    className={`w-full py-2 rounded-lg text-xs font-semibold text-center transition-colors ${
+                    className={`w-full py-2 rounded text-xs font-semibold text-center transition-colors ${
                       isSelected
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-[#161a23] text-slate-300 hover:bg-[#1e2430]'
                     }`}
                   >
-                    {isSelected ? 'Plan Seleccionado' : 'Seleccionar Plan'}
+                    {isSelected ? 'Modalidad Seleccionada' : 'Seleccionar'}
                   </div>
                 </div>
               </div>
@@ -183,31 +174,28 @@ export function PaywallModal({
           })}
         </div>
 
-        {/* Footer de Checkout */}
-        <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-950/90 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3 text-xs text-zinc-400">
-            <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
-            <span>
-              Pago seguro vía <strong>Stripe Checkout</strong> &bull; Cancela o cambia de tramo en cualquier momento sin permanencia.
-            </span>
+        <div className="px-6 py-4 border-t border-[#1e232d] bg-[#0d1016] flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <ShieldCheck className="h-4 w-4 text-blue-400 shrink-0" />
+            <span>Facturación mensual por cuota fija sin cargos variables por apunte.</span>
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300"
+              className="px-4 py-2 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#262c3a] text-xs text-slate-300"
             >
-              Seguir en modo vista previa
+              Cerrar
             </button>
             <button
               type="button"
               disabled={processing}
               onClick={handleConfirmUpgrade}
-              className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg disabled:opacity-50"
+              className="px-5 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 disabled:opacity-50"
             >
               <CreditCard className="h-4 w-4" />
-              <span>{processing ? 'Activando licencia...' : 'Activar Plan y Desbloquear Exportación'}</span>
+              <span>{processing ? 'Actualizando licencia...' : 'Confirmar y Activar Licencia'}</span>
             </button>
           </div>
         </div>

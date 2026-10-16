@@ -12,9 +12,46 @@ from src.api.v1.admin_api import router as admin_router
 from src.database.connection import init_db
 
 
+def ensure_schema_columns():
+    """
+    Asegura que las columnas de control inmutable de cuota mensual existan en 'tenants'
+    tanto en PostgreSQL (Supabase) como en SQLite sin perder datos existentes.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import text
+    from src.database.connection import engine
+
+    current_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    with engine.connect() as conn:
+        try:
+            if engine.dialect.name == "postgresql":
+                conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS consumed_transactions_month INTEGER NOT NULL DEFAULT 0"))
+            else:
+                res = conn.execute(text("PRAGMA table_info(tenants)")).fetchall()
+                cols = [r[1] for r in res]
+                if cols and "consumed_transactions_month" not in cols:
+                    conn.execute(text("ALTER TABLE tenants ADD COLUMN consumed_transactions_month INTEGER NOT NULL DEFAULT 0"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        try:
+            if engine.dialect.name == "postgresql":
+                conn.execute(text(f"ALTER TABLE tenants ADD COLUMN IF NOT EXISTS quota_period_ym VARCHAR(7) NOT NULL DEFAULT '{current_ym}'"))
+            else:
+                res = conn.execute(text("PRAGMA table_info(tenants)")).fetchall()
+                cols = [r[1] for r in res]
+                if cols and "quota_period_ym" not in cols:
+                    conn.execute(text(f"ALTER TABLE tenants ADD COLUMN quota_period_ym VARCHAR(7) NOT NULL DEFAULT '{current_ym}'"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    ensure_schema_columns()
     from src.database.connection import get_db_context
     from src.database.seed import seed_initial_data
     try:

@@ -21,6 +21,43 @@ class QuotaLimitExceeded(Exception):
     pass
 
 
+def get_and_sync_tenant_consumed_tx(db: Session, tenant: Tenant) -> int:
+    """
+    Obtiene el consumo mensual inmutable del Tenant.
+    Si cambia el mes natural (YYYY-MM), reinicia el contador del nuevo mes.
+    Si el usuario borra lotes en el mes actual, respeta siempre la marca máxima consumida.
+    """
+    now_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant.id).all()
+    active_tx_sum = sum(b.total_movements or 0 for b in batches)
+
+    if getattr(tenant, "quota_period_ym", None) != now_ym:
+        tenant.quota_period_ym = now_ym
+        tenant.consumed_transactions_month = active_tx_sum
+        db.commit()
+        db.refresh(tenant)
+    else:
+        persisted_consumed = getattr(tenant, "consumed_transactions_month", 0) or 0
+        if active_tx_sum > persisted_consumed:
+            tenant.consumed_transactions_month = active_tx_sum
+            db.commit()
+            db.refresh(tenant)
+
+    return max(getattr(tenant, "consumed_transactions_month", 0) or 0, active_tx_sum)
+
+
+def increment_tenant_consumed_tx(db: Session, tenant: Tenant, new_movements_count: int) -> int:
+    """
+    Incrementa de forma irreversible el contador mensual de transacciones procesadas.
+    Se ejecuta al procesar cualquier lote o sincronizar con Stripe (incluso en modo RAM).
+    """
+    current_consumed = get_and_sync_tenant_consumed_tx(db, tenant)
+    tenant.consumed_transactions_month = current_consumed + max(0, int(new_movements_count))
+    db.commit()
+    db.refresh(tenant)
+    return tenant.consumed_transactions_month
+
+
 class BillingQuotaManager:
     """Controlador de límites y tarificación por despacho."""
 
@@ -40,18 +77,8 @@ class BillingQuotaManager:
         # Contar clientes actuales
         active_clients_count = db.query(func.count(ClientCompany.id)).filter(ClientCompany.tenant_id == tenant_id).scalar() or 0
 
-        # Contar transacciones procesadas en el mes en curso
-        now = datetime.now(timezone.utc)
-        monthly_txs_count = (
-            db.query(func.coalesce(func.sum(ReconciliationBatch.total_movements), 0))
-            .filter(
-                ReconciliationBatch.tenant_id == tenant_id,
-                extract("year", ReconciliationBatch.created_at) == now.year,
-                extract("month", ReconciliationBatch.created_at) == now.month,
-            )
-            .scalar()
-            or 0
-        )
+        # Contar transacciones procesadas en el mes en curso (inmutable)
+        monthly_txs_count = get_and_sync_tenant_consumed_tx(db, tenant)
 
         total_price_eur = config["price_eur_month"] + (extra_blocks * EXTRA_BLOCK_PRICE_EUR)
 

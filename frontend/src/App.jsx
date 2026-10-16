@@ -1,6 +1,6 @@
 /**
  * FICHERO: frontend/src/App.jsx
- * Orquestador Principal de Producción (Sin mocks, con gestión de Planes/Paywall en vivo)
+ * Orquestador Principal de Producción con Sincronización Inmutable de Cuota y Lotes
  */
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { HeaderNav } from './components/HeaderNav';
@@ -87,6 +87,12 @@ export default function App() {
     }, 3400);
   }, []);
 
+  const refreshSubscriptionStatus = useCallback(async (tenantId) => {
+    if (!tenantId) return;
+    const sub = await fetchTenantSubscription(tenantId);
+    if (sub) setSubscriptionInfo(sub);
+  }, []);
+
   const loadBatchesForCompany = useCallback(async (companyId, year, sMonth, eMonth) => {
     if (!companyId) {
       setBatches([]);
@@ -112,6 +118,15 @@ export default function App() {
       setBatches([]);
       setCurrentBatchId(null);
       setTransactions([]);
+    }
+  }, []);
+
+  const handleSelectBatch = useCallback(async (batchId) => {
+    if (!batchId) return;
+    setCurrentBatchId(batchId);
+    const details = await fetchBatchDetails(batchId);
+    if (details && details.transactions) {
+      setTransactions(details.transactions);
     }
   }, []);
 
@@ -190,7 +205,6 @@ export default function App() {
           clearAuthSession();
           setCurrentUser(null);
         } else if (session.user) {
-          // Si el servidor está temporalmente inaccesible pero hay sesión local
           await syncUserContext(session.user);
         }
       }
@@ -246,17 +260,16 @@ export default function App() {
       setTransactions([]);
       setBatches([]);
       setCurrentBatchId(null);
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
+      await refreshSubscriptionStatus(tenantIdToUse);
       triggerToast(`Sociedad '${res.client.name}' dada de alta correctamente.`);
     } else if (res.paywallTriggered) {
       setClientModalOpen(false);
       setShowPaywallModal(true);
-      throw new Error('Has alcanzado el límite de empresas de tu plan actual.');
+      throw new Error('Ha alcanzado el límite de sociedades de su plan actual.');
     } else {
-      throw new Error(res.error || 'Error al crear la empresa cliente');
+      throw new Error(res.error || 'Error al dar de alta la sociedad');
     }
-  }, [currentUser, currentTenant, triggerToast]);
+  }, [currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleDeleteClient = useCallback(async (clientId) => {
     const res = await deleteClientApi(clientId);
@@ -277,19 +290,24 @@ export default function App() {
         }
         return updated;
       });
+      const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+      await refreshSubscriptionStatus(tenantIdToUse);
       triggerToast('Sociedad eliminada correctamente.');
     } else {
-      throw new Error(res.error || 'Error al eliminar la empresa cliente');
+      throw new Error(res.error || 'Error al eliminar la sociedad');
     }
-  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
+  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
+  // Al borrar una partida o limpiar el radar, el contador de cuota mensual NO se reduce
   const handleDeleteTransaction = useCallback(async (txId) => {
     setTransactions((prev) => prev.filter((tx) => tx.id !== txId));
     if (currentBatchId && backendStatus.online) {
       await deleteTransactionApi(currentBatchId, txId);
+      const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+      await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Partida eliminada del radar.');
-  }, [currentBatchId, backendStatus.online, triggerToast]);
+    triggerToast('Apunte retirado de la mesa de trabajo.');
+  }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleClearAllTransactions = useCallback(async () => {
     setTransactions([]);
@@ -297,9 +315,11 @@ export default function App() {
       await deleteBatchApi(currentBatchId);
       setBatches((prev) => prev.filter((b) => b.id !== currentBatchId));
       setCurrentBatchId(null);
+      const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+      await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Radar contable vaciado.');
-  }, [currentBatchId, backendStatus.online, triggerToast]);
+    triggerToast('Mesa de trabajo limpiada.');
+  }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleApproveTransaction = useCallback(async (txId) => {
     setTransactions((prev) =>
@@ -310,7 +330,7 @@ export default function App() {
               status: 'GREEN',
               confidenceScore: 0.965,
               isApproved: true,
-              auditExplanation: `${tx.auditExplanation || ''} [Aprobado por Auditor Contable].`,
+              auditExplanation: `${tx.auditExplanation || ''} [Conformado por Auditor Contable].`,
             }
           : tx
       )
@@ -318,7 +338,7 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await approveTransactionApi(currentBatchId, txId);
     }
-    triggerToast(`Partida ${txId} aprobada y certificada.`);
+    triggerToast(`Apunte ${txId} conformado.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
   const handleBulkApproveYellows = useCallback(async () => {
@@ -332,7 +352,7 @@ export default function App() {
             status: 'GREEN',
             confidenceScore: 0.955,
             isApproved: true,
-            auditExplanation: `${tx.auditExplanation || ''} [Aprobado en lote por Auditor Contable].`,
+            auditExplanation: `${tx.auditExplanation || ''} [Conformado en lote por Auditor Contable].`,
           };
         }
         return tx;
@@ -341,12 +361,12 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await bulkApproveYellowsApi(currentBatchId);
     }
-    triggerToast(`${approvedCount} partidas aprobadas en lote.`);
+    triggerToast(`${approvedCount} apuntes conformados en lote.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
   const handleFileUploaded = useCallback(async (file, invoicesFile = null, ephemeralMode = false) => {
     if (!selectedCompany) {
-      triggerToast('Crea o selecciona primero una Empresa Cliente para asociar el extracto.');
+      triggerToast('Seleccione o dé de alta primero una Sociedad Cliente.');
       handleOpenAddClientModal();
       return null;
     }
@@ -378,22 +398,22 @@ export default function App() {
       } else {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
       }
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
-      triggerToast(`Fichero conciliado con éxito (${res.data.total_movements} movimientos).`);
+      await refreshSubscriptionStatus(tenantIdToUse);
+      triggerToast(`Fichero procesado (${res.data.total_movements} apuntes conciliados).`);
       return res.data;
     } else if (res && res.paywallTriggered) {
+      await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Has alcanzado el límite de 25 facturas de evaluación gratuita. Elige un plan para continuar.');
+      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
       return null;
     } else {
       throw new Error(res?.error || 'No se pudo procesar el archivo contable.');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, handleOpenAddClientModal, triggerToast]);
 
   const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
     if (!selectedCompany) {
-      triggerToast('Añade primero una Empresa Cliente antes de sincronizar con Stripe.');
+      triggerToast('Seleccione primero una Sociedad Cliente.');
       handleOpenAddClientModal();
       return;
     }
@@ -414,29 +434,28 @@ export default function App() {
 
     if (res.success && res.data) {
       setTransactions(res.data.transactions || []);
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
-      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones sincronizadas y cuadradas.`);
+      await refreshSubscriptionStatus(tenantIdToUse);
+      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones importadas.`);
     } else if (res.paywallTriggered) {
+      await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Límite de 25 facturas gratuitas alcanzado. Elige un plan para desbloquear.');
+      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
     } else {
       throw new Error(res.error || 'Error conectando con Stripe API');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, triggerToast, handleOpenAddClientModal]);
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, refreshSubscriptionStatus, triggerToast, handleOpenAddClientModal]);
 
   const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
     if (!tenantIdToUse) return;
     const res = await upgradeTenantPlanApi(tenantIdToUse, newPlan, extraBlocks);
     if (res.success) {
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
-      triggerToast(`Plan ${res.data?.new_plan || newPlan} activado correctamente.`);
+      await refreshSubscriptionStatus(tenantIdToUse);
+      triggerToast(`Licencia actualizada a ${res.data?.new_plan || newPlan}.`);
     } else {
-      triggerToast(`Error al actualizar plan: ${res.error}`);
+      triggerToast(`Error al actualizar licencia: ${res.error}`);
     }
-  }, [currentUser, currentTenant, triggerToast]);
+  }, [currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleSelectCompany = useCallback((company) => {
     setSelectedCompany(company);
@@ -458,9 +477,8 @@ export default function App() {
     } else {
       setCurrentView('radar');
     }
-    triggerToast(`Bienvenido, ${user.full_name || user.email}`);
     await syncUserContext(user);
-  }, [triggerToast, syncUserContext]);
+  }, [syncUserContext]);
 
   const handleLogout = useCallback(() => {
     clearAuthSession();
@@ -473,8 +491,7 @@ export default function App() {
     setBatches([]);
     setCurrentBatchId(null);
     setSubscriptionInfo(null);
-    triggerToast('Sesión cerrada correctamente.');
-  }, [triggerToast]);
+  }, []);
 
   if (!currentUser) {
     return (
@@ -484,7 +501,7 @@ export default function App() {
           backendOnline={backendStatus.online}
         />
         {toastMessage && (
-          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl font-medium">
+          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
             <Check className="h-4 w-4 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
@@ -494,7 +511,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#0b0d11] text-slate-100 flex flex-col font-sans">
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -513,14 +530,14 @@ export default function App() {
       />
 
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <AdminPanel
-            onNavigateToRadar={() => setCurrentView('radar')}
+            onNavigateToRadar={() => handleToggleView('radar')}
             currentUser={currentUser}
           />
         </main>
       ) : (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
           <IngestionZone
             isProcessing={isProcessing}
             onFileProcessed={handleFileUploaded}
@@ -529,6 +546,9 @@ export default function App() {
 
           <StagingRadar
             transactions={periodFilteredTransactions}
+            batches={batches}
+            currentBatchId={currentBatchId}
+            onSelectBatch={handleSelectBatch}
             onApproveTransaction={handleApproveTransaction}
             onBulkApproveYellows={handleBulkApproveYellows}
             onOpenScoreModal={(tx) => setModalTransaction(tx)}
@@ -558,13 +578,13 @@ export default function App() {
         </main>
       )}
 
-      <footer className="border-t border-zinc-800/60 bg-[#0c0c0e] py-4 text-center text-xs text-zinc-500">
-        <div className="max-w-[1600px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="font-mono text-[11px] text-zinc-400">
-            FINDAFINITY &bull; Conciliación Bancaria y Pasarelas &bull; Cuadre PGC a céntimo cero (0,00 €)
+      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3.5 text-center text-xs text-slate-500">
+        <div className="max-w-[1600px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="font-mono text-[11px] text-slate-400">
+            FINDAFINITY &bull; Conciliación Algorítmica y Partida Doble PGC &bull; Descuadre 0,00 €
           </div>
-          <div className="text-[11px] text-zinc-400">
-            Exportación Oficial: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
+          <div className="text-[11px] text-slate-400">
+            Formatos Oficiales: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
           </div>
         </div>
       </footer>
@@ -614,7 +634,7 @@ export default function App() {
       />
 
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl font-medium">
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
           <Check className="h-4 w-4 text-emerald-400" />
           <span>{toastMessage}</span>
         </div>

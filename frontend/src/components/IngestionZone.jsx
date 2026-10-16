@@ -1,18 +1,17 @@
 /**
  * FICHERO: frontend/src/components/IngestionZone.jsx
- * Zona de Ingesta Profesional B2B (Extracto Bancario / Pasarela + Cartera de Facturas + Stripe API)
+ * Barra de Ingesta Operativa de Doble Ranura (Cartera de Facturas + Extracto Bancario / Pasarela)
  */
 import React, { useState, useRef } from 'react';
 import {
-  UploadCloud,
+  Upload,
   FileSpreadsheet,
   Check,
   AlertCircle,
   RefreshCw,
-  Layers,
-  Zap,
   FileCheck,
   X,
+  Link2,
 } from 'lucide-react';
 
 export function IngestionZone({
@@ -23,28 +22,17 @@ export function IngestionZone({
   const [isDragOver, setIsDragOver] = useState(false);
   const [invoicesFile, setInvoicesFile] = useState(null);
   const [ephemeralMode, setEphemeralMode] = useState(false);
-  const [ingestionTelemetry, setIngestionTelemetry] = useState(null);
+  const [telemetry, setTelemetry] = useState(null);
   const [localProcessing, setLocalProcessing] = useState(false);
 
   const bankInputRef = useRef(null);
   const portfolioInputRef = useRef(null);
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
   const handleDrop = async (e) => {
     e.preventDefault();
     setIsDragOver(false);
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      await processSelectedFile(files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await processSelectedFile(e.dataTransfer.files[0]);
     }
   };
 
@@ -63,36 +51,33 @@ export function IngestionZone({
 
   const processSelectedFile = async (file) => {
     setLocalProcessing(true);
-    setIngestionTelemetry({
+    setTelemetry({
       filename: file.name,
       sizeKb: (file.size / 1024).toFixed(1),
-      movements: 'Procesando...',
+      statusText: 'Conciliando partidas...',
       isValid: true,
-      errors: [],
     });
 
     try {
       if (onFileProcessed) {
         const result = await onFileProcessed(file, invoicesFile, ephemeralMode);
         if (result && result.total_movements !== undefined) {
-          setIngestionTelemetry({
+          setTelemetry({
             filename: file.name,
             sizeKb: (file.size / 1024).toFixed(1),
-            movements: `${result.total_movements} apuntes conciliados`,
+            statusText: `${result.total_movements} apuntes generados`,
             isValid: true,
-            errors: [],
           });
         } else {
-          setIngestionTelemetry(null);
+          setTelemetry(null);
         }
       }
     } catch (err) {
-      setIngestionTelemetry({
+      setTelemetry({
         filename: file.name,
         sizeKb: (file.size / 1024).toFixed(1),
-        movements: '0',
+        statusText: err.message || 'Error de formato en el fichero',
         isValid: false,
-        errors: [err.message || 'Error al procesar el archivo contable.'],
       });
     } finally {
       setLocalProcessing(false);
@@ -100,30 +85,17 @@ export function IngestionZone({
   };
 
   return (
-    <div className="bg-[#101013] border border-zinc-800 rounded-lg p-4 sm:p-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-zinc-800/60">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-100">
-            Ingesta de Extractos Bancarios, Pasarelas y Cartera de Facturas
-          </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Sube tu fichero Norma 43 o liquidación de Stripe/Redsys para generar los pre-asientos PGC cuadrados a 0,00 €.
-          </p>
-        </div>
+    <section className="bg-[#10131a] border border-[#1e232d] rounded-md p-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+        {/* Ranura 1: Cartera de Facturas Emitidas (3 columnas) */}
+        <div className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+              1. Cartera de Facturas (430)
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">.xlsx, .csv, .json</span>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
-          {/* Selector de Modo Efímero en RAM */}
-          <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={ephemeralMode}
-              onChange={(e) => setEphemeralMode(e.target.checked)}
-              className="rounded border-zinc-700 bg-zinc-950 text-emerald-500 focus:ring-0"
-            />
-            <span>Modo Efímero RAM (Zero-Storage)</span>
-          </label>
-
-          {/* Adjuntar Cartera de Facturas Emitidas Opcional */}
           <input
             ref={portfolioInputRef}
             type="file"
@@ -131,140 +103,118 @@ export function IngestionZone({
             accept=".xlsx,.csv,.json,.pdf"
             className="hidden"
           />
+
           {invoicesFile ? (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-950/40 border border-emerald-800/60 text-xs text-emerald-300">
-              <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="truncate max-w-[140px]">{invoicesFile.name}</span>
+            <div className="flex items-center justify-between px-3 py-2 rounded bg-emerald-950/20 border border-emerald-800/50 text-xs text-emerald-300">
+              <div className="flex items-center gap-2 truncate">
+                <FileCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate font-mono text-[11px]">{invoicesFile.name}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setInvoicesFile(null)}
-                className="text-zinc-400 hover:text-white"
-                title="Quitar cartera de facturas"
+                className="p-0.5 text-slate-400 hover:text-white"
+                title="Retirar archivo de cartera"
               >
-                <X className="h-3 w-3" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
           ) : (
             <button
               type="button"
               onClick={() => portfolioInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-xs font-medium text-zinc-200 transition-colors"
+              className="w-full flex items-center justify-between px-3 py-2 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs text-slate-300 transition-colors"
             >
-              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
-              <span>1. Adjuntar Cartera Facturas (Opcional)</span>
+              <span className="flex items-center gap-2">
+                <FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" />
+                <span>Cargar libro de facturas emitidas</span>
+              </span>
+              <span className="text-[11px] text-blue-400 font-medium">Examinar</span>
             </button>
           )}
+        </div>
 
-          {/* Conectar Stripe API en 1 Clic */}
+        {/* Ranura 2: Extracto Bancario / Liquidación de Pasarela (5 columnas) */}
+        <div className="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+              2. Extracto Bancario o Liquidación Pasarela
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">Norma 43 (.n43) / Stripe / Redsys (.csv)</span>
+          </div>
+
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              setIsDragOver(false);
+            }}
+            onDrop={handleDrop}
+            onClick={() => bankInputRef.current?.click()}
+            className={`flex items-center justify-between px-3 py-2 rounded border border-dashed cursor-pointer transition-colors ${
+              isDragOver
+                ? 'border-blue-500 bg-blue-950/20'
+                : 'border-[#283040] bg-[#0b0d11] hover:bg-[#161a23]'
+            }`}
+          >
+            <input
+              ref={bankInputRef}
+              type="file"
+              onChange={handleBankFileChange}
+              accept=".n43,.txt,.csv,.xlsx,.json"
+              className="hidden"
+            />
+            <div className="flex items-center gap-2 truncate text-xs text-slate-200">
+              {localProcessing || isProcessing ? (
+                <RefreshCw className="h-3.5 w-3.5 text-blue-400 animate-spin shrink-0" />
+              ) : (
+                <Upload className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              )}
+              <span className="truncate">
+                {telemetry ? `${telemetry.filename} (${telemetry.statusText})` : 'Arrastrar fichero .n43 / .csv o hacer clic para procesar'}
+              </span>
+            </div>
+            <span className="text-[11px] font-medium text-blue-400 shrink-0 ml-2">Subir Fichero</span>
+          </div>
+        </div>
+
+        {/* Ranura 3: Sincronización Directa API y Privacidad RAM (3 columnas) */}
+        <div className="lg:col-span-3 flex flex-col justify-between gap-2">
+          <div className="flex items-center justify-between">
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={ephemeralMode}
+                onChange={(e) => setEphemeralMode(e.target.checked)}
+                className="rounded border-slate-700 bg-[#0b0d11] text-blue-600 focus:ring-0"
+              />
+              <span>Procesamiento efímero en RAM</span>
+            </label>
+
+            {telemetry && (
+              <span className={`inline-flex items-center gap-1 text-[10px] font-mono ${telemetry.isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {telemetry.isValid ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+                {telemetry.isValid ? 'OK' : 'Error'}
+              </span>
+            )}
+          </div>
+
           {onOpenStripeSync && (
             <button
               type="button"
               onClick={onOpenStripeSync}
               disabled={isProcessing || localProcessing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition-colors shadow-sm disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#283040] text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
             >
-              <Zap className="h-3.5 w-3.5" />
-              <span>Conectar Stripe API</span>
+              <Link2 className="h-3.5 w-3.5 text-blue-400" />
+              <span>Importar Liquidaciones vía Stripe API</span>
             </button>
           )}
         </div>
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Dropzone Principal */}
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => bankInputRef.current?.click()}
-          className={`lg:col-span-2 border border-dashed rounded-md p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${
-            isDragOver
-              ? 'border-emerald-500 bg-emerald-950/20'
-              : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/30 hover:bg-zinc-900/50'
-          }`}
-        >
-          <input
-            ref={bankInputRef}
-            type="file"
-            onChange={handleBankFileChange}
-            accept=".n43,.txt,.csv,.xlsx,.pdf,.json"
-            className="hidden"
-          />
-
-          <div className="h-10 w-10 rounded-full bg-zinc-800/90 border border-zinc-700/60 flex items-center justify-center text-emerald-400 mb-2.5">
-            {localProcessing || isProcessing ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <UploadCloud className="h-4 w-4" />
-            )}
-          </div>
-
-          <p className="text-xs text-zinc-100 font-medium">
-            2. Arrastra aquí el Extracto Bancario (Norma 43) o el CSV de Liquidaciones (Stripe / Redsys)
-          </p>
-          <p className="text-[11px] text-zinc-500 mt-1">
-            Formatos oficiales soportados: Cuaderno 43 AEB (.n43, .txt), Stripe Balance (.csv), Redsys TPV (.csv)
-          </p>
-        </div>
-
-        {/* Telemetría del Archivo */}
-        <div className="bg-zinc-900/50 border border-zinc-800 rounded-md p-3.5 flex flex-col justify-between">
-          <div>
-            <div className="text-[11px] text-zinc-400 font-medium pb-2 border-b border-zinc-800/60 mb-2.5">
-              TELEMETRÍA DE INGESTA
-            </div>
-
-            {ingestionTelemetry ? (
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Fichero:</span>
-                  <span className="text-zinc-200 font-mono text-[11px] truncate max-w-[160px]" title={ingestionTelemetry.filename}>
-                    {ingestionTelemetry.filename}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Tamaño:</span>
-                  <span className="text-zinc-200 font-mono text-[11px]">{ingestionTelemetry.sizeKb} KB</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Resultado:</span>
-                  <span className="text-emerald-400 font-mono text-[11px] font-medium">
-                    {ingestionTelemetry.movements}
-                  </span>
-                </div>
-
-                <div className="pt-2 border-t border-zinc-800/60">
-                  {ingestionTelemetry.isValid ? (
-                    <div className="flex items-center gap-1.5 text-[11px] text-emerald-400">
-                      <Check className="h-3.5 w-3.5" />
-                      <span>Cuadre contable verificado</span>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1 text-[11px] text-rose-400">
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        <span>Incidencia en el archivo</span>
-                      </div>
-                      {ingestionTelemetry.errors.map((err, i) => (
-                        <p key={i} className="text-[10px] text-zinc-500 leading-tight">{err}</p>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="py-5 text-center text-zinc-500 text-xs">
-                <Layers className="h-6 w-6 mx-auto mb-1.5 opacity-40" />
-                Esperando fichero de extracto o liquidación para iniciar el motor.
-              </div>
-            )}
-          </div>
-
-          <div className="text-[10px] text-zinc-500 pt-2 border-t border-zinc-800/60">
-            Validación automática de Registro 33 AEB y sellado SHA-256.
-          </div>
-        </div>
-      </div>
-    </div>
+    </section>
   );
 }

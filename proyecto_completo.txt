@@ -37,8 +37,15 @@ FICHERO: Dockerfile
 
 # ==============================================================================
 # FICHERO: Dockerfile
-# Build Ultrarrápido de Producción para Render: Python 3.12 (FastAPI) + SPA Dist
+# Build Multi-Stage de Producción: Compila React 19 (Vite) + Sirve en FastAPI
 # ==============================================================================
+FROM node:22-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -47,7 +54,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Instalar dependencias del sistema mínimas para scipy/psycopg2/psycopg y curl
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc curl && \
     rm -rf /var/lib/apt/lists/*
@@ -57,7 +63,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY data/ ./data/
-COPY frontend/dist ./frontend/dist
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 RUN mkdir -p /app/data /app/output_pilot
 
@@ -1041,7 +1047,7 @@ FICHERO: frontend\src\App.jsx
 
 /**
  * FICHERO: frontend/src/App.jsx
- * Orquestador Principal de Producción (Sin mocks, con gestión de Planes/Paywall en vivo)
+ * Orquestador Principal de Producción con Sincronización Inmutable de Cuota y Lotes
  */
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { HeaderNav } from './components/HeaderNav';
@@ -1128,6 +1134,12 @@ export default function App() {
     }, 3400);
   }, []);
 
+  const refreshSubscriptionStatus = useCallback(async (tenantId) => {
+    if (!tenantId) return;
+    const sub = await fetchTenantSubscription(tenantId);
+    if (sub) setSubscriptionInfo(sub);
+  }, []);
+
   const loadBatchesForCompany = useCallback(async (companyId, year, sMonth, eMonth) => {
     if (!companyId) {
       setBatches([]);
@@ -1153,6 +1165,15 @@ export default function App() {
       setBatches([]);
       setCurrentBatchId(null);
       setTransactions([]);
+    }
+  }, []);
+
+  const handleSelectBatch = useCallback(async (batchId) => {
+    if (!batchId) return;
+    setCurrentBatchId(batchId);
+    const details = await fetchBatchDetails(batchId);
+    if (details && details.transactions) {
+      setTransactions(details.transactions);
     }
   }, []);
 
@@ -1231,7 +1252,6 @@ export default function App() {
           clearAuthSession();
           setCurrentUser(null);
         } else if (session.user) {
-          // Si el servidor está temporalmente inaccesible pero hay sesión local
           await syncUserContext(session.user);
         }
       }
@@ -1287,17 +1307,16 @@ export default function App() {
       setTransactions([]);
       setBatches([]);
       setCurrentBatchId(null);
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
+      await refreshSubscriptionStatus(tenantIdToUse);
       triggerToast(`Sociedad '${res.client.name}' dada de alta correctamente.`);
     } else if (res.paywallTriggered) {
       setClientModalOpen(false);
       setShowPaywallModal(true);
-      throw new Error('Has alcanzado el límite de empresas de tu plan actual.');
+      throw new Error('Ha alcanzado el límite de sociedades de su plan actual.');
     } else {
-      throw new Error(res.error || 'Error al crear la empresa cliente');
+      throw new Error(res.error || 'Error al dar de alta la sociedad');
     }
-  }, [currentUser, currentTenant, triggerToast]);
+  }, [currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleDeleteClient = useCallback(async (clientId) => {
     const res = await deleteClientApi(clientId);
@@ -1318,19 +1337,24 @@ export default function App() {
         }
         return updated;
       });
+      const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+      await refreshSubscriptionStatus(tenantIdToUse);
       triggerToast('Sociedad eliminada correctamente.');
     } else {
-      throw new Error(res.error || 'Error al eliminar la empresa cliente');
+      throw new Error(res.error || 'Error al eliminar la sociedad');
     }
-  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, triggerToast]);
+  }, [selectedCompany, selectedYear, startMonth, endMonth, loadBatchesForCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
+  // Al borrar una partida o limpiar el radar, el contador de cuota mensual NO se reduce
   const handleDeleteTransaction = useCallback(async (txId) => {
     setTransactions((prev) => prev.filter((tx) => tx.id !== txId));
     if (currentBatchId && backendStatus.online) {
       await deleteTransactionApi(currentBatchId, txId);
+      const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+      await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Partida eliminada del radar.');
-  }, [currentBatchId, backendStatus.online, triggerToast]);
+    triggerToast('Apunte retirado de la mesa de trabajo.');
+  }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleClearAllTransactions = useCallback(async () => {
     setTransactions([]);
@@ -1338,9 +1362,11 @@ export default function App() {
       await deleteBatchApi(currentBatchId);
       setBatches((prev) => prev.filter((b) => b.id !== currentBatchId));
       setCurrentBatchId(null);
+      const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+      await refreshSubscriptionStatus(tenantIdToUse);
     }
-    triggerToast('Radar contable vaciado.');
-  }, [currentBatchId, backendStatus.online, triggerToast]);
+    triggerToast('Mesa de trabajo limpiada.');
+  }, [currentBatchId, backendStatus.online, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleApproveTransaction = useCallback(async (txId) => {
     setTransactions((prev) =>
@@ -1351,7 +1377,7 @@ export default function App() {
               status: 'GREEN',
               confidenceScore: 0.965,
               isApproved: true,
-              auditExplanation: `${tx.auditExplanation || ''} [Aprobado por Auditor Contable].`,
+              auditExplanation: `${tx.auditExplanation || ''} [Conformado por Auditor Contable].`,
             }
           : tx
       )
@@ -1359,7 +1385,7 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await approveTransactionApi(currentBatchId, txId);
     }
-    triggerToast(`Partida ${txId} aprobada y certificada.`);
+    triggerToast(`Apunte ${txId} conformado.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
   const handleBulkApproveYellows = useCallback(async () => {
@@ -1373,7 +1399,7 @@ export default function App() {
             status: 'GREEN',
             confidenceScore: 0.955,
             isApproved: true,
-            auditExplanation: `${tx.auditExplanation || ''} [Aprobado en lote por Auditor Contable].`,
+            auditExplanation: `${tx.auditExplanation || ''} [Conformado en lote por Auditor Contable].`,
           };
         }
         return tx;
@@ -1382,12 +1408,12 @@ export default function App() {
     if (currentBatchId && backendStatus.online) {
       await bulkApproveYellowsApi(currentBatchId);
     }
-    triggerToast(`${approvedCount} partidas aprobadas en lote.`);
+    triggerToast(`${approvedCount} apuntes conformados en lote.`);
   }, [currentBatchId, backendStatus.online, triggerToast]);
 
   const handleFileUploaded = useCallback(async (file, invoicesFile = null, ephemeralMode = false) => {
     if (!selectedCompany) {
-      triggerToast('Crea o selecciona primero una Empresa Cliente para asociar el extracto.');
+      triggerToast('Seleccione o dé de alta primero una Sociedad Cliente.');
       handleOpenAddClientModal();
       return null;
     }
@@ -1419,22 +1445,22 @@ export default function App() {
       } else {
         await loadBatchesForCompany(selectedCompany.id, selectedYear, startMonth, endMonth);
       }
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
-      triggerToast(`Fichero conciliado con éxito (${res.data.total_movements} movimientos).`);
+      await refreshSubscriptionStatus(tenantIdToUse);
+      triggerToast(`Fichero procesado (${res.data.total_movements} apuntes conciliados).`);
       return res.data;
     } else if (res && res.paywallTriggered) {
+      await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Has alcanzado el límite de 25 facturas de evaluación gratuita. Elige un plan para continuar.');
+      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
       return null;
     } else {
       throw new Error(res?.error || 'No se pudo procesar el archivo contable.');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, handleOpenAddClientModal, triggerToast]);
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, periodType, startMonth, endMonth, loadBatchesForCompany, refreshSubscriptionStatus, handleOpenAddClientModal, triggerToast]);
 
   const handleSyncStripe = useCallback(async ({ stripeRestrictedKey, ephemeralMode }) => {
     if (!selectedCompany) {
-      triggerToast('Añade primero una Empresa Cliente antes de sincronizar con Stripe.');
+      triggerToast('Seleccione primero una Sociedad Cliente.');
       handleOpenAddClientModal();
       return;
     }
@@ -1455,29 +1481,28 @@ export default function App() {
 
     if (res.success && res.data) {
       setTransactions(res.data.transactions || []);
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
-      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones sincronizadas y cuadradas.`);
+      await refreshSubscriptionStatus(tenantIdToUse);
+      triggerToast(`Stripe API: ${res.data.total_movements} liquidaciones importadas.`);
     } else if (res.paywallTriggered) {
+      await refreshSubscriptionStatus(tenantIdToUse);
       setShowPaywallModal(true);
-      triggerToast('Límite de 25 facturas gratuitas alcanzado. Elige un plan para desbloquear.');
+      triggerToast('Límite mensual de partidas alcanzado. Amplíe su licencia para continuar.');
     } else {
       throw new Error(res.error || 'Error conectando con Stripe API');
     }
-  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, triggerToast, handleOpenAddClientModal]);
+  }, [selectedCompany, currentUser, currentTenant, selectedYear, startMonth, endMonth, refreshSubscriptionStatus, triggerToast, handleOpenAddClientModal]);
 
   const handleSelectPlanUpgrade = useCallback(async (newPlan, extraBlocks) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
     if (!tenantIdToUse) return;
     const res = await upgradeTenantPlanApi(tenantIdToUse, newPlan, extraBlocks);
     if (res.success) {
-      const sub = await fetchTenantSubscription(tenantIdToUse);
-      if (sub) setSubscriptionInfo(sub);
-      triggerToast(`Plan ${res.data?.new_plan || newPlan} activado correctamente.`);
+      await refreshSubscriptionStatus(tenantIdToUse);
+      triggerToast(`Licencia actualizada a ${res.data?.new_plan || newPlan}.`);
     } else {
-      triggerToast(`Error al actualizar plan: ${res.error}`);
+      triggerToast(`Error al actualizar licencia: ${res.error}`);
     }
-  }, [currentUser, currentTenant, triggerToast]);
+  }, [currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
 
   const handleSelectCompany = useCallback((company) => {
     setSelectedCompany(company);
@@ -1499,9 +1524,8 @@ export default function App() {
     } else {
       setCurrentView('radar');
     }
-    triggerToast(`Bienvenido, ${user.full_name || user.email}`);
     await syncUserContext(user);
-  }, [triggerToast, syncUserContext]);
+  }, [syncUserContext]);
 
   const handleLogout = useCallback(() => {
     clearAuthSession();
@@ -1514,8 +1538,7 @@ export default function App() {
     setBatches([]);
     setCurrentBatchId(null);
     setSubscriptionInfo(null);
-    triggerToast('Sesión cerrada correctamente.');
-  }, [triggerToast]);
+  }, []);
 
   if (!currentUser) {
     return (
@@ -1525,7 +1548,7 @@ export default function App() {
           backendOnline={backendStatus.online}
         />
         {toastMessage && (
-          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl font-medium">
+          <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
             <Check className="h-4 w-4 text-emerald-400" />
             <span>{toastMessage}</span>
           </div>
@@ -1535,7 +1558,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#0b0d11] text-slate-100 flex flex-col font-sans">
       <HeaderNav
         companies={companies}
         selectedCompany={selectedCompany}
@@ -1554,14 +1577,14 @@ export default function App() {
       />
 
       {currentUser.role === 'SUPERADMIN' && currentView === 'admin' ? (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <AdminPanel
-            onNavigateToRadar={() => setCurrentView('radar')}
+            onNavigateToRadar={() => handleToggleView('radar')}
             currentUser={currentUser}
           />
         </main>
       ) : (
-        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
           <IngestionZone
             isProcessing={isProcessing}
             onFileProcessed={handleFileUploaded}
@@ -1570,6 +1593,9 @@ export default function App() {
 
           <StagingRadar
             transactions={periodFilteredTransactions}
+            batches={batches}
+            currentBatchId={currentBatchId}
+            onSelectBatch={handleSelectBatch}
             onApproveTransaction={handleApproveTransaction}
             onBulkApproveYellows={handleBulkApproveYellows}
             onOpenScoreModal={(tx) => setModalTransaction(tx)}
@@ -1599,13 +1625,13 @@ export default function App() {
         </main>
       )}
 
-      <footer className="border-t border-zinc-800/60 bg-[#0c0c0e] py-4 text-center text-xs text-zinc-500">
-        <div className="max-w-[1600px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="font-mono text-[11px] text-zinc-400">
-            FINDAFINITY &bull; Conciliación Bancaria y Pasarelas &bull; Cuadre PGC a céntimo cero (0,00 €)
+      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3.5 text-center text-xs text-slate-500">
+        <div className="max-w-[1600px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="font-mono text-[11px] text-slate-400">
+            FINDAFINITY &bull; Conciliación Algorítmica y Partida Doble PGC &bull; Descuadre 0,00 €
           </div>
-          <div className="text-[11px] text-zinc-400">
-            Exportación Oficial: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
+          <div className="text-[11px] text-slate-400">
+            Formatos Oficiales: Wolters Kluwer A3 (Suenlace) &bull; Sage 50 (XDIARIO) &bull; DELSOL Contasol
           </div>
         </div>
       </footer>
@@ -1655,7 +1681,7 @@ export default function App() {
       />
 
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded-md bg-zinc-900 border border-zinc-700/80 text-zinc-100 text-xs shadow-2xl font-medium">
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-3.5 py-2.5 rounded bg-[#161a23] border border-[#283040] text-slate-100 text-xs shadow-2xl font-medium">
           <Check className="h-4 w-4 text-emerald-400" />
           <span>{toastMessage}</span>
         </div>
@@ -2949,63 +2975,60 @@ FICHERO: frontend\src\components\AuthScreen.jsx
 
 /**
  * FICHERO: frontend/src/components/AuthScreen.jsx
- * Pantalla Corporativa de Acceso y Registro B2B con Selección de Plan Inicial
- * (Sin credenciales expuestas ni botones de cuentas demo)
+ * Portal Corporativo de Acceso y Alta de Despacho B2B
  */
 import React, { useState } from 'react';
 import {
-  Layers,
   ShieldCheck,
   Lock,
   Mail,
   User,
   Building2,
-  KeyRound,
   ArrowRight,
   CheckCircle2,
   AlertCircle,
-  Check,
+  FileCheck2,
+  Database,
+  Scale,
 } from 'lucide-react';
 import { loginApi, registerApi, forgotPasswordApi, resetPasswordApi } from '../services/api';
 
 const INITIAL_PLANS = [
   {
     code: 'FREE',
-    name: 'Evaluación Gratuita',
+    name: 'Evaluación Técnica',
     price: '0 €',
-    desc: 'Hasta 25 facturas/mes • 1 empresa',
+    desc: '25 partidas mensuales • 1 sociedad',
   },
   {
     code: 'PYME_DIRECTO',
     name: 'Pyme Directo',
     price: '39 €/mes',
-    desc: 'Hasta 2.000 facturas/mes • 1 empresa',
+    desc: '2.000 partidas/mes • 1 sociedad',
   },
   {
     code: 'STARTER',
-    name: 'Gestoría Starter',
+    name: 'Despacho Starter',
     price: '49 €/mes',
-    desc: 'Hasta 10 empresas • 2.500 tx/mes',
+    desc: '2.500 partidas/mes • 10 sociedades',
   },
   {
     code: 'PROFESSIONAL',
-    name: 'Gestoría Pro',
+    name: 'Despacho Profesional',
     price: '119 €/mes',
-    desc: 'Hasta 30 empresas • 12.000 tx/mes',
+    desc: '12.000 partidas/mes • 30 sociedades',
   },
 ];
 
 export function AuthScreen({ onAuthSuccess, backendOnline }) {
-  const [activeTab, setActiveTab] = useState('login'); // 'login' | 'register' | 'forgot' | 'reset'
+  const [activeTab, setActiveTab] = useState('login');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [infoMessage, setInfoMessage] = useState(null);
 
-  // Login
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // Registro con selección de plan
   const [regFullName, setRegFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
@@ -3013,7 +3036,6 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
   const [regFiscalId, setRegFiscalId] = useState('');
   const [regPlan, setRegPlan] = useState('FREE');
 
-  // Recuperación
   const [forgotEmail, setForgotEmail] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
@@ -3061,7 +3083,7 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     if (res.success) {
       onAuthSuccess(res.user, regPlan !== 'FREE');
     } else {
-      setErrorMessage(res.error || 'Error al completar el registro.');
+      setErrorMessage(res.error || 'Error al completar el alta del despacho.');
     }
   };
 
@@ -3073,13 +3095,13 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     setLoading(false);
 
     if (res.success) {
-      setInfoMessage(res.message || 'Se han enviado las instrucciones de recuperación.');
+      setInfoMessage(res.message || 'Instrucciones enviadas.');
       if (res.demoToken) {
         setResetToken(res.demoToken);
         setActiveTab('reset');
       }
     } else {
-      setErrorMessage(res.error || 'Error en la solicitud.');
+      setErrorMessage(res.error || 'No se pudo procesar la solicitud.');
     }
   };
 
@@ -3091,354 +3113,392 @@ export function AuthScreen({ onAuthSuccess, backendOnline }) {
     setLoading(false);
 
     if (res.success) {
-      setInfoMessage('Contraseña actualizada correctamente. Ya puedes iniciar sesión.');
+      setInfoMessage('Contraseña actualizada correctamente.');
       setActiveTab('login');
     } else {
-      setErrorMessage(res.error || 'Error al restablecer la contraseña.');
+      setErrorMessage(res.error || 'Código inválido o expirado.');
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#08080a] flex flex-col justify-between text-zinc-100 font-sans selection:bg-emerald-500/30">
-      {/* Cabecera Institucional */}
-      <header className="border-b border-zinc-800/80 bg-[#0c0c0e]/90 backdrop-blur px-6 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-            <Layers className="h-4 w-4" />
+    <div className="min-h-screen bg-[#0b0d11] text-slate-100 flex flex-col justify-between font-sans">
+      {/* Barra Institucional Superior */}
+      <header className="h-14 border-b border-[#1e232d] bg-[#0f1218] px-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-7 w-7 rounded bg-blue-600 flex items-center justify-center text-white font-mono font-bold text-xs tracking-tighter">
+            FA
           </div>
-          <span className="font-bold text-base tracking-tight text-white">FINDAFINITY</span>
-          <span className="text-[10px] text-zinc-500 font-mono hidden sm:inline ml-1 border-l border-zinc-800 pl-2">
-            CONCILIACIÓN ALGORÍTMICA & DESAMBIGUACIÓN CONTABLE
+          <span className="font-semibold text-sm tracking-tight text-white">FINDAFINITY</span>
+          <span className="text-[11px] text-slate-500 font-mono hidden sm:inline border-l border-[#1e232d] pl-3">
+            SISTEMA DE CONCILIACIÓN Y DESAMBIGUACIÓN CONTABLE PGC
           </span>
         </div>
 
         <div className="flex items-center gap-2 text-xs">
-          <span className={`h-2 w-2 rounded-full ${backendOnline ? 'bg-emerald-400' : 'bg-amber-500'}`} />
-          <span className="text-zinc-400 font-mono text-[11px]">
-            {backendOnline ? ' Cloud Activo' : 'Conectando...'}
+          <span className={`h-2 w-2 rounded-full ${backendOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+          <span className="text-slate-400 font-mono text-[11px]">
+            {backendOnline ? 'SERVICIO OPERATIVO' : 'CONECTANDO'}
           </span>
         </div>
       </header>
 
-      {/* Contenedor Principal */}
-      <main className="flex-1 flex items-center justify-center px-4 py-10">
-        <div className="max-w-[520px] w-full bg-[#101013] border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
-          <div className="text-center mb-6">
-            <div className="inline-flex h-11 w-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 items-center justify-center text-emerald-400 mb-3 shadow-sm">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <h1 className="text-xl font-bold tracking-tight text-white">FINDAFINITY</h1>
-            <p className="text-xs text-zinc-400 mt-1">
-              Puente algorítmico entre Norma 43, Stripe, Redsys y tu ERP contable (A3, Sage 50, Contasol)
-            </p>
+      {/* Cuerpo Principal a Dos Columnas */}
+      <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+        {/* Columna Izquierda: Especificaciones Técnicas B2B */}
+        <div className="lg:col-span-6 space-y-6">
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#131720] border border-[#222834] text-[11px] font-mono text-slate-300">
+            <span>NORMA 43 AEB</span>
+            <span>&bull;</span>
+            <span>STRIPE & REDSYS TPV</span>
+            <span>&bull;</span>
+            <span>PGC ESPAÑA</span>
           </div>
 
-          {(activeTab === 'login' || activeTab === 'register') && (
-            <div className="grid grid-cols-2 p-1 bg-zinc-900 border border-zinc-800 rounded-lg mb-6 text-xs font-medium">
-              <button
-                type="button"
-                onClick={() => handleTabChange('login')}
-                className={`py-2 rounded-md transition-colors ${
-                  activeTab === 'login' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Iniciar Sesión
-              </button>
-              <button
-                type="button"
-                onClick={() => handleTabChange('register')}
-                className={`py-2 rounded-md transition-colors ${
-                  activeTab === 'register' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Crear Cuenta / Elegir Plan
-              </button>
-            </div>
-          )}
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-white leading-snug">
+            Conciliación algorítmica de liquidaciones agrupadas y generación de diario contable.
+          </h1>
 
-          {errorMessage && (
-            <div className="mb-5 p-3 rounded-md bg-rose-950/40 border border-rose-800/60 text-rose-300 text-xs flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+          <p className="text-sm text-slate-400 leading-relaxed">
+            Entorno intermedio de preparación contable en modo de solo lectura para asesorías fiscales y departamentos de administración. Desglosa remesas netas de pasarelas de pago, contabiliza gastos bancarios en origen y exporta pre-asientos cerrados a céntimo cero.
+          </p>
 
-          {infoMessage && (
-            <div className="mb-5 p-3 rounded-md bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-              <span>{infoMessage}</span>
-            </div>
-          )}
-
-          {/* VISTA LOGIN */}
-          {activeTab === 'login' && (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
+          <div className="space-y-4 pt-2 border-t border-[#1e232d]">
+            <div className="flex items-start gap-3">
+              <Scale className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
               <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
-                  Correo Electrónico Corporativo
-                </label>
-                <div className="relative">
-                  <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="nombre@despacho.es"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Descomposición Combinatoria de Liquidaciones (Batch Payouts)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                  Cruza abonos netos bancarios frente a múltiples facturas emitidas deduciendo comisiones en la subcuenta 626 y cuadrando las cuentas 572 y 430.
+                </p>
               </div>
+            </div>
 
+            <div className="flex items-start gap-3">
+              <Database className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[11px] uppercase tracking-wider text-zinc-400 font-medium">
-                    Contraseña
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => handleTabChange('forgot')}
-                    className="text-[11px] text-zinc-400 hover:text-emerald-400 transition-colors"
-                  >
-                    ¿Has olvidado tu contraseña?
-                  </button>
-                </div>
-                <div className="relative">
-                  <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="password"
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Exportación Nativa sin Alteración de Libros Oficiales
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                  Generación directa de ficheros con estructura oficial para Wolters Kluwer A3 (Suenlace), Sage 50 (XDIARIO.csv) y DELSOL Contasol (.xlsx).
+                </p>
               </div>
+            </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full mt-2 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-              >
-                <span>{loading ? 'Verificando acceso...' : 'Acceder al Panel Contable'}</span>
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            </form>
-          )}
-
-          {/* VISTA REGISTRO CON SELECCIÓN DE PLAN */}
-          {activeTab === 'register' && (
-            <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
+            <div className="flex items-start gap-3">
+              <FileCheck2 className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
               <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                  Nombre y Apellidos
-                </label>
-                <div className="relative">
-                  <User className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    required
-                    value={regFullName}
-                    onChange={(e) => setRegFullName(e.target.value)}
-                    placeholder="Laura Gómez"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Trazabilidad y Cadena de Custodia SHA-256
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+                  Cada lote procesado y aprobado queda registrado mediante firma criptográfica verificable para soporte documental ante auditoría.
+                </p>
               </div>
+            </div>
+          </div>
+        </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Columna Derecha: Formulario de Acceso / Registro */}
+        <div className="lg:col-span-6">
+          <div className="bg-[#10131a] border border-[#1e232d] rounded-lg p-6 sm:p-8 shadow-xl">
+            {(activeTab === 'login' || activeTab === 'register') && (
+              <div className="grid grid-cols-2 p-1 bg-[#0b0d11] border border-[#1e232d] rounded mb-6 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('login')}
+                  className={`py-2 rounded transition-colors ${
+                    activeTab === 'login'
+                      ? 'bg-[#181c26] text-white border border-[#282f3d]'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Acceso Clientes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('register')}
+                  className={`py-2 rounded transition-colors ${
+                    activeTab === 'register'
+                      ? 'bg-[#181c26] text-white border border-[#282f3d]'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Alta de Despacho / Empresa
+                </button>
+              </div>
+            )}
+
+            {errorMessage && (
+              <div className="mb-5 p-3 rounded bg-rose-950/30 border border-rose-800/60 text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            {infoMessage && (
+              <div className="mb-5 p-3 rounded bg-emerald-950/30 border border-emerald-800/60 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                <span>{infoMessage}</span>
+              </div>
+            )}
+
+            {activeTab === 'login' && (
+              <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                    Despacho o Razón Social
+                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1.5">
+                    Correo Electrónico Profesional
                   </label>
                   <div className="relative">
-                    <Building2 className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <Mail className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
-                      type="text"
+                      type="email"
                       required
-                      value={regCompanyName}
-                      onChange={(e) => setRegCompanyName(e.target.value)}
-                      placeholder="Asesoría Fiscal Gómez SLP"
-                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="usuario@despacho.es"
+                      className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                    NIF / CIF Fiscal
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={regFiscalId}
-                    onChange={(e) => setRegFiscalId(e.target.value.toUpperCase())}
-                    placeholder="B-12345678"
-                    className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
-                  />
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] uppercase tracking-wider text-slate-400 font-medium">
+                      Contraseña
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleTabChange('forgot')}
+                      className="text-[11px] text-slate-400 hover:text-blue-400 transition-colors"
+                    >
+                      Recuperar contraseña
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Lock className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="password"
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full mt-2 py-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <span>{loading ? 'Autenticando...' : 'Iniciar Sesión'}</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            )}
+
+            {activeTab === 'register' && (
+              <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
                 <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                    Correo Profesional
+                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
+                    Responsable / Titular de la Cuenta
                   </label>
                   <div className="relative">
-                    <Mail className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <User className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      required
+                      value={regFullName}
+                      onChange={(e) => setRegFullName(e.target.value)}
+                      placeholder="Nombre y Apellidos"
+                      className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
+                      Razón Social / Despacho
+                    </label>
+                    <div className="relative">
+                      <Building2 className="h-4 w-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        required
+                        value={regCompanyName}
+                        onChange={(e) => setRegCompanyName(e.target.value)}
+                        placeholder="Asesoría Fiscal S.L.P."
+                        className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
+                      NIF / CIF
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={regFiscalId}
+                      onChange={(e) => setRegFiscalId(e.target.value.toUpperCase())}
+                      placeholder="B12345678"
+                      className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
+                      Correo Corporativo
+                    </label>
                     <input
                       type="email"
                       required
                       value={regEmail}
                       onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="laura@asesoriagomez.es"
-                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                      placeholder="direccion@despacho.es"
+                      className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
                     />
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1">
-                    Contraseña (mín. 6 caracteres)
-                  </label>
-                  <div className="relative">
-                    <Lock className="h-4 w-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <div>
+                    <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
+                      Contraseña
+                    </label>
                     <input
                       type="password"
                       required
                       minLength={6}
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500"
                     />
                   </div>
                 </div>
-              </div>
 
-              {/* Selector de Plan Inicial */}
-              <div className="pt-1">
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-2">
-                  Selecciona tu Plan Inicial (Puedes cambiarlo en cualquier momento)
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {INITIAL_PLANS.map((p) => {
-                    const active = regPlan === p.code;
-                    return (
-                      <div
-                        key={p.code}
-                        onClick={() => setRegPlan(p.code)}
-                        className={`p-2.5 rounded-lg border cursor-pointer transition-all ${
-                          active
-                            ? 'bg-emerald-950/30 border-emerald-500 text-zinc-100'
-                            : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between text-xs font-semibold">
-                          <span className={active ? 'text-emerald-300' : 'text-zinc-200'}>{p.name}</span>
-                          <span className="font-mono text-white">{p.price}</span>
+                <div className="pt-1">
+                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-2">
+                    Modalidad de Suscripción Inicial
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {INITIAL_PLANS.map((p) => {
+                      const active = regPlan === p.code;
+                      return (
+                        <div
+                          key={p.code}
+                          onClick={() => setRegPlan(p.code)}
+                          className={`p-2.5 rounded border cursor-pointer transition-colors ${
+                            active
+                              ? 'bg-blue-950/30 border-blue-500 text-white'
+                              : 'bg-[#0b0d11] border-[#222834] text-slate-400 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-xs font-semibold">
+                            <span className={active ? 'text-blue-300' : 'text-slate-200'}>{p.name}</span>
+                            <span className="font-mono text-white">{p.price}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">{p.desc}</div>
                         </div>
-                        <div className="text-[10px] text-zinc-400 mt-0.5">{p.desc}</div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full mt-3 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
-              >
-                <span>{loading ? 'Creando espacio contable...' : 'Crear Cuenta y Empezar'}</span>
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            </form>
-          )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full mt-3 py-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <span>{loading ? 'Registrando entidad...' : 'Completar Alta y Acceder'}</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            )}
 
-          {/* VISTA RECUPERAR CONTRASEÑA */}
-          {activeTab === 'forgot' && (
-            <form onSubmit={handleForgotSubmit} className="space-y-4">
-              <p className="text-xs text-zinc-400">
-                Introduce tu correo electrónico corporativo para restablecer tu contraseña.
-              </p>
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
-                  Correo Electrónico
-                </label>
+            {activeTab === 'forgot' && (
+              <form onSubmit={handleForgotSubmit} className="space-y-4">
+                <p className="text-xs text-slate-400">
+                  Introduzca su dirección de correo electrónico para generar un código de restablecimiento.
+                </p>
                 <input
                   type="email"
                   required
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
-                  placeholder="nombre@despacho.es"
-                  className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100"
+                  placeholder="usuario@despacho.es"
+                  className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100"
                 />
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleTabChange('login')}
-                  className="w-1/3 py-2 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300"
-                >
-                  Volver
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleTabChange('login')}
+                    className="w-1/3 py-2 rounded bg-[#161a23] border border-[#222834] text-xs text-slate-300"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-2/3 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+                  >
+                    {loading ? 'Enviando...' : 'Solicitar Código'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeTab === 'reset' && (
+              <form onSubmit={handleResetSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
+                    Código de Verificación
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={resetToken}
+                    onChange={(e) => setResetToken(e.target.value)}
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] uppercase tracking-wider text-slate-400 font-medium mb-1">
+                    Nueva Contraseña
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    className="w-full bg-[#0b0d11] border border-[#222834] rounded px-3 py-2 text-xs text-slate-100"
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-2/3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
+                  className="w-full py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
                 >
-                  {loading ? 'Enviando...' : 'Solicitar Restablecimiento'}
+                  {loading ? 'Actualizando...' : 'Confirmar Contraseña'}
                 </button>
-              </div>
-            </form>
-          )}
-
-          {/* VISTA RESET PASSWORD */}
-          {activeTab === 'reset' && (
-            <form onSubmit={handleResetSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
-                  Código de Verificación
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={resetToken}
-                  onChange={(e) => setResetToken(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100 font-mono"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-zinc-400 font-medium mb-1.5">
-                  Nueva Contraseña
-                </label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={resetNewPassword}
-                  onChange={(e) => setResetNewPassword(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-xs text-zinc-100"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
-              >
-                {loading ? 'Actualizando...' : 'Guardar Nueva Contraseña'}
-              </button>
-            </form>
-          )}
+              </form>
+            )}
+          </div>
         </div>
       </main>
 
-      <footer className="border-t border-zinc-800/80 bg-[#0c0c0e]/80 py-3.5 text-center text-xs text-zinc-500">
-        <div className="max-w-[1200px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px]">
-          <span>FINDAFINITY &bull; Protocolo Zero-Liability &bull; Cuadre PGC a 0,00 €</span>
-          <span>Compatible con Wolters Kluwer A3 &bull; Sage 50 &bull; DELSOL Contasol</span>
+      <footer className="border-t border-[#1e232d] bg-[#0f1218] py-3.5 px-6 text-xs text-slate-500">
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px]">
+          <span>FINDAFINITY &bull; Entorno de Conciliación Contable &bull; Plan General de Contabilidad</span>
+          <span>Formatos Soportados: Wolters Kluwer A3 &bull; Sage 50 &bull; DELSOL Contasol</span>
         </div>
       </footer>
     </div>
@@ -4148,19 +4208,17 @@ FICHERO: frontend\src\components\HeaderNav.jsx
 
 /**
  * FICHERO: frontend/src/components/HeaderNav.jsx
- * Barra Superior Ejecutiva con Medidor de Cuota, Selector de Planes y Certificado SHA-256
+ * Barra de Comando Superior Corporativa con Medidor Persistente de Cuota
  */
 import React from 'react';
 import {
   Building2,
   Database,
-  Layers,
   ShieldCheck,
   Plus,
   Trash2,
   LogOut,
   CreditCard,
-  Lock,
 } from 'lucide-react';
 
 export function HeaderNav({
@@ -4185,84 +4243,78 @@ export function HeaderNav({
   const planCode = subscriptionInfo?.plan || currentUser?.plan || 'FREE';
   const usedTx = subscriptionInfo?.current_month_transactions ?? 0;
   const maxTx = subscriptionInfo?.max_monthly_transactions ?? 25;
+  const usagePct = Math.min(100, Math.round((usedTx / Math.max(1, maxTx)) * 100));
+  const isNearLimit = usagePct >= 80;
 
   return (
-    <header className="border-b border-zinc-800 bg-[#0c0c0e] sticky top-0 z-40 backdrop-blur-md">
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-wrap items-center justify-between py-3 gap-3">
-          {/* Lado Izquierdo: Marca y Selectores Operativos */}
+    <header className="border-b border-[#1e232d] bg-[#0f1218] sticky top-0 z-40">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between min-h-13 py-2 gap-3">
+          {/* Izquierda: Identidad y Contexto Sociedad / ERP */}
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2.5 mr-1">
-              <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                <Layers className="h-4 w-4" />
+            <div className="flex items-center gap-2.5">
+              <div className="h-6 w-6 rounded bg-blue-600 flex items-center justify-center text-white font-mono font-bold text-[11px]">
+                FA
               </div>
-              <span className="font-bold text-base tracking-tight text-white">FINDAFINITY</span>
+              <span className="font-semibold text-sm tracking-tight text-white">FINDAFINITY</span>
             </div>
 
             {isSuperAdmin && onToggleView && (
-              <>
-                <div className="hidden sm:block h-5 w-px bg-zinc-800" />
-                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
-                  <button
-                    type="button"
-                    onClick={() => onToggleView('radar')}
-                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                      !isAdminView ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    Radar Conciliación
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onToggleView('admin')}
-                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                      isAdminView ? 'bg-blue-600 text-white shadow-sm' : 'text-zinc-400 hover:text-blue-300'
-                    }`}
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    <span>Licencias & Empresas</span>
-                  </button>
-                </div>
-              </>
+              <div className="flex items-center gap-1 bg-[#0b0d11] border border-[#222834] rounded p-0.5 ml-2">
+                <button
+                  type="button"
+                  onClick={() => onToggleView('radar')}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    !isAdminView ? 'bg-[#181c26] text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Mesa de Conciliación
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleView('admin')}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                    isAdminView ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>Administración de Licencias</span>
+                </button>
+              </div>
             )}
 
             {!isAdminView && (
               <>
-                <div className="hidden sm:block h-5 w-px bg-zinc-800" />
+                <div className="hidden sm:block h-4 w-px bg-[#1e232d]" />
 
-                {/* Selector de Empresa Cliente */}
-                <div className="flex items-center gap-1.5 bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5">
-                  <Building2 className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+                {/* Selector de Sociedad Cliente */}
+                <div className="flex items-center gap-2 bg-[#0b0d11] border border-[#222834] rounded px-2.5 py-1">
+                  <Building2 className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                   {companies && companies.length > 0 ? (
                     <div className="flex items-center gap-2">
-                      <div className="flex flex-col">
-                        <span className="text-[9px] uppercase tracking-wider text-zinc-400 leading-none mb-0.5">
-                          Empresa Cliente
-                        </span>
-                        <select
-                          value={selectedCompany ? selectedCompany.id : ''}
-                          onChange={(e) => {
-                            const comp = companies.find((c) => c.id === e.target.value);
-                            if (comp && onSelectCompany) onSelectCompany(comp);
-                          }}
-                          className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2 max-w-[200px] truncate"
-                        >
-                          {companies.map((c) => (
-                            <option key={c.id} value={c.id} className="bg-zinc-900 text-zinc-200">
-                              {c.name} {c.fiscalId ? `(${c.fiscalId})` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <select
+                        value={selectedCompany ? selectedCompany.id : ''}
+                        onChange={(e) => {
+                          const comp = companies.find((c) => c.id === e.target.value);
+                          if (comp && onSelectCompany) onSelectCompany(comp);
+                        }}
+                        className="bg-transparent text-xs text-slate-100 font-medium focus:outline-none cursor-pointer pr-2 max-w-[220px] truncate"
+                      >
+                        {companies.map((c) => (
+                          <option key={c.id} value={c.id} className="bg-[#10131a] text-slate-200">
+                            {c.name} {c.fiscalId ? `— ${c.fiscalId}` : ''}
+                          </option>
+                        ))}
+                      </select>
 
                       {onOpenAddClientModal && (
                         <button
                           type="button"
                           onClick={onOpenAddClientModal}
-                          className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
-                          title="Añadir nueva Empresa Cliente"
+                          className="p-1 rounded bg-[#161a23] hover:bg-[#1f2532] text-slate-300 hover:text-white border border-[#262c3a] transition-colors"
+                          title="Dar de alta nueva sociedad"
                         >
-                          <Plus className="h-3.5 w-3.5" />
+                          <Plus className="h-3 w-3" />
                         </button>
                       )}
 
@@ -4270,78 +4322,82 @@ export function HeaderNav({
                         <button
                           type="button"
                           onClick={() => onOpenDeleteClientModal(selectedCompany)}
-                          className="p-1 rounded bg-zinc-800 hover:bg-rose-950/80 border border-transparent hover:border-rose-800/60 text-zinc-400 hover:text-rose-400 transition-colors"
-                          title={`Eliminar empresa cliente ${selectedCompany.name}`}
+                          className="p-1 rounded bg-[#161a23] hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-[#262c3a] transition-colors"
+                          title={`Eliminar sociedad ${selectedCompany.name}`}
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3 w-3" />
                         </button>
                       )}
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-zinc-400">Sin sociedades creadas</span>
+                      <span className="text-xs text-slate-400">Sin sociedades activas</span>
                       {onOpenAddClientModal && (
                         <button
                           type="button"
                           onClick={onOpenAddClientModal}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium transition-colors"
                         >
                           <Plus className="h-3 w-3" />
-                          <span>Añadir 1ª Empresa</span>
+                          <span>Alta Sociedad</span>
                         </button>
                       )}
                     </div>
                   )}
                 </div>
 
-                {/* Selector ERP Destino */}
-                <div className="flex items-center gap-2 bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5">
-                  <Database className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
-                  <div className="flex flex-col">
-                    <span className="text-[9px] uppercase tracking-wider text-zinc-400 leading-none mb-0.5">
-                      ERP Contable
-                    </span>
-                    <select
-                      value={selectedErp}
-                      onChange={(e) => onSelectErp && onSelectErp(e.target.value)}
-                      className="bg-transparent text-xs text-zinc-100 font-medium focus:outline-none cursor-pointer pr-2"
-                    >
-                      <option value="A3" className="bg-zinc-900 text-zinc-200">
-                        Wolters Kluwer A3
-                      </option>
-                      <option value="SAGE" className="bg-zinc-900 text-zinc-200">
-                        Sage 50 / Despachos
-                      </option>
-                      <option value="CONTASOL" className="bg-zinc-900 text-zinc-200">
-                        DELSOL Contasol
-                      </option>
-                    </select>
-                  </div>
+                {/* Selector ERP */}
+                <div className="flex items-center gap-2 bg-[#0b0d11] border border-[#222834] rounded px-2.5 py-1">
+                  <Database className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  <span className="text-[11px] text-slate-400">ERP:</span>
+                  <select
+                    value={selectedErp}
+                    onChange={(e) => onSelectErp && onSelectErp(e.target.value)}
+                    className="bg-transparent text-xs text-slate-100 font-medium focus:outline-none cursor-pointer"
+                  >
+                    <option value="A3" className="bg-[#10131a] text-slate-200">
+                      Wolters Kluwer A3 (Suenlace)
+                    </option>
+                    <option value="SAGE" className="bg-[#10131a] text-slate-200">
+                      Sage 50 (XDIARIO)
+                    </option>
+                    <option value="CONTASOL" className="bg-[#10131a] text-slate-200">
+                      DELSOL Contasol (.xlsx)
+                    </option>
+                  </select>
                 </div>
               </>
             )}
           </div>
 
-          {/* Lado Derecho: Medidor de Facturas, Botón de Planes, Certificado SHA-256 y Usuario */}
+          {/* Derecha: Cuota Mensual Persistente, Certificado SHA-256 y Usuario */}
           <div className="flex items-center gap-2.5">
             {!isAdminView && onOpenPaywall && (
               <button
                 type="button"
                 onClick={onOpenPaywall}
-                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${
-                  planCode === 'FREE'
-                    ? 'bg-amber-950/30 hover:bg-amber-950/50 border-amber-700/60 text-amber-300'
-                    : 'bg-emerald-950/30 hover:bg-emerald-950/50 border-emerald-800/60 text-emerald-300'
-                }`}
-                title="Gestionar Plan y Cuota Mensual de Facturas"
+                className="flex items-center gap-2.5 px-3 py-1 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs transition-colors"
+                title="Consumo mensual acumulado del plan y ampliación de licencia"
               >
-                <CreditCard className="h-3.5 w-3.5" />
-                <span>
-                  {planCode === 'FREE' ? 'Plan Gratuito' : planCode}
-                </span>
-                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-black/40 border border-white/10">
-                  {usedTx} / {maxTx} tx
-                </span>
+                <CreditCard className="h-3.5 w-3.5 text-blue-400" />
+                <div className="flex flex-col text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-medium text-slate-200">
+                      {planCode === 'FREE' ? 'Licencia Evaluación' : `Licencia ${planCode}`}
+                    </span>
+                    <span className={`font-mono text-[11px] font-semibold ${isNearLimit ? 'text-amber-400' : 'text-slate-300'}`}>
+                      {usedTx} / {maxTx} partidas
+                    </span>
+                  </div>
+                  <div className="w-32 h-1 bg-[#1e232d] rounded-full overflow-hidden mt-0.5">
+                    <div
+                      className={`h-full transition-all ${
+                        usagePct >= 100 ? 'bg-rose-500' : isNearLimit ? 'bg-amber-400' : 'bg-blue-500'
+                      }`}
+                      style={{ width: `${usagePct}%` }}
+                    />
+                  </div>
+                </div>
               </button>
             )}
 
@@ -4349,29 +4405,28 @@ export function HeaderNav({
               <button
                 type="button"
                 onClick={onOpenAuditModal}
-                className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300 transition-colors"
-                title="Ver Certificado Legal de Auditoría SHA-256"
+                className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs text-slate-300 transition-colors"
               >
                 <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Auditoría SHA-256</span>
+                <span>Registro SHA-256</span>
               </button>
             )}
 
             {currentUser && (
-              <div className="flex items-center gap-2.5 pl-2.5 border-l border-zinc-800">
+              <div className="flex items-center gap-2.5 pl-2.5 border-l border-[#1e232d]">
                 <div className="hidden sm:flex flex-col text-right">
-                  <span className="text-xs font-medium text-zinc-200">
+                  <span className="text-xs font-medium text-slate-200 leading-tight">
                     {currentUser.full_name || currentUser.email}
                   </span>
-                  <span className="text-[10px] text-zinc-400">
-                    {currentUser.company_name || 'Despacho Profesional'}
+                  <span className="text-[10px] text-slate-500 leading-tight">
+                    {currentUser.company_name || 'Despacho Contable'}
                   </span>
                 </div>
 
                 <button
                   type="button"
                   onClick={onLogout}
-                  className="p-1.5 rounded-md text-zinc-400 hover:text-rose-400 hover:bg-zinc-900 transition-colors"
+                  className="p-1.5 rounded text-slate-400 hover:text-rose-400 hover:bg-[#161a23] transition-colors"
                   title="Cerrar sesión"
                 >
                   <LogOut className="h-4 w-4" />
@@ -4392,19 +4447,18 @@ FICHERO: frontend\src\components\IngestionZone.jsx
 
 /**
  * FICHERO: frontend/src/components/IngestionZone.jsx
- * Zona de Ingesta Profesional B2B (Extracto Bancario / Pasarela + Cartera de Facturas + Stripe API)
+ * Barra de Ingesta Operativa de Doble Ranura (Cartera de Facturas + Extracto Bancario / Pasarela)
  */
 import React, { useState, useRef } from 'react';
 import {
-  UploadCloud,
+  Upload,
   FileSpreadsheet,
   Check,
   AlertCircle,
   RefreshCw,
-  Layers,
-  Zap,
   FileCheck,
   X,
+  Link2,
 } from 'lucide-react';
 
 export function IngestionZone({
@@ -4415,28 +4469,17 @@ export function IngestionZone({
   const [isDragOver, setIsDragOver] = useState(false);
   const [invoicesFile, setInvoicesFile] = useState(null);
   const [ephemeralMode, setEphemeralMode] = useState(false);
-  const [ingestionTelemetry, setIngestionTelemetry] = useState(null);
+  const [telemetry, setTelemetry] = useState(null);
   const [localProcessing, setLocalProcessing] = useState(false);
 
   const bankInputRef = useRef(null);
   const portfolioInputRef = useRef(null);
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
   const handleDrop = async (e) => {
     e.preventDefault();
     setIsDragOver(false);
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      await processSelectedFile(files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await processSelectedFile(e.dataTransfer.files[0]);
     }
   };
 
@@ -4455,36 +4498,33 @@ export function IngestionZone({
 
   const processSelectedFile = async (file) => {
     setLocalProcessing(true);
-    setIngestionTelemetry({
+    setTelemetry({
       filename: file.name,
       sizeKb: (file.size / 1024).toFixed(1),
-      movements: 'Procesando...',
+      statusText: 'Conciliando partidas...',
       isValid: true,
-      errors: [],
     });
 
     try {
       if (onFileProcessed) {
         const result = await onFileProcessed(file, invoicesFile, ephemeralMode);
         if (result && result.total_movements !== undefined) {
-          setIngestionTelemetry({
+          setTelemetry({
             filename: file.name,
             sizeKb: (file.size / 1024).toFixed(1),
-            movements: `${result.total_movements} apuntes conciliados`,
+            statusText: `${result.total_movements} apuntes generados`,
             isValid: true,
-            errors: [],
           });
         } else {
-          setIngestionTelemetry(null);
+          setTelemetry(null);
         }
       }
     } catch (err) {
-      setIngestionTelemetry({
+      setTelemetry({
         filename: file.name,
         sizeKb: (file.size / 1024).toFixed(1),
-        movements: '0',
+        statusText: err.message || 'Error de formato en el fichero',
         isValid: false,
-        errors: [err.message || 'Error al procesar el archivo contable.'],
       });
     } finally {
       setLocalProcessing(false);
@@ -4492,30 +4532,17 @@ export function IngestionZone({
   };
 
   return (
-    <div className="bg-[#101013] border border-zinc-800 rounded-lg p-4 sm:p-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-zinc-800/60">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-100">
-            Ingesta de Extractos Bancarios, Pasarelas y Cartera de Facturas
-          </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Sube tu fichero Norma 43 o liquidación de Stripe/Redsys para generar los pre-asientos PGC cuadrados a 0,00 €.
-          </p>
-        </div>
+    <section className="bg-[#10131a] border border-[#1e232d] rounded-md p-4">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+        {/* Ranura 1: Cartera de Facturas Emitidas (3 columnas) */}
+        <div className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+              1. Cartera de Facturas (430)
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">.xlsx, .csv, .json</span>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
-          {/* Selector de Modo Efímero en RAM */}
-          <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={ephemeralMode}
-              onChange={(e) => setEphemeralMode(e.target.checked)}
-              className="rounded border-zinc-700 bg-zinc-950 text-emerald-500 focus:ring-0"
-            />
-            <span>Modo Efímero RAM (Zero-Storage)</span>
-          </label>
-
-          {/* Adjuntar Cartera de Facturas Emitidas Opcional */}
           <input
             ref={portfolioInputRef}
             type="file"
@@ -4523,141 +4550,119 @@ export function IngestionZone({
             accept=".xlsx,.csv,.json,.pdf"
             className="hidden"
           />
+
           {invoicesFile ? (
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-950/40 border border-emerald-800/60 text-xs text-emerald-300">
-              <FileCheck className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="truncate max-w-[140px]">{invoicesFile.name}</span>
+            <div className="flex items-center justify-between px-3 py-2 rounded bg-emerald-950/20 border border-emerald-800/50 text-xs text-emerald-300">
+              <div className="flex items-center gap-2 truncate">
+                <FileCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate font-mono text-[11px]">{invoicesFile.name}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setInvoicesFile(null)}
-                className="text-zinc-400 hover:text-white"
-                title="Quitar cartera de facturas"
+                className="p-0.5 text-slate-400 hover:text-white"
+                title="Retirar archivo de cartera"
               >
-                <X className="h-3 w-3" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
           ) : (
             <button
               type="button"
               onClick={() => portfolioInputRef.current?.click()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-xs font-medium text-zinc-200 transition-colors"
+              className="w-full flex items-center justify-between px-3 py-2 rounded bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs text-slate-300 transition-colors"
             >
-              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
-              <span>1. Adjuntar Cartera Facturas (Opcional)</span>
+              <span className="flex items-center gap-2">
+                <FileSpreadsheet className="h-3.5 w-3.5 text-slate-400" />
+                <span>Cargar libro de facturas emitidas</span>
+              </span>
+              <span className="text-[11px] text-blue-400 font-medium">Examinar</span>
             </button>
           )}
+        </div>
 
-          {/* Conectar Stripe API en 1 Clic */}
+        {/* Ranura 2: Extracto Bancario / Liquidación de Pasarela (5 columnas) */}
+        <div className="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-[#1e232d] pb-3 lg:pb-0 lg:pr-4">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+              2. Extracto Bancario o Liquidación Pasarela
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">Norma 43 (.n43) / Stripe / Redsys (.csv)</span>
+          </div>
+
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              setIsDragOver(false);
+            }}
+            onDrop={handleDrop}
+            onClick={() => bankInputRef.current?.click()}
+            className={`flex items-center justify-between px-3 py-2 rounded border border-dashed cursor-pointer transition-colors ${
+              isDragOver
+                ? 'border-blue-500 bg-blue-950/20'
+                : 'border-[#283040] bg-[#0b0d11] hover:bg-[#161a23]'
+            }`}
+          >
+            <input
+              ref={bankInputRef}
+              type="file"
+              onChange={handleBankFileChange}
+              accept=".n43,.txt,.csv,.xlsx,.json"
+              className="hidden"
+            />
+            <div className="flex items-center gap-2 truncate text-xs text-slate-200">
+              {localProcessing || isProcessing ? (
+                <RefreshCw className="h-3.5 w-3.5 text-blue-400 animate-spin shrink-0" />
+              ) : (
+                <Upload className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              )}
+              <span className="truncate">
+                {telemetry ? `${telemetry.filename} (${telemetry.statusText})` : 'Arrastrar fichero .n43 / .csv o hacer clic para procesar'}
+              </span>
+            </div>
+            <span className="text-[11px] font-medium text-blue-400 shrink-0 ml-2">Subir Fichero</span>
+          </div>
+        </div>
+
+        {/* Ranura 3: Sincronización Directa API y Privacidad RAM (3 columnas) */}
+        <div className="lg:col-span-3 flex flex-col justify-between gap-2">
+          <div className="flex items-center justify-between">
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={ephemeralMode}
+                onChange={(e) => setEphemeralMode(e.target.checked)}
+                className="rounded border-slate-700 bg-[#0b0d11] text-blue-600 focus:ring-0"
+              />
+              <span>Procesamiento efímero en RAM</span>
+            </label>
+
+            {telemetry && (
+              <span className={`inline-flex items-center gap-1 text-[10px] font-mono ${telemetry.isValid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {telemetry.isValid ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+                {telemetry.isValid ? 'OK' : 'Error'}
+              </span>
+            )}
+          </div>
+
           {onOpenStripeSync && (
             <button
               type="button"
               onClick={onOpenStripeSync}
               disabled={isProcessing || localProcessing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition-colors shadow-sm disabled:opacity-50"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#283040] text-xs font-medium text-slate-200 transition-colors disabled:opacity-50"
             >
-              <Zap className="h-3.5 w-3.5" />
-              <span>Conectar Stripe API</span>
+              <Link2 className="h-3.5 w-3.5 text-blue-400" />
+              <span>Importar Liquidaciones vía Stripe API</span>
             </button>
           )}
         </div>
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Dropzone Principal */}
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => bankInputRef.current?.click()}
-          className={`lg:col-span-2 border border-dashed rounded-md p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${
-            isDragOver
-              ? 'border-emerald-500 bg-emerald-950/20'
-              : 'border-zinc-800 hover:border-zinc-700 bg-zinc-900/30 hover:bg-zinc-900/50'
-          }`}
-        >
-          <input
-            ref={bankInputRef}
-            type="file"
-            onChange={handleBankFileChange}
-            accept=".n43,.txt,.csv,.xlsx,.pdf,.json"
-            className="hidden"
-          />
-
-          <div className="h-10 w-10 rounded-full bg-zinc-800/90 border border-zinc-700/60 flex items-center justify-center text-emerald-400 mb-2.5">
-            {localProcessing || isProcessing ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <UploadCloud className="h-4 w-4" />
-            )}
-          </div>
-
-          <p className="text-xs text-zinc-100 font-medium">
-            2. Arrastra aquí el Extracto Bancario (Norma 43) o el CSV de Liquidaciones (Stripe / Redsys)
-          </p>
-          <p className="text-[11px] text-zinc-500 mt-1">
-            Formatos oficiales soportados: Cuaderno 43 AEB (.n43, .txt), Stripe Balance (.csv), Redsys TPV (.csv)
-          </p>
-        </div>
-
-        {/* Telemetría del Archivo */}
-        <div className="bg-zinc-900/50 border border-zinc-800 rounded-md p-3.5 flex flex-col justify-between">
-          <div>
-            <div className="text-[11px] text-zinc-400 font-medium pb-2 border-b border-zinc-800/60 mb-2.5">
-              TELEMETRÍA DE INGESTA
-            </div>
-
-            {ingestionTelemetry ? (
-              <div className="space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Fichero:</span>
-                  <span className="text-zinc-200 font-mono text-[11px] truncate max-w-[160px]" title={ingestionTelemetry.filename}>
-                    {ingestionTelemetry.filename}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Tamaño:</span>
-                  <span className="text-zinc-200 font-mono text-[11px]">{ingestionTelemetry.sizeKb} KB</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-400">Resultado:</span>
-                  <span className="text-emerald-400 font-mono text-[11px] font-medium">
-                    {ingestionTelemetry.movements}
-                  </span>
-                </div>
-
-                <div className="pt-2 border-t border-zinc-800/60">
-                  {ingestionTelemetry.isValid ? (
-                    <div className="flex items-center gap-1.5 text-[11px] text-emerald-400">
-                      <Check className="h-3.5 w-3.5" />
-                      <span>Cuadre contable verificado</span>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1 text-[11px] text-rose-400">
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        <span>Incidencia en el archivo</span>
-                      </div>
-                      {ingestionTelemetry.errors.map((err, i) => (
-                        <p key={i} className="text-[10px] text-zinc-500 leading-tight">{err}</p>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="py-5 text-center text-zinc-500 text-xs">
-                <Layers className="h-6 w-6 mx-auto mb-1.5 opacity-40" />
-                Esperando fichero de extracto o liquidación para iniciar el motor.
-              </div>
-            )}
-          </div>
-
-          <div className="text-[10px] text-zinc-500 pt-2 border-t border-zinc-800/60">
-            Validación automática de Registro 33 AEB y sellado SHA-256.
-          </div>
-        </div>
-      </div>
-    </div>
+    </section>
   );
 }
 
@@ -4668,55 +4673,52 @@ FICHERO: frontend\src\components\PaywallModal.jsx
 
 /**
  * FICHERO: frontend/src/components/PaywallModal.jsx
- * Modal de Paywall Freemium (Límite de 25 facturas/transacciones gratis alcanzado)
+ * Gestión de Licencias Corporativas y Ampliación de Cuota Mensual
  */
 import React, { useState } from 'react';
-import { ShieldCheck, Check, Sparkles, Lock, X, CreditCard, Building2, Zap } from 'lucide-react';
+import { ShieldCheck, Check, Lock, X, CreditCard } from 'lucide-react';
 
 const PLANS = [
   {
     code: 'PYME_DIRECTO',
     name: 'Pyme Directo',
     price: 39,
-    subtitle: 'Ideal para tiendas online y comercios individuales',
-    maxClients: '1 empresa',
-    maxTx: '2.000 facturas / mes',
-    badge: null,
+    subtitle: 'Para departamentos de administración de una única sociedad mercantil',
+    maxClients: '1 sociedad',
+    maxTx: '2.000 partidas / mes',
     features: [
-      'Hasta 2.000 transacciones conciliadas/mes',
-      'Sincronización directa con API de Stripe',
-      'Exportación oficial a A3, Sage 50 y Contasol',
-      'Modo Efímero RAM (Cero retención de archivos)',
+      'Hasta 2.000 partidas conciliadas al mes',
+      '1 sociedad mercantil activa',
+      'Importación directa desde API de Stripe',
+      'Exportación a Wolters Kluwer A3, Sage 50 y Contasol',
     ],
   },
   {
     code: 'STARTER',
-    name: 'Gestoría Starter',
+    name: 'Despacho Starter',
     price: 49,
-    subtitle: 'Para despachos pequeños con clientes e-commerce y TPV',
-    maxClients: 'Hasta 10 empresas',
-    maxTx: '2.500 facturas / mes',
-    badge: 'POPULAR DESPACHOS',
+    subtitle: 'Para despachos contables y asesorías con cartera inicial de comercios',
+    maxClients: 'Hasta 10 sociedades',
+    maxTx: '2.500 partidas / mes',
     features: [
-      'Hasta 10 empresas cliente activas',
-      'Hasta 2.500 transacciones agregadas/mes',
-      'Descomposición algorítmica de Stripe y Redsys',
-      'Exportación 1-Clic (Suenlace, XDIARIO, Contasol)',
+      'Hasta 10 sociedades cliente activas',
+      'Hasta 2.500 partidas agregadas al mes',
+      'Desglose automático de comisiones (626) y devoluciones',
+      'Exportación nativa Suenlace, XDIARIO y Contasol',
     ],
   },
   {
     code: 'PROFESSIONAL',
-    name: 'Gestoría Professional',
+    name: 'Despacho Profesional',
     price: 119,
-    subtitle: 'Para asesorías con alto volumen transaccional y auditoría',
-    maxClients: 'Hasta 30 empresas',
-    maxTx: '12.000 facturas / mes',
-    badge: 'MÁXIMO RETORNO (ROI 30x)',
+    subtitle: 'Para firmas de auditoría y asesorías con alto volumen transaccional',
+    maxClients: 'Hasta 30 sociedades',
+    maxTx: '12.000 partidas / mes',
     features: [
-      'Hasta 30 empresas cliente activas',
-      'Hasta 12.000 transacciones agregadas/mes',
-      'Certificado Legal de Auditoría SHA-256 para AEAT',
-      'Sincronización API Stripe multi-empresa',
+      'Hasta 30 sociedades cliente activas',
+      'Hasta 12.000 partidas agregadas al mes',
+      'Certificado de cadena de custodia SHA-256 exportable',
+      'Sincronización multi-cuenta con API de Stripe',
     ],
   },
 ];
@@ -4724,12 +4726,12 @@ const PLANS = [
 export function PaywallModal({
   isOpen,
   onClose,
-  usedTransactions = 25,
+  usedTransactions = 0,
   freeLimit = 25,
   currentPlan = 'FREE',
   onSelectPlanUpgrade,
 }) {
-  const [selectedPlan, setSelectedPlan] = useState('STARTER');
+  const [selectedPlan, setSelectedPlan] = useState(currentPlan === 'FREE' ? 'STARTER' : currentPlan);
   const [extraBlocks, setExtraBlocks] = useState(0);
   const [processing, setProcessing] = useState(false);
 
@@ -4748,25 +4750,24 @@ export function PaywallModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[#101013] border border-zinc-800 rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl">
-        {/* Cabecera */}
-        <div className="px-6 py-5 border-b border-zinc-800 bg-gradient-to-r from-emerald-950/40 via-zinc-950 to-blue-950/40 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs">
+      <div className="bg-[#10131a] border border-[#222834] rounded-lg max-w-4xl w-full overflow-hidden shadow-2xl">
+        <div className="px-6 py-4 border-b border-[#1e232d] bg-[#0d1016] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Lock className="h-5 w-5" />
+            <div className="h-9 w-9 rounded bg-blue-600/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
+              <Lock className="h-4 w-4" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">
-                  Desbloquea la Exportación Ilimitada a tu ERP
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-sm font-semibold text-white">
+                  Licencias de Uso y Capacidad Mensual de Conciliación
                 </h3>
-                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/60 text-amber-300">
-                  {usedTransactions} / {freeLimit} Facturas Gratis Usadas
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#161a23] border border-[#283040] text-slate-300">
+                  Consumo acumulado: {usedTransactions} / {freeLimit} partidas
                 </span>
               </div>
-              <p className="text-xs text-zinc-400 mt-0.5">
-                Con solo 24 transacciones complejas al mes ya recuperas más de 1,5 horas de punteo manual. Elige una tarifa plana predecible sin cobros variables sorpresa.
+              <p className="text-xs text-slate-400 mt-0.5">
+                El cómputo mensual registra todas las partidas procesadas en el periodo en curso con independencia de las limpiezas de pantalla.
               </p>
             </div>
           </div>
@@ -4774,13 +4775,12 @@ export function PaywallModal({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-[#161a23] transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Tarjetas de Planes */}
         <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
           {PLANS.map((plan) => {
             const isSelected = selectedPlan === plan.code;
@@ -4788,62 +4788,58 @@ export function PaywallModal({
               <div
                 key={plan.code}
                 onClick={() => setSelectedPlan(plan.code)}
-                className={`relative rounded-xl p-5 border cursor-pointer transition-all flex flex-col justify-between ${
+                className={`rounded-md p-5 border cursor-pointer transition-colors flex flex-col justify-between ${
                   isSelected
-                    ? 'bg-zinc-900/90 border-emerald-500 ring-1 ring-emerald-500/50 shadow-lg'
-                    : 'bg-[#0c0c0e] border-zinc-800 hover:border-zinc-700'
+                    ? 'bg-[#141923] border-blue-500'
+                    : 'bg-[#0b0d11] border-[#1e232d] hover:border-[#2c3444]'
                 }`}
               >
-                {plan.badge && (
-                  <span className="absolute -top-2.5 right-4 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-600 text-white shadow">
-                    {plan.badge}
-                  </span>
-                )}
-
                 <div>
                   <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-bold text-zinc-100">{plan.name}</h4>
+                    <h4 className="text-sm font-semibold text-white">{plan.name}</h4>
                     {currentPlan === plan.code && (
-                      <span className="text-[10px] font-mono text-emerald-400">Plan Actual</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">
+                        Activo
+                      </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-zinc-400 mt-1 min-h-[32px]">{plan.subtitle}</p>
+                  <p className="text-[11px] text-slate-400 mt-1 min-h-[32px]">{plan.subtitle}</p>
 
-                  <div className="my-4 flex items-baseline gap-1">
-                    <span className="text-3xl font-mono font-bold text-white">{plan.price} €</span>
-                    <span className="text-xs text-zinc-400">/ mes (IVA no incl.)</span>
+                  <div className="my-4 flex items-baseline gap-1 border-y border-[#1e232d] py-3">
+                    <span className="text-2xl font-mono font-bold text-white">{plan.price} €</span>
+                    <span className="text-xs text-slate-400">/ mes (IVA no incl.)</span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 p-2.5 rounded-lg bg-zinc-950 border border-zinc-800/80 mb-4 text-[11px]">
+                  <div className="grid grid-cols-2 gap-2 p-2 rounded bg-[#10131a] border border-[#1e232d] mb-4 text-[11px]">
                     <div>
-                      <span className="text-zinc-500 block text-[10px]">Capacidad</span>
-                      <strong className="text-zinc-200 font-mono">{plan.maxClients}</strong>
+                      <span className="text-slate-500 block text-[10px]">Sociedades</span>
+                      <strong className="text-slate-200 font-mono">{plan.maxClients}</strong>
                     </div>
                     <div>
-                      <span className="text-zinc-500 block text-[10px]">Volumen</span>
-                      <strong className="text-emerald-400 font-mono">{plan.maxTx}</strong>
+                      <span className="text-slate-500 block text-[10px]">Cuota Mensual</span>
+                      <strong className="text-blue-400 font-mono">{plan.maxTx}</strong>
                     </div>
                   </div>
 
-                  <ul className="space-y-2 text-xs text-zinc-300">
+                  <ul className="space-y-2 text-xs text-slate-300">
                     {plan.features.map((feat, i) => (
                       <li key={i} className="flex items-start gap-2">
-                        <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                        <Check className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
                         <span>{feat}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
 
-                <div className="mt-5 pt-3 border-t border-zinc-800/80">
+                <div className="mt-5 pt-3 border-t border-[#1e232d]">
                   <div
-                    className={`w-full py-2 rounded-lg text-xs font-semibold text-center transition-colors ${
+                    className={`w-full py-2 rounded text-xs font-semibold text-center transition-colors ${
                       isSelected
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-[#161a23] text-slate-300 hover:bg-[#1e2430]'
                     }`}
                   >
-                    {isSelected ? 'Plan Seleccionado' : 'Seleccionar Plan'}
+                    {isSelected ? 'Modalidad Seleccionada' : 'Seleccionar'}
                   </div>
                 </div>
               </div>
@@ -4851,31 +4847,28 @@ export function PaywallModal({
           })}
         </div>
 
-        {/* Footer de Checkout */}
-        <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-950/90 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3 text-xs text-zinc-400">
-            <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
-            <span>
-              Pago seguro vía <strong>Stripe Checkout</strong> &bull; Cancela o cambia de tramo en cualquier momento sin permanencia.
-            </span>
+        <div className="px-6 py-4 border-t border-[#1e232d] bg-[#0d1016] flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <ShieldCheck className="h-4 w-4 text-blue-400 shrink-0" />
+            <span>Facturación mensual por cuota fija sin cargos variables por apunte.</span>
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs text-zinc-300"
+              className="px-4 py-2 rounded bg-[#161a23] hover:bg-[#1e2430] border border-[#262c3a] text-xs text-slate-300"
             >
-              Seguir en modo vista previa
+              Cerrar
             </button>
             <button
               type="button"
               disabled={processing}
               onClick={handleConfirmUpgrade}
-              className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg disabled:opacity-50"
+              className="px-5 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 disabled:opacity-50"
             >
               <CreditCard className="h-4 w-4" />
-              <span>{processing ? 'Activando licencia...' : 'Activar Plan y Desbloquear Exportación'}</span>
+              <span>{processing ? 'Actualizando licencia...' : 'Confirmar y Activar Licencia'}</span>
             </button>
           </div>
         </div>
@@ -5284,7 +5277,7 @@ FICHERO: frontend\src\components\StagingRadar.jsx
 
 /**
  * FICHERO: frontend/src/components/StagingRadar.jsx
- * Radar de Conciliación de Alta Densidad (100% Producción, Cero Datos Demo)
+ * Mesa de Conciliación Contable de Alta Densidad con KPIs Financieros y Selector de Lotes
  */
 import React, { useState, useMemo } from 'react';
 import {
@@ -5292,10 +5285,10 @@ import {
   CheckCircle2,
   AlertCircle,
   AlertOctagon,
-  Layers,
   CheckCheck,
   Trash2,
   Plus,
+  FolderOpen,
 } from 'lucide-react';
 import { TransactionRow } from './TransactionRow';
 import { PeriodFilter } from './PeriodFilter';
@@ -5303,6 +5296,9 @@ import { formatEuro } from '../utils/formatters';
 
 export function StagingRadar({
   transactions = [],
+  batches = [],
+  currentBatchId = null,
+  onSelectBatch,
   onApproveTransaction,
   onBulkApproveYellows,
   onOpenScoreModal,
@@ -5325,16 +5321,33 @@ export function StagingRadar({
   const [expandedId, setExpandedId] = useState(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const counts = useMemo(() => {
+  const summary = useMemo(() => {
     let green = 0;
     let yellow = 0;
     let red = 0;
+    let netTotal = 0;
+    let grossTotal = 0;
+    let feeTotal = 0;
+
     transactions.forEach((tx) => {
       if (tx.status === 'GREEN') green++;
       else if (tx.status === 'YELLOW') yellow++;
       else red++;
+
+      netTotal += Number(tx.netAmountEur) || 0;
+      grossTotal += Number(tx.grossAmountEur) || 0;
+      feeTotal += Number(tx.feeAmountEur) || 0;
     });
-    return { all: transactions.length, green, yellow, red };
+
+    return {
+      all: transactions.length,
+      green,
+      yellow,
+      red,
+      netTotal,
+      grossTotal,
+      feeTotal,
+    };
   }, [transactions]);
 
   const filteredTransactions = useMemo(() => {
@@ -5355,10 +5368,6 @@ export function StagingRadar({
     });
   }, [transactions, activeTab, selectedSource, searchQuery]);
 
-  const toggleExpand = (id) => {
-    setExpandedId((prev) => (prev === id ? null : id));
-  };
-
   const handleClearAll = () => {
     if (!confirmClear) {
       setConfirmClear(true);
@@ -5370,235 +5379,307 @@ export function StagingRadar({
   };
 
   return (
-    <div className="bg-[#101013] border border-zinc-800 rounded-lg overflow-hidden shadow-xl">
-      <PeriodFilter
-        selectedYear={selectedYear}
-        onSelectYear={onSelectYear}
-        periodType={periodType}
-        onSelectPeriodType={onSelectPeriodType}
-        startMonth={startMonth}
-        onSelectStartMonth={onSelectStartMonth}
-        endMonth={endMonth}
-        onSelectEndMonth={onSelectEndMonth}
-      />
-
-      <div className="p-4 border-b border-zinc-800/80 bg-[#0c0c0e] flex flex-col gap-3">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-            <button
-              type="button"
-              onClick={() => setActiveTab('ALL')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-                activeTab === 'ALL'
-                  ? 'bg-zinc-800 text-zinc-100 shadow-sm border border-zinc-700/60'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60'
-              }`}
-            >
-              <span>Todas las Partidas</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-900/80 border border-zinc-700/50 text-zinc-300">
-                {counts.all}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('GREEN')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-                activeTab === 'GREEN'
-                  ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/70 shadow-sm'
-                  : 'text-zinc-400 hover:text-emerald-400 hover:bg-zinc-900/60'
-              }`}
-            >
-              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-              <span>Verdes (Automáticas)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-800/50 text-emerald-300">
-                {counts.green}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('YELLOW')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-                activeTab === 'YELLOW'
-                  ? 'bg-amber-950/60 text-amber-300 border border-amber-800/70 shadow-sm'
-                  : 'text-zinc-400 hover:text-amber-400 hover:bg-zinc-900/60'
-              }`}
-            >
-              <AlertCircle className="h-3 w-3 text-amber-400" />
-              <span>Amarillas (Revisión 1-Clic)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/50 text-amber-300">
-                {counts.yellow}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('RED')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-                activeTab === 'RED'
-                  ? 'bg-rose-950/60 text-rose-300 border border-rose-800/70 shadow-sm'
-                  : 'text-zinc-400 hover:text-rose-400 hover:bg-zinc-900/60'
-              }`}
-            >
-              <AlertOctagon className="h-3 w-3 text-rose-400" />
-              <span>Rojas (Cuenta 555)</span>
-              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-800/50 text-rose-300">
-                {counts.red}
-              </span>
-            </button>
+    <div className="space-y-4">
+      {/* Tira Ejecutiva de Indicadores Contables */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Partidas en Mesa de Trabajo
           </div>
-
-          <div className="flex items-center gap-2 self-start md:self-auto">
-            {counts.yellow > 0 && (
-              <button
-                type="button"
-                onClick={onBulkApproveYellows}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300 text-xs font-medium transition-colors"
-              >
-                <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Aprobar Amarillas ({counts.yellow})</span>
-              </button>
-            )}
-
-            {transactions.length > 0 && onClearAllTransactions && (
-              <button
-                type="button"
-                onClick={handleClearAll}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors border ${
-                  confirmClear
-                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm'
-                    : 'bg-zinc-900/90 hover:bg-rose-950/50 border-zinc-800 hover:border-rose-800/60 text-zinc-400 hover:text-rose-300'
-                }`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>{confirmClear ? '¿Confirmar vaciado?' : 'Vaciar Radar'}</span>
-              </button>
-            )}
+          <div className="font-mono text-xl font-bold text-white mt-1">
+            {summary.all}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
+            {summary.green} verdes &bull; {summary.yellow} revisión &bull; {summary.red} cuenta 555
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-          <div className="relative flex-1 max-w-md">
-            <Search className="h-3.5 w-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filtrar por concepto bancario, factura, NIF/CIF o importe..."
-              className="w-full bg-zinc-900/90 border border-zinc-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600"
-            />
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Tesorería Neta Conciliada (572)
           </div>
+          <div className="font-mono text-xl font-bold text-white mt-1">
+            {formatEuro(summary.netTotal)}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            Saldo líquido abonado en banco
+          </div>
+        </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-zinc-400 uppercase tracking-wider hidden sm:inline">Origen:</span>
-            <select
-              value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value)}
-              className="bg-zinc-900/90 border border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
-            >
-              <option value="ALL">Todas las Fuentes</option>
-              <option value="Stripe">Stripe</option>
-              <option value="Redsys">Redsys TPV</option>
-              <option value="Norma 43">Extracto Bancario Norma 43</option>
-            </select>
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Facturación Bruta Imputada (430)
+          </div>
+          <div className="font-mono text-xl font-bold text-slate-200 mt-1">
+            {formatEuro(summary.grossTotal)}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">
+            Cancelación de deuda comercial
+          </div>
+        </div>
+
+        <div className="bg-[#10131a] border border-[#1e232d] rounded-md p-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            Gastos de Pasarela Deducidos (626)
+          </div>
+          <div className="font-mono text-xl font-bold text-amber-400 mt-1">
+            {formatEuro(summary.feeTotal)}
+          </div>
+          <div className="text-[11px] text-emerald-400 mt-0.5 font-mono">
+            Descuadre Diario PGC: 0,00 €
           </div>
         </div>
       </div>
 
-      {transactions.length === 0 ? (
-        <div className="py-16 px-6 text-center flex flex-col items-center justify-center bg-[#0c0c0f]">
-          <div className="h-12 w-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 mb-3">
-            <Layers className="h-5 w-5 text-emerald-400" />
-          </div>
+      {/* Tabla Principal de Conciliación */}
+      <div className="bg-[#10131a] border border-[#1e232d] rounded-md overflow-hidden">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-[#1e232d] bg-[#0d1016]">
+          <PeriodFilter
+            selectedYear={selectedYear}
+            onSelectYear={onSelectYear}
+            periodType={periodType}
+            onSelectPeriodType={onSelectPeriodType}
+            startMonth={startMonth}
+            onSelectStartMonth={onSelectStartMonth}
+            endMonth={endMonth}
+            onSelectEndMonth={onSelectEndMonth}
+          />
 
-          {!hasCompanies ? (
-            <>
-              <h3 className="text-sm font-semibold text-zinc-100 mb-1.5">
-                Paso 1: Da de alta la primera sociedad o empresa cliente
-              </h3>
-              <p className="text-xs text-zinc-400 max-w-md mx-auto mb-5 leading-relaxed">
-                Tu espacio de despacho está recién creado y limpio. Añade una sociedad indicando su CIF y su ERP de destino (A3, Sage 50 o Contasol) para empezar a conciliar.
-              </p>
-              {onOpenAddClientModal && (
-                <button
-                  type="button"
-                  onClick={onOpenAddClientModal}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors shadow-sm"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>Añadir Primera Empresa Cliente</span>
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <h3 className="text-sm font-semibold text-zinc-100 mb-1.5">
-                Radar listo para conciliar
-              </h3>
-              <p className="text-xs text-zinc-400 max-w-md mx-auto leading-relaxed">
-                Arrastra un fichero Norma 43 (.n43) o un CSV de liquidaciones de Stripe / Redsys en el panel superior, o conecta directamente la API de Stripe para generar los pre-asientos contables.
-              </p>
-            </>
+          {/* Selector de Lotes Procesados si existen varios */}
+          {batches && batches.length > 1 && (
+            <div className="flex items-center gap-2 px-4 py-2 border-t lg:border-t-0 border-[#1e232d] text-xs">
+              <FolderOpen className="h-3.5 w-3.5 text-slate-400" />
+              <span className="text-[11px] text-slate-400">Lote activo:</span>
+              <select
+                value={currentBatchId || ''}
+                onChange={(e) => onSelectBatch && onSelectBatch(e.target.value)}
+                className="bg-[#161a23] border border-[#262c3a] rounded px-2.5 py-1 text-xs text-slate-200 font-mono focus:outline-none"
+              >
+                {batches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.filename} ({b.total_movements} apuntes)
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
         </div>
-      ) : (
-        <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-zinc-800 bg-[#09090b] text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">
-                  <th className="py-2.5 px-2 w-8 text-center"></th>
-                  <th className="py-2.5 px-2">ID & Origen</th>
-                  <th className="py-2.5 px-2">Fechas</th>
-                  <th className="py-2.5 px-2">Concepto Bancario / Operación</th>
-                  <th className="py-2.5 px-2 text-right">Banco Neto (€)</th>
-                  <th className="py-2.5 px-2 text-right">Bruto Fra (€)</th>
-                  <th className="py-2.5 px-2 text-right">Comisión (€)</th>
-                  <th className="py-2.5 px-2 text-center">Afinidad</th>
-                  <th className="py-2.5 px-2 text-right">Estado / Acción</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-900">
-                {filteredTransactions.length > 0 ? (
-                  filteredTransactions.map((tx) => (
-                    <TransactionRow
-                      key={tx.id}
-                      transaction={tx}
-                      isExpanded={expandedId === tx.id}
-                      onToggleExpand={() => toggleExpand(tx.id)}
-                      onOpenScoreModal={onOpenScoreModal}
-                      onApprove={onApproveTransaction}
-                      onDelete={onDeleteTransaction}
-                    />
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={9} className="py-10 text-center text-zinc-400 text-xs">
-                      No se encontraron partidas con los filtros seleccionados.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+
+        {/* Barra de Filtros de Estado y Búsqueda */}
+        <div className="p-3.5 border-b border-[#1e232d] bg-[#0f1218] flex flex-col gap-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setActiveTab('ALL')}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                  activeTab === 'ALL'
+                    ? 'bg-[#181c26] text-white border-[#2a3142]'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>Todas</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#0b0d11] text-slate-300">
+                  {summary.all}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('GREEN')}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                  activeTab === 'GREEN'
+                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-800/60'
+                    : 'border-transparent text-slate-400 hover:text-emerald-400'
+                }`}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                <span>Conciliadas</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300">
+                  {summary.green}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('YELLOW')}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                  activeTab === 'YELLOW'
+                    ? 'bg-amber-950/40 text-amber-300 border-amber-800/60'
+                    : 'border-transparent text-slate-400 hover:text-amber-400'
+                }`}
+              >
+                <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
+                <span>Revisión Requerida</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300">
+                  {summary.yellow}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('RED')}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap border ${
+                  activeTab === 'RED'
+                    ? 'bg-rose-950/40 text-rose-300 border-rose-800/60'
+                    : 'border-transparent text-slate-400 hover:text-rose-400'
+                }`}
+              >
+                <AlertOctagon className="h-3.5 w-3.5 text-rose-400" />
+                <span>Partidas Pendientes (555)</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-300">
+                  {summary.red}
+                </span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {summary.yellow > 0 && (
+                <button
+                  type="button"
+                  onClick={onBulkApproveYellows}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors"
+                >
+                  <CheckCheck className="h-3.5 w-3.5" />
+                  <span>Conformar En Revisión ({summary.yellow})</span>
+                </button>
+              )}
+
+              {transactions.length > 0 && onClearAllTransactions && (
+                <button
+                  type="button"
+                  onClick={handleClearAll}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors border ${
+                    confirmClear
+                      ? 'bg-rose-600 text-white border-rose-500'
+                      : 'bg-[#0b0d11] hover:bg-rose-950/40 border-[#222834] text-slate-400 hover:text-rose-300'
+                  }`}
+                  title="Limpia las partidas de la vista actual (no reinicia el consumo mensual del plan)"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>{confirmClear ? 'Confirmar limpieza de vista' : 'Limpiar Mesa'}</span>
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="p-3 border-t border-zinc-800/60 bg-[#09090b] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-zinc-400 gap-2">
-            <div>
-              Mostrando <span className="font-mono text-zinc-200">{filteredTransactions.length}</span> de{' '}
-              <span className="font-mono text-zinc-200">{transactions.length}</span> partidas del periodo
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="h-3.5 w-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar por concepto bancario, nº documento, NIF o importe..."
+                className="w-full bg-[#0b0d11] border border-[#222834] rounded pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              />
             </div>
-            <div className="flex items-center gap-4 text-xs font-mono">
-              <span>
-                Neto Conciliado:{' '}
-                <strong className="text-zinc-100">
-                  {formatEuro(filteredTransactions.reduce((acc, t) => acc + (t.netAmountEur || 0), 0))}
-                </strong>
-              </span>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400 uppercase tracking-wider">Canal:</span>
+              <select
+                value={selectedSource}
+                onChange={(e) => setSelectedSource(e.target.value)}
+                className="bg-[#0b0d11] border border-[#222834] rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none cursor-pointer"
+              >
+                <option value="ALL">Todos los Orígenes</option>
+                <option value="Stripe">Pasarela Stripe</option>
+                <option value="Redsys">TPV Redsys</option>
+                <option value="Norma 43">Cuaderno 43 AEB</option>
+              </select>
             </div>
           </div>
-        </>
-      )}
+        </div>
+
+        {/* Estado Vacío o Tabla de Movimientos */}
+        {transactions.length === 0 ? (
+          <div className="py-14 px-6 text-center bg-[#0b0d11]">
+            {!hasCompanies ? (
+              <div className="max-w-md mx-auto">
+                <h3 className="text-sm font-semibold text-white mb-1">
+                  Ninguna sociedad seleccionada
+                </h3>
+                <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+                  Dé de alta la primera sociedad cliente indicando su NIF/CIF, longitud de subcuenta y software contable de destino.
+                </p>
+                {onOpenAddClientModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenAddClientModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white transition-colors"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Alta de Sociedad Cliente</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="max-w-md mx-auto">
+                <h3 className="text-sm font-semibold text-slate-200 mb-1">
+                  Mesa de conciliación sin apuntes en el periodo seleccionado
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Utilice la barra superior para adjuntar la cartera de facturas emitidas y procesar un extracto Norma 43 (.n43) o fichero de liquidación (.csv).
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-[#1e232d] bg-[#0b0d11] text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                    <th className="py-2.5 px-2 w-8 text-center"></th>
+                    <th className="py-2.5 px-2">Referencia & Canal</th>
+                    <th className="py-2.5 px-2">Fecha Valor</th>
+                    <th className="py-2.5 px-2">Concepto Bancario / Regla Aplicada</th>
+                    <th className="py-2.5 px-2 text-right">Abono Banco (572)</th>
+                    <th className="py-2.5 px-2 text-right">Bruto Factura (430)</th>
+                    <th className="py-2.5 px-2 text-right">Gasto TPV/Pasarela (626)</th>
+                    <th className="py-2.5 px-2 text-center">Afinidad</th>
+                    <th className="py-2.5 px-2 text-right">Dictamen</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#181c24]">
+                  {filteredTransactions.length > 0 ? (
+                    filteredTransactions.map((tx) => (
+                      <TransactionRow
+                        key={tx.id}
+                        transaction={tx}
+                        isExpanded={expandedId === tx.id}
+                        onToggleExpand={() => setExpandedId((prev) => (prev === tx.id ? null : tx.id))}
+                        onOpenScoreModal={onOpenScoreModal}
+                        onApprove={onApproveTransaction}
+                        onDelete={onDeleteTransaction}
+                      />
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-slate-500 text-xs">
+                        Sin resultados para los criterios de filtrado activos.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="px-4 py-2.5 border-t border-[#1e232d] bg-[#0b0d11] flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-slate-400 gap-2">
+              <div>
+                Mostrando <span className="font-mono text-slate-200">{filteredTransactions.length}</span> de{' '}
+                <span className="font-mono text-slate-200">{transactions.length}</span> apuntes
+              </div>
+              <div className="font-mono text-xs">
+                Total Tesorería Filtrada:{' '}
+                <strong className="text-white">
+                  {formatEuro(filteredTransactions.reduce((acc, t) => acc + (Number(t.netAmountEur) || 0), 0))}
+                </strong>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -6516,31 +6597,32 @@ FICHERO: frontend\src\index.css
 @layer base {
   body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #09090b;
-    color: #f4f4f5;
+    background-color: #0b0d11;
+    color: #e2e8f0;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* Monospace tabular numbers for banking currency precision */
   .font-mono {
     font-family: 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1, "zero" 1;
   }
 }
 
-/* Custom scrollbars for high-density financial staging tables */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: #0b0d11;
 }
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
-  border-radius: 2px;
+  background: #262b36;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: #374151;
 }
 
 
@@ -7363,32 +7445,32 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "8396419e-8a7b-477f-8040-0485397c3607",
+  "tenant_id": "fe40f60e-31e2-4a7a-8d16-88c88254ff23",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-16",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "4cb49976ff642ae2907df4a8678120672be1bd1b31377868c4e94c6bebd4a482",
+  "head_hash_sha256": "f4003a8f3701c8e0a7d7b08a21ce8d7935e038522bec74716bc496d3d58d3665",
   "audit_events": [
     {
-      "event_id": "97c55d19-3208-4705-b030-4143d515c545",
+      "event_id": "1c10436b-5cf1-443a-a407-45ff6e81150f",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:14:05.030658",
-      "sha256_hash": "835e46395ba1c80b79abd8facc0df335c73092417e6a2991b7293938c34e02f5",
+      "timestamp": "2026-10-16T18:56:47.440378",
+      "sha256_hash": "9d6ca1f6e69f59e63bff214adba0026a411d8e10a86d71a0daa4a779d8752075",
       "details": {
-        "batch_id": "3309396b-d7e3-431f-8bb2-baf3a7f8fa4b",
+        "batch_id": "b76992c0-1909-4b05-bcee-43a20b2d9e49",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "aa5f41f7-f727-4060-b297-7ae1277745cb",
+      "event_id": "79175d52-990c-47ea-98fb-eeb95d165257",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:14:05.046665",
-      "sha256_hash": "f32f21f09849527013d5fc558b312903992102c147dcb67b145c5ad4d17180cf",
+      "timestamp": "2026-10-16T18:56:47.452673",
+      "sha256_hash": "8b4c22a627fe794b8a54c3e7ed64ab218f049376936cbffaaaec46f6780b8c1f",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -7396,23 +7478,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "0ff58b8b-b8f1-478c-9009-b44c1ef78ddd",
+      "event_id": "35515abb-d591-46d0-af89-0b895c44f97e",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:14:05.054379",
-      "sha256_hash": "588873dc84af105de061d8c0935111657d680193cf4b37262831f26e48bbe32b",
+      "timestamp": "2026-10-16T18:56:47.459384",
+      "sha256_hash": "8179585056050ca33263a99347bfe03e9d138faf353301df7089b656772a8ae9",
       "details": {
-        "batch_id": "21d02a54-61a0-4316-b5e3-fbaef2909eef",
+        "batch_id": "198be192-15fc-4b53-be64-af37979e238d",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "df39ac7e-2533-4928-a89c-1fa18fdefaf4",
+      "event_id": "81186ec3-346a-48fa-ac26-40c731ac2785",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:14:05.060625",
-      "sha256_hash": "b9b8d94bab7750f40ec942e9110b323f981a618ac177769485a07fb22aeaccdf",
+      "timestamp": "2026-10-16T18:56:47.466094",
+      "sha256_hash": "56691a25c3bf20370a801aced68dcf8f3546dbabc163a74eec1fd7178294a009",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -7420,23 +7502,23 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
       }
     },
     {
-      "event_id": "ef1bfaa2-4780-466e-b61b-13a66cd816de",
+      "event_id": "8e5b4962-6b0b-4215-833a-b5752550b7e2",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:14:05.066874",
-      "sha256_hash": "f5a85b0885304e9caaed7f1fa9fa5b907325ac347f32a761fc169311f91f1838",
+      "timestamp": "2026-10-16T18:56:47.472257",
+      "sha256_hash": "ac0118719f6848e171adda80066bc5e707bc6ead38703c12c560035f404e705c",
       "details": {
-        "batch_id": "159d488d-f42a-4be7-bd28-dd7a1843b4d8",
+        "batch_id": "e74b7e66-12f6-4664-bd0e-9366d980b7ea",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "31fdaf3b-92bd-4c16-822c-12b10e69e729",
+      "event_id": "b91fa14b-04ac-4fb3-a0f3-068f8ebbc2a5",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:14:05.091398",
-      "sha256_hash": "4cb49976ff642ae2907df4a8678120672be1bd1b31377868c4e94c6bebd4a482",
+      "timestamp": "2026-10-16T18:56:47.492278",
+      "sha256_hash": "f4003a8f3701c8e0a7d7b08a21ce8d7935e038522bec74716bc496d3d58d3665",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
@@ -7450,7 +7532,7 @@ FICHERO: output_pilot\CERTIFICADO_AUDITORIA_PILOTO.json
 FICHERO: output_pilot\CONTASOL_CLIENTE3.xlsx
 ================================================================================
 
-# [Archivo binario (.XLSX) de 5336 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
+# [Archivo binario (.XLSX) de 5337 bytes - Código binario ejecutable disponible íntegro en 'proyecto_comprimido.txt']
 
 ================================================================================
 FICHERO: output_pilot\STRIPE_PRODUCTS_CATALOG.json
@@ -11519,7 +11601,12 @@ from sqlalchemy.orm import Session
 from src.database.connection import get_db
 from src.database.models import Tenant, ClientCompany, ReconciliationBatch
 from src.billing.pricing_plans import PLAN_CONFIGS, PlanTier, QuotaManager
-from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
+from src.billing.quota_manager import (
+    BillingQuotaManager,
+    QuotaLimitExceeded,
+    get_and_sync_tenant_consumed_tx,
+    increment_tenant_consumed_tx,
+)
 from src.billing.stripe_service import StripeBillingService
 
 router = APIRouter(prefix="/v1", tags=["Facturación & Suscripción"])
@@ -11558,14 +11645,13 @@ def get_tenant_subscription(tenant_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Despacho o empresa no encontrado.")
 
     clients_count = db.query(ClientCompany).filter(ClientCompany.tenant_id == tenant_id).count()
-    batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant_id).all()
-    tx_count = sum(b.total_movements or 0 for b in batches)
+    consumed_tx = get_and_sync_tenant_consumed_tx(db, tenant)
 
     quota = QuotaManager.evaluate_tenant_quota(
         plan_code=tenant.plan or "FREE",
         extra_blocks=tenant.extra_blocks or 0,
         current_clients_count=clients_count,
-        current_month_transactions=tx_count,
+        current_month_transactions=consumed_tx,
     )
     legacy_status = BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
 
@@ -11667,6 +11753,7 @@ from src.database.models import (
 )
 from src.database.repository import ReconciliationRepository
 from src.services.batch_service import BatchReconciliationService
+from src.billing.quota_manager import get_and_sync_tenant_consumed_tx, increment_tenant_consumed_tx
 
 router = APIRouter(prefix="/v1", tags=["Multi-Tenancy & Batches"])
 
@@ -11932,9 +12019,8 @@ def sync_stripe_payouts_endpoint(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Error al conectar con Stripe API: {str(exc)}")
 
-    # Verificar cuota del Paywall antes de procesar
-    existing_batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant.id).all()
-    current_tx = sum(b.total_movements or 0 for b in existing_batches)
+    # Verificar cuota del Paywall antes de procesar con contador inmutable
+    current_tx = get_and_sync_tenant_consumed_tx(db, tenant)
     quota = QuotaManager.evaluate_tenant_quota(
         plan_code=tenant.plan or "FREE",
         extra_blocks=tenant.extra_blocks or 0,
@@ -12024,6 +12110,9 @@ def sync_stripe_payouts_endpoint(
                 ],
             },
         })
+
+    if tenant and response_transactions:
+        increment_tenant_consumed_tx(db, tenant, len(response_transactions))
 
     return {
         "ephemeral": payload.ephemeral_mode,
@@ -12207,7 +12296,7 @@ async def upload_and_process_batch(
 
         tenant = ReconciliationRepository.get_tenant(db, tenant_id)
         if tenant:
-            current_tx = sum(b.total_movements or 0 for b in tenant.batches) if tenant.batches else 0
+            current_tx = get_and_sync_tenant_consumed_tx(db, tenant)
             quota = QuotaManager.evaluate_tenant_quota(
                 plan_code=tenant.plan or "FREE",
                 extra_blocks=tenant.extra_blocks or 0,
@@ -12430,6 +12519,9 @@ async def upload_and_process_batch(
                     "journal": journal_dict,
                 })
 
+            if tenant and response_txs:
+                increment_tenant_consumed_tx(db, tenant, len(response_txs))
+
             return {
                 "id": "BATCH-EPHEMERAL-RAM",
                 "ephemeral": True,
@@ -12465,6 +12557,9 @@ async def upload_and_process_batch(
             gateway_name=resolved_gw,
             gateway_transactions=gw_txs,
         )
+
+        if tenant and batch.total_movements:
+            increment_tenant_consumed_tx(db, tenant, batch.total_movements)
 
         return {
             "id": batch.id,
@@ -12666,6 +12761,11 @@ def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     if not batch:
         raise HTTPException(status_code=404, detail="Lote no encontrado.")
 
+    # Asegurar que el consumo mensual quede consolidado en el Tenant ANTES de borrar el lote
+    tenant = db.query(Tenant).filter(Tenant.id == batch.tenant_id).first()
+    if tenant:
+        get_and_sync_tenant_consumed_tx(db, tenant)
+
     try:
         db.query(AuditLog).filter(AuditLog.batch_id == batch_id).delete(synchronize_session=False)
         db.query(JournalEntryRecord).filter(JournalEntryRecord.batch_id == batch_id).delete(synchronize_session=False)
@@ -12696,7 +12796,12 @@ def delete_batch_transaction(batch_id: str, tx_id: str, db: Session = Depends(ge
 
     batch = db.query(ReconciliationBatch).filter(ReconciliationBatch.id == batch_id).first()
     if batch:
+        tenant = db.query(Tenant).filter(Tenant.id == batch.tenant_id).first()
+        if tenant:
+            get_and_sync_tenant_consumed_tx(db, tenant)
+
         batch.total_movements = max(0, (batch.total_movements or 1) - 1)
+        batch.total_volume_cents = max(0, (batch.total_volume_cents or 0) - (tx.net_amount_cents or 0))
         if tx.status == "GREEN":
             batch.green_count = max(0, (batch.green_count or 1) - 1)
         elif tx.status == "YELLOW":
@@ -13047,6 +13152,43 @@ class QuotaLimitExceeded(Exception):
     pass
 
 
+def get_and_sync_tenant_consumed_tx(db: Session, tenant: Tenant) -> int:
+    """
+    Obtiene el consumo mensual inmutable del Tenant.
+    Si cambia el mes natural (YYYY-MM), reinicia el contador del nuevo mes.
+    Si el usuario borra lotes en el mes actual, respeta siempre la marca máxima consumida.
+    """
+    now_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant.id).all()
+    active_tx_sum = sum(b.total_movements or 0 for b in batches)
+
+    if getattr(tenant, "quota_period_ym", None) != now_ym:
+        tenant.quota_period_ym = now_ym
+        tenant.consumed_transactions_month = active_tx_sum
+        db.commit()
+        db.refresh(tenant)
+    else:
+        persisted_consumed = getattr(tenant, "consumed_transactions_month", 0) or 0
+        if active_tx_sum > persisted_consumed:
+            tenant.consumed_transactions_month = active_tx_sum
+            db.commit()
+            db.refresh(tenant)
+
+    return max(getattr(tenant, "consumed_transactions_month", 0) or 0, active_tx_sum)
+
+
+def increment_tenant_consumed_tx(db: Session, tenant: Tenant, new_movements_count: int) -> int:
+    """
+    Incrementa de forma irreversible el contador mensual de transacciones procesadas.
+    Se ejecuta al procesar cualquier lote o sincronizar con Stripe (incluso en modo RAM).
+    """
+    current_consumed = get_and_sync_tenant_consumed_tx(db, tenant)
+    tenant.consumed_transactions_month = current_consumed + max(0, int(new_movements_count))
+    db.commit()
+    db.refresh(tenant)
+    return tenant.consumed_transactions_month
+
+
 class BillingQuotaManager:
     """Controlador de límites y tarificación por despacho."""
 
@@ -13066,18 +13208,8 @@ class BillingQuotaManager:
         # Contar clientes actuales
         active_clients_count = db.query(func.count(ClientCompany.id)).filter(ClientCompany.tenant_id == tenant_id).scalar() or 0
 
-        # Contar transacciones procesadas en el mes en curso
-        now = datetime.now(timezone.utc)
-        monthly_txs_count = (
-            db.query(func.coalesce(func.sum(ReconciliationBatch.total_movements), 0))
-            .filter(
-                ReconciliationBatch.tenant_id == tenant_id,
-                extract("year", ReconciliationBatch.created_at) == now.year,
-                extract("month", ReconciliationBatch.created_at) == now.month,
-            )
-            .scalar()
-            or 0
-        )
+        # Contar transacciones procesadas en el mes en curso (inmutable)
+        monthly_txs_count = get_and_sync_tenant_consumed_tx(db, tenant)
 
         total_price_eur = config["price_eur_month"] + (extra_blocks * EXTRA_BLOCK_PRICE_EUR)
 
@@ -13621,6 +13753,10 @@ def generate_uuid() -> str:
     return str(uuid.uuid4())
 
 
+def current_ym_str() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
 class Tenant(Base):
     """Despacho Profesional / Gestoría Contable (Inquilino Principal)."""
     __tablename__ = "tenants"
@@ -13631,6 +13767,11 @@ class Tenant(Base):
     email = Column(String(120), nullable=False)
     plan = Column(String(50), default="PROFESSIONAL", nullable=False)
     extra_blocks = Column(Integer, default=0, nullable=False)
+
+    # Contador inmutable de consumo mensual (no baja a 0 si el usuario borra lotes del radar)
+    consumed_transactions_month = Column(Integer, default=0, nullable=False)
+    quota_period_ym = Column(String(7), default=current_ym_str, nullable=False)
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relaciones
@@ -13810,6 +13951,12 @@ class AuditLog(Base):
 
     def __repr__(self):
         return f"<AuditLog id={self.id} action='{self.action}' actor='{self.actor}' ts={self.timestamp}>"
+
+
+# Alias de compatibilidad
+StagedTransaction = BatchTransaction
+StagedJournalEntry = JournalEntryRecord
+
 
 
 ================================================================================
@@ -14788,9 +14935,46 @@ from src.api.v1.admin_api import router as admin_router
 from src.database.connection import init_db
 
 
+def ensure_schema_columns():
+    """
+    Asegura que las columnas de control inmutable de cuota mensual existan en 'tenants'
+    tanto en PostgreSQL (Supabase) como en SQLite sin perder datos existentes.
+    """
+    from datetime import datetime, timezone
+    from sqlalchemy import text
+    from src.database.connection import engine
+
+    current_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+    with engine.connect() as conn:
+        try:
+            if engine.dialect.name == "postgresql":
+                conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS consumed_transactions_month INTEGER NOT NULL DEFAULT 0"))
+            else:
+                res = conn.execute(text("PRAGMA table_info(tenants)")).fetchall()
+                cols = [r[1] for r in res]
+                if cols and "consumed_transactions_month" not in cols:
+                    conn.execute(text("ALTER TABLE tenants ADD COLUMN consumed_transactions_month INTEGER NOT NULL DEFAULT 0"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        try:
+            if engine.dialect.name == "postgresql":
+                conn.execute(text(f"ALTER TABLE tenants ADD COLUMN IF NOT EXISTS quota_period_ym VARCHAR(7) NOT NULL DEFAULT '{current_ym}'"))
+            else:
+                res = conn.execute(text("PRAGMA table_info(tenants)")).fetchall()
+                cols = [r[1] for r in res]
+                if cols and "quota_period_ym" not in cols:
+                    conn.execute(text(f"ALTER TABLE tenants ADD COLUMN quota_period_ym VARCHAR(7) NOT NULL DEFAULT '{current_ym}'"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    ensure_schema_columns()
     from src.database.connection import get_db_context
     from src.database.seed import seed_initial_data
     try:

@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from src.database.connection import get_db
 from src.database.models import Tenant, ClientCompany, ReconciliationBatch
 from src.billing.pricing_plans import PLAN_CONFIGS, PlanTier, QuotaManager
-from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
+from src.billing.quota_manager import (
+    BillingQuotaManager,
+    QuotaLimitExceeded,
+    get_and_sync_tenant_consumed_tx,
+    increment_tenant_consumed_tx,
+)
 from src.billing.stripe_service import StripeBillingService
 
 router = APIRouter(prefix="/v1", tags=["Facturación & Suscripción"])
@@ -48,14 +53,13 @@ def get_tenant_subscription(tenant_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Despacho o empresa no encontrado.")
 
     clients_count = db.query(ClientCompany).filter(ClientCompany.tenant_id == tenant_id).count()
-    batches = db.query(ReconciliationBatch).filter(ReconciliationBatch.tenant_id == tenant_id).all()
-    tx_count = sum(b.total_movements or 0 for b in batches)
+    consumed_tx = get_and_sync_tenant_consumed_tx(db, tenant)
 
     quota = QuotaManager.evaluate_tenant_quota(
         plan_code=tenant.plan or "FREE",
         extra_blocks=tenant.extra_blocks or 0,
         current_clients_count=clients_count,
-        current_month_transactions=tx_count,
+        current_month_transactions=consumed_tx,
     )
     legacy_status = BillingQuotaManager.get_tenant_billing_status(db, tenant_id)
 

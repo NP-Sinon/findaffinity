@@ -1,32 +1,32 @@
 {
   "certificate_title": "CERTIFICADO DE AUDITORÍA Y CONCILIACIÓN CONTABLE INMUTABLE",
   "protocol": "FINDAFINITY ZERO-LIABILITY HASH-CHAIN v1.0",
-  "tenant_id": "8396419e-8a7b-477f-8040-0485397c3607",
+  "tenant_id": "f8a345d7-a28b-4c85-a799-514acd67867f",
   "tenant_name": "KÖNIG & ASOCIADOS AUDITORES SLP",
   "tenant_fiscal_id": "B-99881122",
   "issued_at": "2026-10-16",
   "total_events_certified": 6,
   "genesis_hash": "GENESIS_BLOCK_00000000000000000000000000000000000000000000000000",
-  "head_hash_sha256": "4cb49976ff642ae2907df4a8678120672be1bd1b31377868c4e94c6bebd4a482",
+  "head_hash_sha256": "49ed336df3e38e931e84153ec25ecb35a97d27a58873c649622b0526bd367f2c",
   "audit_events": [
     {
-      "event_id": "97c55d19-3208-4705-b030-4143d515c545",
+      "event_id": "846d861b-3f75-4888-9a47-e3c823f89bdd",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:14:05.030658",
-      "sha256_hash": "835e46395ba1c80b79abd8facc0df335c73092417e6a2991b7293938c34e02f5",
+      "timestamp": "2026-10-16T19:00:12.541965",
+      "sha256_hash": "06f3a82da7087a8e6ff672171e2fbbf1d4591b6b96881d8ba1f697f17d3d17d3",
       "details": {
-        "batch_id": "3309396b-d7e3-431f-8bb2-baf3a7f8fa4b",
+        "batch_id": "3bc1afa0-1881-4f40-9e64-6c2044514939",
         "file_name": "cliente1_stripe_balance.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "aa5f41f7-f727-4060-b297-7ae1277745cb",
+      "event_id": "dbaf2508-8864-4bff-ab7a-13c2926505ba",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:14:05.046665",
-      "sha256_hash": "f32f21f09849527013d5fc558b312903992102c147dcb67b145c5ad4d17180cf",
+      "timestamp": "2026-10-16T19:00:12.558686",
+      "sha256_hash": "529f059fa2fb2e147d3447e3ad2419a73f22235f826c25813148de4f12f12e2e",
       "details": {
         "erp": "A3",
         "exported_entries": 1,
@@ -34,23 +34,23 @@
       }
     },
     {
-      "event_id": "0ff58b8b-b8f1-478c-9009-b44c1ef78ddd",
+      "event_id": "d8061104-f9ca-4e90-974c-991197adc587",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:14:05.054379",
-      "sha256_hash": "588873dc84af105de061d8c0935111657d680193cf4b37262831f26e48bbe32b",
+      "timestamp": "2026-10-16T19:00:12.565341",
+      "sha256_hash": "d7413b6935ab10fff9ae7912ec38a9020dea8c38728686649a092deaae9c3beb",
       "details": {
-        "batch_id": "21d02a54-61a0-4316-b5e3-fbaef2909eef",
+        "batch_id": "127f9089-a40d-483b-a377-8876b0d2b13a",
         "file_name": "cliente2_redsys_tpv.csv",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "df39ac7e-2533-4928-a89c-1fa18fdefaf4",
+      "event_id": "9114a8e6-6c08-4ff9-95c6-a7adb3ef7d89",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:14:05.060625",
-      "sha256_hash": "b9b8d94bab7750f40ec942e9110b323f981a618ac177769485a07fb22aeaccdf",
+      "timestamp": "2026-10-16T19:00:12.573042",
+      "sha256_hash": "ac016b7877a83ba1af9d366f08e09f9d38bf1f9e1c563a38f1e86aae64ee272f",
       "details": {
         "erp": "SAGE",
         "exported_entries": 1,
@@ -58,23 +58,23 @@
       }
     },
     {
-      "event_id": "ef1bfaa2-4780-466e-b61b-13a66cd816de",
+      "event_id": "6c9e9ef2-5f34-4402-ae19-0d2ea8ff155b",
       "action": "BATCH_CREATED",
       "actor": "system",
-      "timestamp": "2026-10-16T18:14:05.066874",
-      "sha256_hash": "f5a85b0885304e9caaed7f1fa9fa5b907325ac347f32a761fc169311f91f1838",
+      "timestamp": "2026-10-16T19:00:12.578192",
+      "sha256_hash": "3f39d23ef13caad3302ca858f7818336abd1041cbf14a8e3d75c0fa9f6b1a264",
       "details": {
-        "batch_id": "159d488d-f42a-4be7-bd28-dd7a1843b4d8",
+        "batch_id": "d0ecbe9f-7bba-45f3-8e56-7556ff2514ee",
         "file_name": "cliente3_norma43.n43",
         "period": "2026 (10-12)"
       }
     },
     {
-      "event_id": "31fdaf3b-92bd-4c16-822c-12b10e69e729",
+      "event_id": "3908c254-fca7-49f2-96de-8ffa9bbc7508",
       "action": "BATCH_EXPORTED",
       "actor": "auditor@gestoria.es",
-      "timestamp": "2026-10-16T18:14:05.091398",
-      "sha256_hash": "4cb49976ff642ae2907df4a8678120672be1bd1b31377868c4e94c6bebd4a482",
+      "timestamp": "2026-10-16T19:00:12.597984",
+      "sha256_hash": "49ed336df3e38e931e84153ec25ecb35a97d27a58873c649622b0526bd367f2c",
       "details": {
         "erp": "CONTASOL",
         "exported_entries": 2,
