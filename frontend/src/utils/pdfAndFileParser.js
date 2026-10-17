@@ -239,7 +239,7 @@ export function buildTransactionFromInvoice(inv, idx = 1) {
     {
       accountCode: acctCustomer,
       accountName: inv.customer_name,
-      concept: `Fra. ${invNum} - ${inv.customer_name}`.slice(0, 40),
+      concept: `Fra. ${invNum} - ${inv.customer_name}`,
       documentNumber: invNum,
       debitEur: gross,
       creditEur: 0,
@@ -248,7 +248,7 @@ export function buildTransactionFromInvoice(inv, idx = 1) {
     {
       accountCode: acctSales,
       accountName: 'Prestaciones de servicios / Ventas',
-      concept: `Base Imponible Fra. ${invNum} (${inv.concept || 'Servicios'})`.slice(0, 40),
+      concept: `Base Imp. ${invNum} - ${inv.customer_name}`,
       documentNumber: invNum,
       debitEur: 0,
       creditEur: base,
@@ -260,7 +260,7 @@ export function buildTransactionFromInvoice(inv, idx = 1) {
     journalLines.push({
       accountCode: acctVat,
       accountName: `H.P. IVA Repercutido (${vatRate}%)`,
-      concept: `IVA ${vatRate}% Fra. ${invNum} - ${inv.customer_name}`.slice(0, 40),
+      concept: `IVA ${vatRate}% ${invNum} - ${inv.customer_name}`,
       documentNumber: invNum,
       debitEur: 0,
       creditEur: vat,

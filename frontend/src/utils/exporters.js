@@ -15,8 +15,8 @@ export function generateA3Suenlace(journals, accountLength = 9) {
 
     (journal.lines || []).forEach((line) => {
       const acct = formatAccountCode(line.accountCode, accountLength);
-      const concept = (line.concept || '').replace(/;/g, ' ').trim().slice(0, 30);
-      const doc = (line.documentNumber || '').replace(/;/g, ' ').trim().slice(0, 10);
+      const concept = (line.concept || '').replace(/;/g, ' ').trim().slice(0, 40);
+      const doc = (line.documentNumber || '').replace(/;/g, ' ').trim().slice(0, 15);
       const contra = line.contrapartida
         ? formatAccountCode(line.contrapartida, accountLength)
         : '';
