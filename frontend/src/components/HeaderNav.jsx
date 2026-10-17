@@ -1,6 +1,6 @@
 /**
  * FICHERO: frontend/src/components/HeaderNav.jsx
- * Barra Superior Limpia con Permisos de Rol (Admin vs Gestor)
+ * Barra Superior con Plan Compartido visible para Admin y Gestor
  */
 import React from 'react';
 import {
@@ -31,7 +31,7 @@ export function HeaderNav({
   onOpenPaywall,
 }) {
   const isSuperAdmin = currentUser?.role === 'SUPERADMIN';
-  const isGestor = currentUser?.role === 'GESTOR' || currentUser?.role === 'AUDITOR';
+  const isGestor = currentUser?.role === 'GESTOR' || currentUser?.role === 'AUDITOR' || currentUser?.is_gestor;
   const isAdminView = currentView === 'admin';
 
   const planCode = subscriptionInfo?.plan || currentUser?.plan || 'FREE';
@@ -81,7 +81,7 @@ export function HeaderNav({
               <>
                 <div className="hidden sm:block h-4 w-px bg-[#1e232d]" />
 
-                {/* Selector de Empresa Cliente (Los Gestores pueden cambiar de empresa, pero NO añadir ni borrar) */}
+                {/* Selector de Empresa Cliente: Gestor ve todas las empresas del Admin, pero sin + ni papelera */}
                 <div className="flex items-center gap-2 bg-[#0b0d11] border border-[#222834] rounded-lg px-3 py-1.5">
                   <Building2 className="h-4 w-4 text-blue-400 shrink-0" />
                   {companies && companies.length > 0 ? (
@@ -164,24 +164,29 @@ export function HeaderNav({
             )}
           </div>
 
-          {/* Derecha: Botón Crear Gestor (solo Admin), Cuota y Usuario */}
+          {/* Derecha: Crear Gestor (solo Admin), Plan vinculado (visible para ambos) y Usuario */}
           <div className="flex items-center gap-2.5">
             {!isAdminView && !isGestor && onOpenGestorModal && (
               <button
                 type="button"
                 onClick={onOpenGestorModal}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-xs font-medium text-blue-300 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-xs font-medium text-blue-300 transition-colors cursor-pointer"
               >
                 <UserPlus className="h-3.5 w-3.5 text-blue-400" />
                 <span>Crear Cuenta Gestor</span>
               </button>
             )}
 
-            {!isAdminView && !isGestor && onOpenPaywall && (
+            {!isAdminView && (
               <button
                 type="button"
-                onClick={onOpenPaywall}
-                className="flex items-center gap-2.5 px-3 py-1 rounded-lg bg-[#0b0d11] hover:bg-[#161a23] border border-[#222834] text-xs transition-colors"
+                onClick={() => {
+                  if (!isGestor && onOpenPaywall) onOpenPaywall();
+                }}
+                className={`flex items-center gap-2.5 px-3 py-1 rounded-lg bg-[#0b0d11] border border-[#222834] text-xs transition-colors ${
+                  !isGestor ? 'hover:bg-[#161a23] cursor-pointer' : 'cursor-default'
+                }`}
+                title={isGestor ? 'Plan compartido del despacho' : 'Gestionar licencia y capacidad'}
               >
                 <CreditCard className="h-3.5 w-3.5 text-blue-400" />
                 <div className="flex flex-col text-left">

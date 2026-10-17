@@ -1,6 +1,6 @@
 /**
  * FICHERO: frontend/src/services/api.js
- * Cliente API con soporte multi-archivo real, motor PDF y gestión de cuentas Gestor
+ * Cliente API con delegación real de Plan/Empresas para Gestores y revocación inmediata
  */
 import {
   getFileExtension,
@@ -26,6 +26,7 @@ const getBaseUrl = () => {
 export const BASE_URL = getBaseUrl();
 const AUTH_STORAGE_KEY = 'findaffinity_auth_session';
 const TEAM_STORAGE_KEY = 'findaffinity_team_gestores';
+const REVOKED_STORAGE_KEY = 'findaffinity_revoked_gestores';
 
 export function getStoredTeamAccounts() {
   try {
@@ -44,30 +45,75 @@ function saveStoredTeamAccounts(list) {
   }
 }
 
-function applyTeamOverrideIfGestor(user) {
-  if (!user || !user.email) return user;
-  const teamList = getStoredTeamAccounts();
-  const match = teamList.find((g) => g.email.toLowerCase() === user.email.toLowerCase());
-  if (match) {
-    return {
-      ...user,
-      role: 'GESTOR',
-      tenant_id: match.tenantId || user.tenant_id,
-      company_name: match.companyName || user.company_name,
-      full_name: match.fullName || user.full_name,
-    };
+function getRevokedEmails() {
+  try {
+    const raw = localStorage.getItem(REVOKED_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
   }
-  return user;
 }
 
+function saveRevokedEmails(list) {
+  try {
+    localStorage.setItem(REVOKED_STORAGE_KEY, JSON.stringify(list));
+  } catch (err) {
+    console.error('Error guardando lista de revocados:', err);
+  }
+}
+
+export function isEmailRevoked(email) {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  const revoked = getRevokedEmails();
+  return revoked.includes(clean);
+}
+
+/**
+ * Si la sesión actual pertenece a un Gestor, verifica que siga activo en el equipo
+ * y le inyecta el tenant_id y plan del Admin. Si fue eliminado, devuelve null y cierra sesión.
+ */
 export function getStoredAuthSession() {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && parsed.user) {
-      parsed.user = applyTeamOverrideIfGestor(parsed.user);
+    const user = parsed?.user;
+    if (!user || !user.email) return null;
+
+    const cleanEmail = user.email.trim().toLowerCase();
+
+    // Si el correo fue revocado por el Admin, invalidar sesión en el acto
+    if (isEmailRevoked(cleanEmail)) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      return null;
     }
+
+    const teamList = getStoredTeamAccounts();
+    const match = teamList.find((g) => g.email.toLowerCase() === cleanEmail);
+
+    // Si el usuario tenía rol GESTOR pero ya no existe en la lista activa, expulsar
+    if ((user.role === 'GESTOR' || user.is_gestor) && !match) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      return null;
+    }
+
+    // Si es un gestor activo, sincronizar siempre el tenantId, plan y token delegado del Admin
+    if (match) {
+      parsed.token = match.adminToken || parsed.token;
+      parsed.user = {
+        ...user,
+        id: match.id,
+        email: match.email,
+        full_name: match.fullName,
+        company_name: match.companyName,
+        tenant_id: match.tenantId,
+        plan: match.plan || user.plan,
+        role: 'GESTOR',
+        is_gestor: true,
+      };
+    }
+
     return parsed;
   } catch {
     return null;
@@ -76,8 +122,7 @@ export function getStoredAuthSession() {
 
 export function saveAuthSession(token, user) {
   try {
-    const normalizedUser = applyTeamOverrideIfGestor(user);
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, user: normalizedUser }));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token, user }));
   } catch (err) {
     console.error('Error guardando sesión:', err);
   }
@@ -200,65 +245,109 @@ async function safeJsonFetch(url, options = {}) {
 }
 
 export async function loginApi(email, password) {
-  const cleanEmail = email.trim();
-  let { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
+  const cleanEmail = email.trim().toLowerCase();
+
+  // 1. Si la cuenta de gestor fue eliminada por el Admin, denegar acceso inmediatamente
+  if (isEmailRevoked(cleanEmail)) {
+    clearAuthSession();
+    return {
+      success: false,
+      error: 'Esta cuenta de gestor ha sido eliminada por el administrador.',
+    };
+  }
+
+  // 2. Comprobar si es una cuenta Gestor activa creada por el Admin
+  const teamList = getStoredTeamAccounts();
+  const matchGestor = teamList.find((g) => g.email.toLowerCase() === cleanEmail);
+
+  if (matchGestor) {
+    if (matchGestor.password !== password) {
+      return { success: false, error: 'Contraseña de gestor incorrecta.' };
+    }
+    const gestorUser = {
+      id: matchGestor.id,
+      email: matchGestor.email,
+      full_name: matchGestor.fullName,
+      company_name: matchGestor.companyName,
+      tenant_id: matchGestor.tenantId,
+      plan: matchGestor.plan || 'FREE',
+      role: 'GESTOR',
+      is_gestor: true,
+    };
+    saveAuthSession(matchGestor.adminToken, gestorUser);
+    return { success: true, token: matchGestor.adminToken, user: gestorUser };
+  }
+
+  // 3. Login estándar contra el backend para cuentas Admin / Superadmin
+  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: cleanEmail, password }),
   });
 
-  // Si es una cuenta Gestor creada por el Admin y la BD se reinició, la sincronizamos
-  if (!ok) {
-    const teamList = getStoredTeamAccounts();
-    const matchGestor = teamList.find(
-      (g) => g.email.toLowerCase() === cleanEmail.toLowerCase() && g.password === password
-    );
-    if (matchGestor) {
-      await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: matchGestor.email,
-          password: matchGestor.password,
-          full_name: matchGestor.fullName || 'Gestor Contable',
-          company_name: matchGestor.companyName || 'Despacho',
-          fiscal_id: `G-${Date.now().toString().slice(-8)}`,
-          role: 'AUDITOR',
-          plan: 'PROFESSIONAL',
-        }),
-      });
-      const retry = await safeJsonFetch(`${BASE_URL}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, password }),
-      });
-      ok = retry.ok;
-      data = retry.data;
-    }
-  }
-
   if (ok && data?.access_token) {
-    const finalUser = applyTeamOverrideIfGestor(data.user);
-    saveAuthSession(data.access_token, finalUser);
-    return { success: true, token: data.access_token, user: finalUser };
+    // Si el Admin inicia sesión, actualizamos el adminToken delegado de sus gestores para que nunca caduque
+    const updatedTeam = getStoredTeamAccounts().map((g) =>
+      g.tenantId === data.user?.tenant_id
+        ? { ...g, adminToken: data.access_token, companyName: data.user?.company_name || g.companyName }
+        : g
+    );
+    saveStoredTeamAccounts(updatedTeam);
+
+    saveAuthSession(data.access_token, data.user);
+    return { success: true, token: data.access_token, user: data.user };
   }
   return { success: false, error: data?.detail || 'Credenciales incorrectas' };
 }
 
 export async function fetchMeApi() {
+  const session = getStoredAuthSession();
+  if (!session || !session.token || !session.user) {
+    clearAuthSession();
+    return { success: false, status: 401, error: 'Sesión finalizada o revocada' };
+  }
+
+  // Si es un Gestor, verificamos que no haya sido eliminado y mantenemos el tenant_id del Admin
+  if (session.user.role === 'GESTOR' || session.user.is_gestor) {
+    const cleanEmail = session.user.email.toLowerCase();
+    if (isEmailRevoked(cleanEmail)) {
+      clearAuthSession();
+      return { success: false, status: 401, error: 'Cuenta de gestor eliminada' };
+    }
+    const match = getStoredTeamAccounts().find((g) => g.email.toLowerCase() === cleanEmail);
+    if (!match) {
+      clearAuthSession();
+      return { success: false, status: 401, error: 'Cuenta de gestor no encontrada' };
+    }
+    return {
+      success: true,
+      status: 200,
+      user: {
+        ...session.user,
+        tenant_id: match.tenantId,
+        company_name: match.companyName,
+        plan: match.plan || session.user.plan,
+        role: 'GESTOR',
+        is_gestor: true,
+      },
+    };
+  }
+
   const { ok, status, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/me`, {
     headers: getAuthHeaders(),
   });
   if (ok && data && data.id) {
-    const finalUser = applyTeamOverrideIfGestor(data);
-    return { success: true, status, user: finalUser };
+    if (isEmailRevoked(data.email)) {
+      clearAuthSession();
+      return { success: false, status: 401, error: 'Cuenta revocada' };
+    }
+    return { success: true, status, user: data };
   }
   return { success: false, status, error: data?.detail || 'Sesión no válida o expirada' };
 }
 
 /**
- * Crea una cuenta Gestor vinculada al despacho del Admin actual sin cerrar la sesión del Admin
- * y sin requerir pago ni registro externo.
+ * Crea una cuenta Gestor vinculada directamente al tenant_id, empresas y plan del Admin actual
  */
 export async function createGestorAccountApi({
   adminUser,
@@ -270,25 +359,17 @@ export async function createGestorAccountApi({
   const cleanEmail = email.trim().toLowerCase();
   const cleanName = (fullName || 'Gestor Contable').trim();
 
-  // Intentamos registrar las credenciales en el backend para que obtenga JWT al iniciar sesión
-  const randomFiscalSuffix = `G${Math.floor(10000000 + Math.random() * 90000000)}`;
-  const { ok, data } = await safeJsonFetch(`${BASE_URL}/api/v1/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: cleanEmail,
-      password,
-      full_name: cleanName,
-      company_name: adminUser?.company_name || 'Despacho Contable',
-      fiscal_id: randomFiscalSuffix,
-      role: 'AUDITOR',
-      plan: 'PROFESSIONAL',
-    }),
-  });
+  const currentSession = getStoredAuthSession();
+  const resolvedTenantId = tenantId || adminUser?.tenant_id || currentSession?.user?.tenant_id;
+  const adminToken = currentSession?.token || '';
 
-  if (!ok && data?.detail && !String(data.detail).toLowerCase().includes('ya está registrado')) {
-    return { success: false, error: data.detail || 'No se pudo crear la cuenta Gestor' };
+  if (!resolvedTenantId) {
+    return { success: false, error: 'No se encontró el identificador del despacho actual.' };
   }
+
+  // Si este correo había sido borrado antes, lo quitamos de la lista de revocados
+  const revoked = getRevokedEmails().filter((e) => e !== cleanEmail);
+  saveRevokedEmails(revoked);
 
   const existing = getStoredTeamAccounts().filter((g) => g.email.toLowerCase() !== cleanEmail);
   const newGestor = {
@@ -297,8 +378,10 @@ export async function createGestorAccountApi({
     email: cleanEmail,
     password,
     role: 'GESTOR',
-    tenantId,
+    tenantId: resolvedTenantId,
     companyName: adminUser?.company_name || 'Despacho Contable',
+    plan: adminUser?.plan || 'PROFESSIONAL',
+    adminToken,
     createdAt: new Date().toISOString(),
   };
 
@@ -311,14 +394,31 @@ export async function createGestorAccountApi({
 export function listGestorAccountsForTenant(tenantId) {
   const all = getStoredTeamAccounts();
   if (!tenantId) return all;
-  return all.filter((g) => !g.tenantId || g.tenantId === tenantId);
+  return all.filter((g) => g.tenantId === tenantId);
 }
 
+/**
+ * Elimina inmediatamente al Gestor y añade su correo a la lista de revocación
+ * para que al recargar la página o intentar iniciar sesión quede bloqueado.
+ */
 export function deleteGestorAccount(email) {
+  const cleanEmail = (email || '').trim().toLowerCase();
   const updated = getStoredTeamAccounts().filter(
-    (g) => g.email.toLowerCase() !== email.toLowerCase()
+    (g) => g.email.toLowerCase() !== cleanEmail
   );
   saveStoredTeamAccounts(updated);
+
+  const revoked = getRevokedEmails();
+  if (!revoked.includes(cleanEmail)) {
+    saveRevokedEmails([...revoked, cleanEmail]);
+  }
+
+  // Si la sesión actual en el navegador era esa misma cuenta, cerrarla
+  const current = getStoredAuthSession();
+  if (current?.user?.email?.toLowerCase() === cleanEmail) {
+    clearAuthSession();
+  }
+
   return updated;
 }
 
@@ -391,6 +491,13 @@ export async function upgradeTenantPlanApi(tenantId, plan, extraBlocks = 0) {
     headers: getAuthHeaders(),
     body: JSON.stringify({ plan, extra_blocks: extraBlocks }),
   });
+  if (ok) {
+    // Sincronizar también el nombre del nuevo plan en las cuentas Gestor de este tenant
+    const updatedTeam = getStoredTeamAccounts().map((g) =>
+      g.tenantId === tenantId ? { ...g, plan } : g
+    );
+    saveStoredTeamAccounts(updatedTeam);
+  }
   return { success: ok, data, error: ok ? null : (data?.detail || 'Error al actualizar el plan') };
 }
 
@@ -667,10 +774,6 @@ async function sendSingleBatchRequest({
   return { ok: false, status: res.status, paywallTriggered: res.status === 402, error: errDetail };
 }
 
-/**
- * Procesa cualquier combinación de archivos (1 o 20+ PDFs, múltiples extractos .n43/.csv/.xlsx,
- * o mezcla de extractos + facturas) y devuelve TODAS las transacciones juntas.
- */
 export async function uploadBatchFile({
   tenantId,
   clientId,
@@ -686,7 +789,6 @@ export async function uploadBatchFile({
     const rawMain = Array.isArray(file) ? file : file ? [file] : [];
     const rawInv = Array.isArray(invoicesFile) ? invoicesFile : invoicesFile ? [invoicesFile] : [];
 
-    // Unificamos todos los archivos subidos sin duplicados
     const seen = new Set();
     const allFiles = [];
     for (const f of [...rawMain, ...rawInv]) {
@@ -699,7 +801,6 @@ export async function uploadBatchFile({
 
     const { statementFiles, portfolioFiles } = await classifyUploadedFiles(allFiles);
 
-    // Extraemos todas las facturas de cualquier archivo .pdf o .json en cartera
     const pdfFiles = portfolioFiles.filter((f) => getFileExtension(f.name) === '.pdf');
     const nonPdfPortfolioFiles = portfolioFiles.filter((f) => getFileExtension(f.name) !== '.pdf');
 
@@ -709,7 +810,6 @@ export async function uploadBatchFile({
       if (parsed) extractedPdfInvoices.push(parsed);
     }
 
-    // Si hay JSONs en cartera, también leemos sus facturas para consolidar
     for (const jf of nonPdfPortfolioFiles) {
       if (getFileExtension(jf.name) === '.json') {
         try {
@@ -724,7 +824,6 @@ export async function uploadBatchFile({
       }
     }
 
-    // Crear un único archivo JSON de cartera consolidada si hay PDFs/JSONs
     let consolidatedPortfolioFile = nonPdfPortfolioFiles[0] || null;
     if (extractedPdfInvoices.length > 0) {
       const jsonBlob = new Blob([JSON.stringify(extractedPdfInvoices, null, 2)], {
@@ -735,7 +834,7 @@ export async function uploadBatchFile({
       });
     }
 
-    // CASO 1: Hay extractos bancarios/pasarelas (.n43, .csv, .xlsx) -> Procesar TODOS los extractos y unirlos
+    // CASO 1: Hay extractos bancarios (.n43, .csv, .xlsx) -> Conciliar extractos con la cartera de facturas
     if (statementFiles.length > 0) {
       const combinedTransactions = [];
       let lastBatchId = null;
@@ -757,7 +856,6 @@ export async function uploadBatchFile({
           if (res.paywallTriggered) {
             return { success: false, fromBackend: true, paywallTriggered: true, error: res.error };
           }
-          // Si hay más archivos, continuamos o reportamos si es el único
           if (statementFiles.length === 1) {
             return { success: false, fromBackend: true, error: res.error };
           }
@@ -784,10 +882,10 @@ export async function uploadBatchFile({
       };
     }
 
-    // CASO 2: El usuario subió SOLO facturas (ej. 1 PDF, 20 PDFs, o un Excel/CSV de cartera)
+    // CASO 2: Solo se han subido facturas (PDFs, JSON o Cartera de Facturas sin extracto bancario)
+    // Se generan los Asientos de Emisión de Factura (430 Debe / 705 Haber Base / 477 Haber IVA)
     const combinedInvoiceTransactions = [];
 
-    // 2A. Si subió archivos Excel/CSV de cartera (no PDF), los enviamos uno por uno al backend
     for (const pf of nonPdfPortfolioFiles) {
       if (getFileExtension(pf.name) !== '.json') {
         const res = await sendSingleBatchRequest({
@@ -812,7 +910,6 @@ export async function uploadBatchFile({
       }
     }
 
-    // 2B. Si subió PDFs o JSONs, generamos las partidas completas para TODOS los PDFs (los 20 juntos, no solo 1)
     if (extractedPdfInvoices.length > 0) {
       extractedPdfInvoices.forEach((inv, idx) => {
         const tx = buildTransactionFromInvoice(inv, combinedInvoiceTransactions.length + idx + 1);
