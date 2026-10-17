@@ -160,25 +160,38 @@ export default function App() {
       const tList = await fetchTenants();
       setTenants(tList || []);
       if (tList && tList.length > 0) {
-        const firstTenant = tList[0];
-        setCurrentTenant(firstTenant);
-        setGestoresList(listGestorAccountsForTenant(firstTenant.id));
+        const savedTenantId = localStorage.getItem('findaffinity_selected_tenant_id');
+        const activeTenant =
+          (savedTenantId && tList.find((t) => t.id === savedTenantId)) ||
+          (user.tenant_id && tList.find((t) => t.id === user.tenant_id)) ||
+          tList[0];
+
+        setCurrentTenant(activeTenant);
+        localStorage.setItem('findaffinity_selected_tenant_id', activeTenant.id);
+
+        setGestoresList(listGestorAccountsForTenant(activeTenant.id));
         const [sub, cList] = await Promise.all([
-          fetchTenantSubscription(firstTenant.id),
-          fetchClients(firstTenant.id),
+          fetchTenantSubscription(activeTenant.id),
+          fetchClients(activeTenant.id),
         ]);
         if (sub) setSubscriptionInfo(sub);
         if (cList && cList.length > 0) {
           setCompanies(cList);
-          setSelectedCompany(cList[0]);
-          setSelectedErp(cList[0].defaultErp || 'A3');
+          const savedCompId = localStorage.getItem('findaffinity_selected_company_id');
+          const matchedComp = savedCompId ? cList.find((c) => c.id === savedCompId) : null;
+          const chosenComp = matchedComp || cList[0];
+          setSelectedCompany(chosenComp);
+          setSelectedErp(chosenComp.defaultErp || 'A3');
+          localStorage.setItem('findaffinity_selected_company_id', chosenComp.id);
         } else {
           setCompanies([]);
           setSelectedCompany(null);
           setTransactions([]);
+          localStorage.removeItem('findaffinity_selected_company_id');
         }
       }
     } else if (user.tenant_id) {
+      setCurrentTenant({ id: user.tenant_id, name: user.company_name || 'Despacho Profesional' });
       setGestoresList(listGestorAccountsForTenant(user.tenant_id));
       const [sub, clientList] = await Promise.all([
         fetchTenantSubscription(user.tenant_id),
@@ -188,13 +201,17 @@ export default function App() {
 
       if (clientList && clientList.length > 0) {
         setCompanies(clientList);
-        const firstComp = clientList[0];
-        setSelectedCompany(firstComp);
-        setSelectedErp(firstComp.defaultErp || 'A3');
+        const savedCompId = localStorage.getItem('findaffinity_selected_company_id');
+        const matchedComp = savedCompId ? clientList.find((c) => c.id === savedCompId) : null;
+        const chosenComp = matchedComp || clientList[0];
+        setSelectedCompany(chosenComp);
+        setSelectedErp(chosenComp.defaultErp || 'A3');
+        localStorage.setItem('findaffinity_selected_company_id', chosenComp.id);
       } else {
         setCompanies([]);
         setSelectedCompany(null);
         setTransactions([]);
+        localStorage.removeItem('findaffinity_selected_company_id');
       }
     }
   }, []);
@@ -267,7 +284,7 @@ export default function App() {
   }, [isGestor]);
 
   const handleAddClient = useCallback(async ({ name, fiscalId, defaultErp, accountLength }) => {
-    const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+    const tenantIdToUse = currentTenant?.id || currentUser?.tenant_id;
     if (!tenantIdToUse) {
       throw new Error('No se ha detectado el identificador de su despacho.');
     }
@@ -284,6 +301,7 @@ export default function App() {
       setCompanies((prev) => [...prev, res.client]);
       setSelectedCompany(res.client);
       setSelectedErp(res.client.defaultErp || 'A3');
+      localStorage.setItem('findaffinity_selected_company_id', res.client.id);
       setTransactions([]);
       setSessionFiles([]);
       setBatches([]);
@@ -297,7 +315,7 @@ export default function App() {
     } else {
       throw new Error(res.error || 'Error al dar de alta la sociedad');
     }
-  }, [currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
+  }, [currentTenant, currentUser, refreshSubscriptionStatus, triggerToast]);
 
   const handleDeleteClient = useCallback(async (clientId) => {
     const res = await deleteClientApi(clientId);
@@ -309,7 +327,9 @@ export default function App() {
           setSelectedCompany(nextComp);
           if (nextComp) {
             setSelectedErp(nextComp.defaultErp || 'A3');
+            localStorage.setItem('findaffinity_selected_company_id', nextComp.id);
           } else {
+            localStorage.removeItem('findaffinity_selected_company_id');
             setTransactions([]);
             setSessionFiles([]);
             setBatches([]);
@@ -318,13 +338,13 @@ export default function App() {
         }
         return updated;
       });
-      const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
+      const tenantIdToUse = currentTenant?.id || currentUser?.tenant_id;
       await refreshSubscriptionStatus(tenantIdToUse);
       triggerToast('Empresa eliminada correctamente.');
     } else {
       throw new Error(res.error || 'Error al eliminar la empresa');
     }
-  }, [selectedCompany, currentUser, currentTenant, refreshSubscriptionStatus, triggerToast]);
+  }, [selectedCompany, currentTenant, currentUser, refreshSubscriptionStatus, triggerToast]);
 
   const handleCreateGestor = useCallback(async ({ fullName, email, password }) => {
     const tenantIdToUse = currentUser?.tenant_id || currentTenant?.id;
@@ -540,8 +560,38 @@ export default function App() {
 
   const handleSelectCompany = useCallback((company) => {
     setSelectedCompany(company);
-    if (company.defaultErp) setSelectedErp(company.defaultErp);
+    if (company?.id) {
+      localStorage.setItem('findaffinity_selected_company_id', company.id);
+    }
+    if (company?.defaultErp) setSelectedErp(company.defaultErp);
     triggerToast(`Empresa activa: ${company.name}`);
+  }, [triggerToast]);
+
+  const handleSelectTenant = useCallback(async (tenant) => {
+    if (!tenant) return;
+    setCurrentTenant(tenant);
+    localStorage.setItem('findaffinity_selected_tenant_id', tenant.id);
+    setGestoresList(listGestorAccountsForTenant(tenant.id));
+    const [sub, cList] = await Promise.all([
+      fetchTenantSubscription(tenant.id),
+      fetchClients(tenant.id),
+    ]);
+    if (sub) setSubscriptionInfo(sub);
+    if (cList && cList.length > 0) {
+      setCompanies(cList);
+      const savedCompId = localStorage.getItem('findaffinity_selected_company_id');
+      const matchedComp = savedCompId ? cList.find((c) => c.id === savedCompId) : null;
+      const chosenComp = matchedComp || cList[0];
+      setSelectedCompany(chosenComp);
+      setSelectedErp(chosenComp.defaultErp || 'A3');
+      localStorage.setItem('findaffinity_selected_company_id', chosenComp.id);
+    } else {
+      setCompanies([]);
+      setSelectedCompany(null);
+      setTransactions([]);
+      localStorage.removeItem('findaffinity_selected_company_id');
+    }
+    triggerToast(`Despacho activo: ${tenant.name}`);
   }, [triggerToast]);
 
   const handleToggleView = useCallback((view) => {
@@ -563,7 +613,10 @@ export default function App() {
   const handleLogout = useCallback(() => {
     clearAuthSession();
     localStorage.removeItem('findaffinity_active_view');
+    localStorage.removeItem('findaffinity_selected_tenant_id');
+    localStorage.removeItem('findaffinity_selected_company_id');
     setCurrentUser(null);
+    setCurrentTenant(null);
     setCurrentView('radar');
     setCompanies([]);
     setSelectedCompany(null);
@@ -603,6 +656,9 @@ export default function App() {
         onLogout={handleLogout}
         currentView={currentView}
         onToggleView={handleToggleView}
+        tenants={tenants}
+        currentTenant={currentTenant}
+        onSelectTenant={handleSelectTenant}
         onOpenAddClientModal={handleOpenAddClientModal}
         onOpenDeleteClientModal={handleOpenDeleteClientModal}
         onOpenGestorModal={() => setGestorModalOpen(true)}
@@ -614,6 +670,7 @@ export default function App() {
         <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5">
           <AdminPanel
             onNavigateToRadar={() => handleToggleView('radar')}
+            onSelectTenant={handleSelectTenant}
             currentUser={currentUser}
           />
         </main>

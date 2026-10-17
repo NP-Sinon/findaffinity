@@ -109,22 +109,43 @@ def create_client(payload: ClientCreateDTO, db: Session = Depends(get_db)):
     if not tenant:
         raise HTTPException(status_code=404, detail="Despacho/Tenant no encontrado.")
 
+    clean_fiscal = payload.fiscal_id.strip().upper()
+    clean_name = payload.name.strip()
+
+    existing_client = db.query(ClientCompany).filter(
+        ClientCompany.tenant_id == payload.tenant_id,
+        ClientCompany.fiscal_id == clean_fiscal,
+    ).first()
+    if existing_client:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ya existe una empresa registrada con el CIF '{clean_fiscal}' en este despacho.",
+        )
+
     from src.billing.quota_manager import BillingQuotaManager, QuotaLimitExceeded
     try:
         BillingQuotaManager.assert_can_add_client(db, payload.tenant_id)
     except QuotaLimitExceeded as qe:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(qe))
 
-    client = ReconciliationRepository.create_client(
-        db=db,
-        tenant_id=payload.tenant_id,
-        name=payload.name,
-        fiscal_id=payload.fiscal_id,
-        default_erp=payload.default_erp,
-        account_length=payload.account_length,
-        bank_account_code=payload.bank_account_code,
-        fee_account_code=payload.fee_account_code,
-    )
+    try:
+        client = ReconciliationRepository.create_client(
+            db=db,
+            tenant_id=payload.tenant_id,
+            name=clean_name,
+            fiscal_id=clean_fiscal,
+            default_erp=payload.default_erp,
+            account_length=payload.account_length,
+            bank_account_code=payload.bank_account_code,
+            fee_account_code=payload.fee_account_code,
+        )
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error al registrar la sociedad: {str(exc)}",
+        )
+
     return ClientResponseDTO(
         id=client.id,
         tenant_id=client.tenant_id,

@@ -24,6 +24,9 @@ export function HeaderNav({
   onLogout,
   currentView = 'radar',
   onToggleView,
+  tenants = [],
+  currentTenant = null,
+  onSelectTenant,
   onOpenAddClientModal,
   onOpenDeleteClientModal,
   onOpenGestorModal,
@@ -79,6 +82,29 @@ export function HeaderNav({
 
             {!isAdminView && (
               <>
+                {/* Selector de Despacho para SUPERADMIN si existen varios despachos */}
+                {isSuperAdmin && tenants && tenants.length > 0 && (
+                  <div className="flex items-center gap-2 bg-[#0b0d11] border border-[#222834] rounded-lg px-2.5 py-1.5">
+                    <Building2 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                    <span className="text-[11px] text-slate-400 font-medium hidden md:inline">Despacho:</span>
+                    <select
+                      value={currentTenant ? currentTenant.id : ''}
+                      onChange={(e) => {
+                        const t = tenants.find((item) => item.id === e.target.value);
+                        if (t && onSelectTenant) onSelectTenant(t);
+                      }}
+                      className="bg-transparent text-xs text-amber-200 font-medium focus:outline-none cursor-pointer max-w-[190px] truncate"
+                      title="Cambiar despacho activo para auditar sus empresas y conciliaciones"
+                    >
+                      {tenants.map((t) => (
+                        <option key={t.id} value={t.id} className="bg-[#10131a] text-slate-200">
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="hidden sm:block h-4 w-px bg-[#1e232d]" />
 
                 {/* Selector de Empresa Cliente: Gestor ve todas las empresas del Admin, pero sin + ni papelera */}

@@ -136,6 +136,15 @@ def test_complete_user_journey_and_security_isolation(api_client):
     client_id = created_client["id"]
     assert created_client["name"] == client_payload["name"]
 
+    # Verificación de rechazo inmediato y limpio ante CIF duplicado en el mismo despacho
+    dup_client_res = api_client.post(
+        "/api/v1/clients",
+        json=client_payload,
+        headers=gomez_headers,
+    )
+    assert dup_client_res.status_code == 400, "Debe rechazar la creación de cliente con CIF duplicado en el mismo tenant"
+    assert "Ya existe una empresa registrada" in dup_client_res.json().get("detail", "")
+
     # Consulta de lotes existentes para este nuevo cliente (debe ser lista vacía [])
     batches_res = api_client.get(
         f"/api/v1/batches?client_id={client_id}",

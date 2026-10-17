@@ -14,12 +14,13 @@ import {
   Sparkles,
   Edit2,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  FolderOpen
 } from 'lucide-react';
 import { fetchAdminCompanies, fetchPlatformStats, updateCompanyPlanApi, deleteCompanyApi } from '../services/api';
 import { formatEuro } from '../utils/formatters';
 
-export function AdminPanel({ onNavigateToRadar, currentUser }) {
+export function AdminPanel({ onNavigateToRadar, onSelectTenant, currentUser }) {
   const [companies, setCompanies] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -381,6 +382,18 @@ export function AdminPanel({ onNavigateToRadar, currentUser }) {
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onSelectTenant) onSelectTenant(c);
+                            if (onNavigateToRadar) onNavigateToRadar();
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/30 text-[11px] text-blue-300 transition-colors"
+                          title="Abrir Mesa de Conciliación de este despacho"
+                        >
+                          <FolderOpen className="h-3 w-3 text-blue-400" />
+                          <span>Abrir Mesa</span>
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleOpenEdit(c)}
